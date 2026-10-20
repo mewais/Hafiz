@@ -79,12 +79,10 @@ export const kindsFile = z.object({
 })
 
 const zoomName = z.string()
-const matchClause = z.object({
-  relation: z.union([z.string(), z.array(z.string())]).optional(),
-  status: z.union([z.string(), z.array(z.string())]).optional(),
-  kind: z.union([z.string(), z.array(z.string())]).optional(),
-  dep_distance: z.number().int().optional(),
-})
+// Every key is an attribute Relate computes (relation, status, kind, depth, dep_distance, …);
+// new attributes need no schema change. A list value means any-of.
+const matchScalar = z.union([z.string(), z.number(), z.boolean()])
+const matchClause = z.record(z.string(), z.union([matchScalar, z.array(matchScalar)]))
 export type MatchClause = z.infer<typeof matchClause>
 
 export const zoomsFile = z.object({

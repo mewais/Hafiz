@@ -75,8 +75,32 @@ describe('cli', () => {
 
     out.length = err.length = 0
     expect(await run(['show', child.id, '--zoom', 'FULL'], io)).toBe(0)
-    expect(out.join('\n')).toContain('second')
-    expect(err.join('\n')).toContain('--zoom')
+    expect(out.join('\n').split('\n')[0]).toBe(`# Billing [${child.id}] planned`)
+    expect(out.join('\n')).toContain('Purpose: second')
+    expect(err).toEqual([])
+    out.length = 0
+    expect(await run(['show', child.id, '--zoom', 'LINE'], io)).toBe(0)
+    expect(out).toEqual([`# Billing [${child.id}] planned`])
+    expect(await run(['show', child.id, '--zoom', 'HUGE'], io)).toBe(1)
+    expect(err.join('\n')).toContain('unknown zoom')
+
+    // an ad-hoc context view, never persisted as a session
+    out.length = err.length = 0
+    expect(await run(['context', '--role', 'worker', '--focus', child.id], io)).toBe(0)
+    const text = out.join('\n')
+    expect(text).toMatch(/^<hafiz hash="[0-9a-f]{12}" role="worker">/)
+    expect(text).toContain(`## Billing [${child.id}] planned · focus`)
+    expect(err.join('\n')).toMatch(/tokens · 2 blocks · hash/)
+    out.length = 0
+    expect(
+      await run(['context', '--role', 'worker', '--focus', child.id, '--explain', child.id], io),
+    ).toBe(0)
+    expect(out.join('\n')).toContain('rule 2 { relation: focus } → FULL')
+    expect(await run(['context'], io)).toBe(1)
+    const check = new FsBackend({ dir: storeDir, minorBatchSeconds: 0 })
+    await check.open()
+    expect(await check.read.listSessions()).toEqual([])
+    await check.close()
 
     out.length = 0
     expect(await run(['history', child.id, 'design', '--json'], io)).toBe(0)

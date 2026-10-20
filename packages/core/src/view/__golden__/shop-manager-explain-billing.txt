@@ -1,0 +1,8 @@
+explain billing "Billing" (active, component)
+view: default · budget 24000 · view 861 tokens
+rules (first match per focus block):
+  focus payments: relation=ancestor status=active kind=component depth=1 → rule 3 { relation: ancestor } → DESIGN
+  focus reporting: relation=sibling status=active kind=component depth=1 → rule 10 default: LINE
+aggregate (max zoom): DESIGN via focus payments as ancestor
+degrade: none applied
+final: DESIGN · 121 tokens

@@ -1,16 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import {
-  type Actor,
-  type BlockDetail,
-  Core,
-  type DocType,
-  loadConfig,
-  type Notice,
-  opaqueId,
-} from '@hafiz/core'
-import { docToMarkdown, FsBackend } from '@hafiz/storage-fs'
+import { type Actor, Core, type DocType, loadConfig, type Notice, opaqueId } from '@hafiz/core'
+import { FsBackend } from '@hafiz/storage-fs'
 import { stringify } from 'yaml'
 import {
   CliError,
@@ -37,7 +29,9 @@ const USAGE = `usage: hafiz <command> [options]
 
   init <name> [--store-root DIR] [--adopt]   create a store for the current repo
   tree [--json]                              print the block tree
-  show <block> [--zoom Z] [--json]           print a block
+  show <block> [--zoom Z] [--json]           print a block at a zoom level (default FULL)
+  context --role R [--focus a,b] [--budget N] [--explain id]
+                                             print the view an agent in role R would get
   history <block> [type] [--json]            git history of a block or one doc
   revert <block> <type> <commit>             restore a doc from an earlier commit
 `
@@ -127,46 +121,55 @@ export async function tree(io: Io, opts: { json?: boolean | undefined }): Promis
     io.out(`${'  '.repeat(b.depth)}[${b.status}] ${b.id} — ${b.title} (${b.kind})`)
 }
 
-function renderBlock(d: BlockDetail): string[] {
-  const b = d.block
-  const lines = [
-    `# ${b.title}`,
-    `id: ${b.id}  kind: ${b.kind}  status: ${b.status}  version: ${b.version}`,
-    `parent: ${b.parentId ?? '-'}  updated: ${b.updatedAt}`,
-  ]
-  if (d.edges.dependsOn.length)
-    lines.push(`depends on: ${d.edges.dependsOn.map((e) => e.to).join(', ')}`)
-  if (d.edges.dependents.length)
-    lines.push(`dependents: ${d.edges.dependents.map((e) => e.from).join(', ')}`)
-  for (const type of DOC_TYPES) {
-    const doc = d.docs[type]
-    if (doc) lines.push('', `## ${type} doc`, '', docToMarkdown(doc).trimEnd())
-  }
-  lines.push('', '## progress (last 10)')
-  const prog = d.progress.slice(-10)
-  if (!prog.length) lines.push('(none)')
-  for (const p of prog) lines.push(`${p.ts} [${p.kind}] ${p.by.agent ?? p.by.role}: ${p.text}`)
-  lines.push('', '## active decisions')
-  const decisions = d.decisions.filter((x) => x.status === 'active')
-  if (!decisions.length) lines.push('(none)')
-  for (const x of decisions)
-    lines.push(`- ${x.id} ${x.title}: ${x.decision}${x.standing ? ' [standing]' : ''}`)
-  lines.push('', '## open threads')
-  const threads = d.threads.filter((x) => x.status === 'open')
-  if (!threads.length) lines.push('(none)')
-  for (const t of threads) lines.push(`- ${t.id} ${t.title} (${t.entries.length} entries)`)
-  return lines
-}
-
 export async function show(
   io: Io,
   block: string,
   opts: { zoom?: string | undefined; json?: boolean | undefined },
 ): Promise<void> {
-  const detail = await withCore(io, (core) => core.blockDetail(userActor(), block))
-  if (opts.json) return io.out(JSON.stringify(detail, null, 2))
-  if (opts.zoom) io.err(`note: --zoom ${opts.zoom} ignored; the zoom renderer arrives in M2`)
-  for (const l of renderBlock(detail)) io.out(l)
+  await withCore(io, async (core) => {
+    if (opts.json)
+      return io.out(JSON.stringify(await core.blockDetail(userActor(), block), null, 2))
+    io.out(await core.blockRead(userActor(), block, opts.zoom ?? 'FULL'))
+  })
+}
+
+export async function context(
+  io: Io,
+  opts: {
+    role?: string | undefined
+    focus?: string | undefined
+    budget?: string | undefined
+    explain?: string | undefined
+  },
+): Promise<void> {
+  const role = need(opts.role, '--role')
+  const budgetTokens = opts.budget !== undefined ? Number(opts.budget) : undefined
+  if (budgetTokens !== undefined && !(budgetTokens > 0))
+    throw new CliError('--budget must be a positive number of tokens')
+  const focus = opts.focus
+    ? {
+        blocks: opts.focus
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean),
+        computed: false,
+      }
+    : undefined
+  // An ad-hoc session: rendered for the role, never persisted.
+  const ctx = {
+    adhoc: { role, ...(focus ? { focus } : {}) },
+    ...(budgetTokens !== undefined ? { budgetTokens } : {}),
+  }
+  await withCore(io, async (core) => {
+    if (opts.explain) {
+      io.out((await core.contextExplain(userActor(), opts.explain, ctx)).text)
+      return
+    }
+    const v = await core.contextFor(userActor(), ctx)
+    io.out(v.text)
+    if (v.floorText) io.out(`\n${v.floorText}`)
+    io.err(`${v.tokens}/${v.budget} tokens · ${v.manifest.length} blocks · hash ${v.hash}`)
+  })
 }
 
 export async function history(
@@ -209,6 +212,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
       options: {
         json: { type: 'boolean' },
         zoom: { type: 'string' },
+        role: { type: 'string' },
+        focus: { type: 'string' },
+        budget: { type: 'string' },
+        explain: { type: 'string' },
         adopt: { type: 'boolean' },
         'store-root': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
@@ -228,6 +235,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
         break
       case 'show':
         await show(io, need(a, '<block>'), values)
+        break
+      case 'context':
+        await context(io, values)
         break
       case 'history':
         await history(io, need(a, '<block>'), b, values)

@@ -33,6 +33,17 @@ import {
 import { type Notice, schemaFor, validateDoc } from '../schema/validate.js'
 import type { StorageBackend, WriteOps } from '../store/backend.js'
 import { countValue, estimatorTokenizer, type Tokenizer } from '../tokenizer.js'
+import { computeDelta, type DeltaResult, deltaScope } from '../view/delta.js'
+import {
+  buildView,
+  type Explanation,
+  explain,
+  type ManifestEntry,
+  readBlock,
+  type ViewOptions,
+} from '../view/engine.js'
+import { parseSelector, resolveView } from '../view/policy.js'
+import { loadSnapshot, type Snapshot } from '../view/snapshot.js'
 import { authorize } from './authz.js'
 
 export interface CoreDeps {
@@ -61,6 +72,43 @@ export interface BlockDetail {
   decisions: DecisionView[]
   threads: Thread[]
   edges: { dependsOn: Edge[]; dependents: Edge[] }
+}
+
+export interface ContextOptions {
+  /** Model key into `hafiz.yaml windows`. */
+  model?: string
+  /** Explicit view budget in tokens. */
+  budgetTokens?: number
+  /** Render for an ad-hoc session that is never persisted (CLI preview). */
+  adhoc?: { role: string; focus?: Focus }
+}
+
+export interface ContextView {
+  text: string
+  hash: string
+  floorText: string
+  manifest: ManifestEntry[]
+  notices: Notice[]
+  budget: number
+  tokens: number
+  /** True when the hash differs from the session's previous view (always true for ad-hoc). */
+  changed: boolean
+}
+
+/** Focus from a role's focus policy, computed over the current blocks. */
+export function focusFromPolicy(
+  blocks: readonly Block[],
+  policy: string,
+  spawned?: BlockId,
+): Focus {
+  if (policy === 'spawned_block' && spawned) return { blocks: [spawned], computed: true }
+  if (policy === 'all_active') {
+    const active = [...blocks]
+      .filter((b) => b.status === 'active' && b.parentId !== null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    return { blocks: active.map((b) => b.id), computed: true }
+  }
+  return { blocks: [], computed: true }
 }
 
 type Handler = (by: Actor, args: Record<string, unknown>) => Promise<CommandResult<unknown>>
@@ -796,14 +844,7 @@ export class Core {
   }
 
   private async computeFocus(t: WriteOps, policy: string, spawned?: BlockId): Promise<Focus> {
-    if (policy === 'spawned_block' && spawned) return { blocks: [spawned], computed: true }
-    if (policy === 'all_active') {
-      const active = (await t.listBlocks()).filter(
-        (b) => b.status === 'active' && b.parentId !== null,
-      )
-      return { blocks: active.map((b) => b.id), computed: true }
-    }
-    return { blocks: [], computed: true }
+    return focusFromPolicy(await t.listBlocks(), policy, spawned)
   }
 
   async sessionEnd(sessionId: string): Promise<void> {
@@ -1018,6 +1059,141 @@ export class Core {
         dependents: edges.filter((e) => e.to === id),
       },
     }
+  }
+
+  // ───────────────────────────── views ─────────────────────────────
+
+  /** The largest `progress[-N:]` any zoom asks for: how much progress the snapshot loads. */
+  private get progressDepth(): number {
+    let n = 0
+    for (const sels of Object.values(this.config.zooms.zooms))
+      for (const raw of sels) {
+        const sel = parseSelector(raw)
+        if (sel.kind === 'progress') n = Math.max(n, sel.last)
+      }
+    return n
+  }
+
+  async snapshot(): Promise<Snapshot> {
+    return loadSnapshot(this.backend.read, { progressLast: this.progressDepth })
+  }
+
+  private async viewSubject(by: Actor, opts: ContextOptions, snap: Snapshot) {
+    if (opts.adhoc) {
+      const role = this.config.roles.roles[opts.adhoc.role]
+      if (!role) throw new ValidationError(`unknown role '${opts.adhoc.role}'`)
+      const focus =
+        opts.adhoc.focus ??
+        focusFromPolicy(
+          [...snap.blocks.values()].map((s) => s.block),
+          role.focus_policy,
+        )
+      return { role: opts.adhoc.role, focus, session: null }
+    }
+    const session = await this.backend.read.getSession(by.sessionId)
+    if (!session) throw new NotFoundError('session', by.sessionId)
+    return { role: session.role, focus: session.focus, session }
+  }
+
+  private viewOptions(role: string, focus: Focus, opts: ContextOptions): ViewOptions {
+    return {
+      role,
+      focus,
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.budgetTokens !== undefined ? { budgetTokens: opts.budgetTokens } : {}),
+    }
+  }
+
+  /** The session's structured prefix (§6). Records the hash; `changed` drives re-emission. */
+  async contextFor(by: Actor, opts: ContextOptions = {}): Promise<ContextView> {
+    authorize(this.config, by.role, 'context.for')
+    const snap = await this.snapshot()
+    const { role, focus, session } = await this.viewSubject(by, opts, snap)
+    const v = buildView(snap, this.config, this.tok, this.viewOptions(role, focus, opts))
+    const changed = v.hash !== session?.lastViewHash
+    if (session && (changed || session.deltaCursor === undefined)) {
+      const cursor = session.deltaCursor ?? (await this.backend.read.currentSeq())
+      await this.run(
+        by,
+        'context.for',
+        undefined,
+        false,
+        session.id,
+        async (t) => {
+          const cur = (await t.getSession(session.id)) ?? session
+          await t.putSession({
+            ...cur,
+            lastViewHash: v.hash,
+            deltaCursor: cur.deltaCursor ?? cursor,
+            updatedAt: this.clock.now(),
+          })
+        },
+        { skipAuthz: true },
+      )
+    }
+    return {
+      text: v.text,
+      hash: v.hash,
+      floorText: v.floorText,
+      manifest: v.manifest,
+      notices: v.notices,
+      budget: v.budget,
+      tokens: v.tokens,
+      changed,
+    }
+  }
+
+  /** Which rule fired for a block, how it aggregated, which degrade steps touched it. */
+  async contextExplain(
+    by: Actor,
+    blockId: BlockId,
+    opts: ContextOptions = {},
+  ): Promise<Explanation> {
+    authorize(this.config, by.role, 'context.explain')
+    const snap = await this.snapshot()
+    const { role, focus } = await this.viewSubject(by, opts, snap)
+    const v = buildView(snap, this.config, this.tok, this.viewOptions(role, focus, opts))
+    return explain(v, snap, blockId)
+  }
+
+  /** Minor events on focus + dependencies since the last delivery; advances the cursor. */
+  async contextDelta(by: Actor): Promise<DeltaResult> {
+    authorize(this.config, by.role, 'context.delta')
+    const session = await this.backend.read.getSession(by.sessionId)
+    if (!session) throw new NotFoundError('session', by.sessionId)
+    const snap = await this.snapshot()
+    const role = this.config.roles.roles[session.role]
+    const view = resolveView(this.config, role?.view ?? 'default')
+    const start = session.deltaCursor ?? (await this.backend.read.currentSeq())
+    const d = await computeDelta(this.backend.read, {
+      cursor: start,
+      blocks: deltaScope(snap, session.focus.blocks, view.dependencyDepth),
+      capTokens: this.config.tail.delta.cap_tokens,
+      tokenizer: this.tok,
+      sessionId: session.id,
+    })
+    if (d.cursor !== session.deltaCursor)
+      await this.run(
+        by,
+        'context.delta',
+        undefined,
+        false,
+        session.id,
+        async (t) => {
+          const cur = (await t.getSession(session.id)) ?? session
+          await t.putSession({ ...cur, deltaCursor: d.cursor, updatedAt: this.clock.now() })
+        },
+        { skipAuthz: true },
+      )
+    return d
+  }
+
+  /** One block rendered at a zoom level. */
+  async blockRead(by: Actor, id: BlockId, zoom = 'FULL'): Promise<string> {
+    authorize(this.config, by.role, 'block.read')
+    const snap = await this.snapshot()
+    if (!snap.blocks.has(id)) throw new NotFoundError('block', id)
+    return readBlock(snap, this.config, id, zoom)
   }
 
   // ───────────────────────────── dispatch ─────────────────────────────

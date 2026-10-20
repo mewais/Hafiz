@@ -1,0 +1,11 @@
+explain routing-planner-1 "Dedupe vehicle pings" (active, component)
+view: default · budget 1700 · view 1635 tokens
+rules (first match per focus block):
+  focus ingest-validation-1: relation=other status=active kind=component depth=3 → rule 10 default: LINE
+  focus routing-planner-1: relation=focus status=active kind=component depth=3 → rule 2 { relation: focus } → FULL
+  focus routing-planner-2: relation=sibling status=active kind=component depth=3 → rule 10 default: LINE
+aggregate (max zoom): FULL via focus routing-planner-1 as focus
+degrade:
+  step 4 { relation: focus } trim progress: 3, decisions: 2: trimmed { progress: 3, decisions: 2 }
+  step 5 { relation: focus } to DESIGN (focus_reverse) [focus routing-planner-1]: FULL → DESIGN
+final: DESIGN · 122 tokens

@@ -311,6 +311,32 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 - A counter-based notice fires when a user exchange has run `N` turns with no thread opened on
   the focus block.
 
+### 6.6 Engine conventions (as built in M2)
+
+- **Relation precedence** when several hold for one focus block: `root > focus > ancestor >
+  dependency > descendant > dependent > sibling > other`. `dep_distance` is the shortest
+  `depends_on` path from the focus block, bounded by the view's `dependency_depth`; `dependent`
+  uses the same bound in reverse. Rule `match` keys are arbitrary Relate attributes (`relation`,
+  `status`, `kind`, `depth`, `dep_distance`); a list value means any-of.
+- **Aggregation**: rules are evaluated per focus block; the most detailed zoom wins (zoom order =
+  key order of `zooms.yaml`), ties go to the higher-precedence relation. The winning evaluation's
+  attributes are what non-ordered `degrade` steps match; `order: focus_reverse` steps match per
+  focus block, lowest priority (`focus.order`, else `focus.blocks`, reversed) first, re-measuring
+  after each. A rule `floor` holds across all evaluations (most detailed wins).
+- **Connectors**: a block at `NONE` with a visible descendant is shown at the next-to-least zoom
+  (`LINE`) so every visible block's path stays intact.
+- **Rendering**: one heading per visible block, depth-based level, `Title [id] status · marks`
+  (marks: `focus`, `dependency`, non-default kind); sections are labelled lines, never headings;
+  missing docs and empty sections render nothing; superseded decisions render nowhere and standing
+  ones only in the floor; runs of heading-only blocks are not blank-line separated.
+- **Wire**: `<hafiz hash="…" role="…">` wraps notices (`> warn: …`) and the view;
+  `<hafiz-floor>` carries standing decisions; `<hafiz-delta>` and `<hafiz-unfiled>` are tail
+  turns. The hash (sha256, 12 hex) covers the view **and** the floor, so a new standing decision
+  re-emits. Budget is measured on the view only.
+- **Delta**: the session's own progress/step events are not echoed back; repeated events on the
+  same step or thread collapse to the latest. `context.for` initialises the cursor (the view already
+  carries recent history); `context.delta` advances it.
+
 ---
 
 ## 7. Core: sessions, compliance, nudge, drafters, events
