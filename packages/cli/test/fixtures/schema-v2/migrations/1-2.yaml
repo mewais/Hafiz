@@ -1,0 +1,8 @@
+from: 1
+to: 2
+description: component designs get boundaries and an owner; features get their own schema
+steps:
+  - rename_section: { schema: component-design, from: scope, to: boundaries }
+  - add_section:    { schema: component-design, name: owner, default: unassigned }
+  - drop_section:   { schema: component-design, name: references }
+  - map_kind:       { kind: feature, type: design, from: component-design, to: feature-design }

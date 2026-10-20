@@ -1,11 +1,26 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/storage-fs" },
-    { "path": "packages/gateway-mcp" },
-    { "path": "packages/cli" },
-    { "path": "packages/host-kilo" },
-    { "path": "packages/harness" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/storage-fs"
+    },
+    {
+      "path": "packages/storage-sqlite"
+    },
+    {
+      "path": "packages/gateway-mcp"
+    },
+    {
+      "path": "packages/cli"
+    },
+    {
+      "path": "packages/host-kilo"
+    },
+    {
+      "path": "packages/harness"
+    }
   ]
 }

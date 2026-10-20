@@ -60,6 +60,8 @@ export const hafizFile = z.object({
       .prefault({}),
   }),
   schema_set: z.string().default('default'),
+  // Version of the schema set; projects pin it and `hafiz migrate` upgrades them (migrations/).
+  schema_version: z.coerce.string().default('1'),
   tokenizer: z.object({
     name: z.string().default('estimator'),
     soft_zone: z.number().min(0).max(1).default(0.15),
@@ -95,6 +97,27 @@ export const hafizFile = z.object({
     })
     .prefault({}),
 })
+
+const docTypeName = z.enum(['design', 'plan', 'digest'])
+const migrationStep = z.union([
+  z.object({ rename_section: z.object({ schema: z.string(), from: z.string(), to: z.string() }) }),
+  z.object({ add_section: z.object({ schema: z.string(), name: z.string(), default: z.any() }) }),
+  z.object({ drop_section: z.object({ schema: z.string(), name: z.string() }) }),
+  // Blocks of `kind` switch the `type` doc from schema `from` to schema `to`.
+  z.object({
+    map_kind: z.object({ kind: z.string(), type: docTypeName, from: z.string(), to: z.string() }),
+  }),
+])
+export type MigrationStep = z.infer<typeof migrationStep>
+
+/** `migrations/<from>-<to>.yaml` in a schema set. */
+export const migrationFile = z.object({
+  from: z.coerce.string(),
+  to: z.coerce.string(),
+  description: z.string().optional(),
+  steps: z.array(migrationStep),
+})
+export type Migration = z.infer<typeof migrationFile>
 
 export const kindsFile = z.object({
   kinds: z.record(
@@ -226,6 +249,7 @@ export const configSchema = z.object({
   nudge: nudgeFile,
   tail: tailFile,
   schemas: z.record(z.string(), docSchemaFile),
+  migrations: z.record(z.string(), migrationFile).default({}),
   logs: logsSchemaFile,
   rules: z.record(z.string(), z.string()),
 })

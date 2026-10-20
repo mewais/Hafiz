@@ -1,0 +1,36 @@
+{
+  "name": "hafiz",
+  "version": "0.1.0",
+  "description": "Shared project memory for coding agents: a block tree of designs, plans and decisions with role-shaped views, served over MCP.",
+  "type": "module",
+  "bin": {
+    "hafiz": "./dist/hafiz.js"
+  },
+  "exports": {
+    "./bin": "./dist/hafiz.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": [
+    "mcp",
+    "agents",
+    "kilo",
+    "project-memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mewais/Hafiz.git"
+  },
+  "scripts": {
+    "build": "tsc -b ../.. && node ../../scripts/bundle.mjs hafiz"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

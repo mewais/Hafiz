@@ -6,6 +6,7 @@ storage:
     enabled: true
     minor_write_batch_seconds: 30
 schema_set: default
+schema_version: 1                     # bump with a migrations/<from>-<to>.yaml; `hafiz migrate` applies it
 tokenizer:
   name: estimator
   soft_zone: 0.15                  # writes within cap*(1+soft_zone) succeed with a notice

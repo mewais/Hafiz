@@ -45,6 +45,8 @@ export interface FsBackendOptions {
 }
 
 const JOURNAL_DIR = '.journal'
+/** Layered configuration lives in the store directory but is not store state. */
+const CONFIG_DIR = 'config'
 const GITIGNORE = `${JOURNAL_DIR}/\n.lock\n`
 
 export class FsBackend implements StorageBackend {
@@ -99,7 +101,9 @@ export class FsBackend implements StorageBackend {
   async dirty(): Promise<string[]> {
     if (!this.git || this.pendingMinor) return []
     const st = await this.git.status()
-    return st.files.map((f) => f.path).filter((p) => !p.startsWith(JOURNAL_DIR))
+    return st.files
+      .map((f) => f.path)
+      .filter((p) => !p.startsWith(JOURNAL_DIR) && !p.startsWith(`${CONFIG_DIR}/`))
   }
 
   tx<T>(meta: TxMeta, fn: (t: WriteOps) => Promise<T>): Promise<{ result: T; commit?: string }> {
@@ -308,6 +312,7 @@ function readAll(dir: string): FileMap {
   const walk = (d: string) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       if (
+        (d === dir && e.name === CONFIG_DIR) ||
         e.name === '.git' ||
         e.name === JOURNAL_DIR ||
         e.name === '.gitignore' ||

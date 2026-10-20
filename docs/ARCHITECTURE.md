@@ -156,9 +156,14 @@ sections:
   variance across vendors is 10–20%); beyond it, reject with the measured size and the remedy
   ("split into child blocks" / "move detail to progress"). Per-block cap overrides are allowed and
   recorded as a decision.
-- **Schema versioning.** The project pins `schema_set_version`. Reads are lenient (unknown sections
-  kept, missing required sections flagged, not failed). `hafiz migrate` upgrades docs explicitly;
-  validation on write uses the pinned version.
+- **Schema versioning.** The schema set declares `schema_version` (`hafiz.yaml`) and the project pins
+  it (`schema_set_version`). Reads are lenient (unknown sections kept, missing required sections
+  flagged, not failed); `hafiz doctor` lists docs that fail the loaded set. `hafiz migrate
+  [--dry-run]` upgrades docs explicitly, as the user, in one transaction, following declarative
+  `migrations/<from>-<to>.yaml` files in the schema set: `rename_section`, `add_section` (with a
+  default), `drop_section`, and `map_kind` (a kind's doc type moves to another schema). It refuses
+  to run if any migrated doc would still fail validation. Writes validate against the loaded set;
+  the pin tells `doctor` and `migrate` where the stored docs are.
 - Logs (`StepEvent`, `ProgressEntry`, `Decision`, `Thread`) have fixed small shapes with per-entry
   caps.
 
@@ -481,8 +486,10 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   new id) or import. No permission prompts arise from the location: agents never touch the files;
   all writes are MCP tool calls the adapter allowlists.
 
-`storage-sqlite` implements the same interface (history via a versions table) and passes the same
-conformance suite.
+`storage-sqlite` implements the same interface and passes the same conformance suite: one SQLite
+file (`<store>/hafiz.sqlite`, `node:sqlite`), rows per entity, append-only `logs`/`audit` tables, and a
+`versions` table with one row per doc write that backs `history` and `docAt`. A transaction
+commits as one SQLite transaction. `storage.backend` (`fs` | `sqlite`) selects it.
 
 ---
 
@@ -507,7 +514,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 
 ### 11.2 CLI (`hafiz …`)
 
-`init [--adopt]`, `tree`, `show <block> [--zoom]`, `history <block> [type]`, `revert`, `status`,
+`init [--adopt] [--backend]`, `tree`, `show <block> [--zoom]`, `history <block> [type]`, `revert`, `status`,
 `review`, `checkpoint`, `direct` (record a standing decision), `focus`, `explain`, `doctor`
 (wiring, drift: files under a done block changed since `done_at.commit`), `migrate`,
 `export/import`, `install <host>`, `daemon`.

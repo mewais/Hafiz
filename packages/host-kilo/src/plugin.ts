@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   type Config,
+  configDirs,
   findPointerFile,
   loadConfig,
   type ResolvedProject,
@@ -51,7 +52,8 @@ function detect(dir: string, env: NodeJS.ProcessEnv, log: (l: string) => void, c
   let found: Detected | null = null
   if (findPointerFile(dir)) {
     try {
-      found = { project: resolveProject(dir, env), config: loadConfig() }
+      const project = resolveProject(dir, env)
+      found = { project, config: loadConfig(configDirs(project.storeDir, env)) }
     } catch (e) {
       log(`hafiz: project pointer found but unusable, staying inactive: ${String(e)}`)
     }
@@ -65,15 +67,23 @@ function nodeBinary(env: NodeJS.ProcessEnv): string {
   return env.HAFIZ_NODE || (process.versions.bun ? 'node' : process.execPath)
 }
 
-/** argv prefix for the hafiz CLI: $HAFIZ_BIN, else @hafiz/cli's bin.js next to this package. */
+/**
+ * argv prefix for the hafiz CLI: $HAFIZ_BIN, else the `hafiz` package's bin (published layout),
+ * else @hafiz/cli's bin.js (workspace layout), else `hafiz` on PATH.
+ */
 function hafizCommand(env: NodeJS.ProcessEnv): string[] {
   const node = nodeBinary(env)
   if (env.HAFIZ_BIN) return [node, env.HAFIZ_BIN]
-  try {
-    // @hafiz/cli exports only an `import` condition, so resolve as ESM (works in Node and Bun).
-    const bin = join(dirname(fileURLToPath(import.meta.resolve('@hafiz/cli'))), 'bin.js')
-    if (existsSync(bin)) return [node, bin]
-  } catch {}
+  // Both packages export only an `import` condition, so resolve as ESM (works in Node and Bun).
+  const candidates: Array<() => string> = [
+    () => fileURLToPath(import.meta.resolve('hafiz/bin')),
+    () => join(dirname(fileURLToPath(import.meta.resolve('@hafiz/cli'))), 'bin.js'),
+  ]
+  for (const candidate of candidates)
+    try {
+      const bin = candidate()
+      if (existsSync(bin)) return [node, bin]
+    } catch {}
   return ['hafiz']
 }
 

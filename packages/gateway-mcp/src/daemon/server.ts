@@ -1,8 +1,16 @@
 // The per-project daemon: lock the store, serve JSON-RPC on a Unix socket, exit when idle.
 import { chmodSync, existsSync, unlinkSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { type Config, Core, type CoreDeps, loadConfig, resolveProject } from '@hafiz/core'
-import { FsBackend } from '@hafiz/storage-fs'
+import {
+  type Config,
+  Core,
+  type CoreDeps,
+  configDirs,
+  loadConfig,
+  resolveProject,
+  type StorageBackend,
+} from '@hafiz/core'
+import { createBackend } from '../backend.js'
 import { acquireLock } from './lock.js'
 import { ensureRuntimeDir, socketPathFor } from './paths.js'
 import { RPC_CODES, type RpcRequest, type RpcResponse, toRpcError } from './rpc.js'
@@ -32,22 +40,25 @@ export interface DaemonHandle {
 export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const env = opts.env ?? process.env
   const project = resolveProject(opts.projectDir, env)
-  const config = opts.config ?? loadConfig()
+  const config = opts.config ?? loadConfig(configDirs(project.storeDir, env))
   const projectId = project.pointer.id
   ensureRuntimeDir(env)
   const socketPath = socketPathFor(projectId, env)
 
   const lock = acquireLock(project.storeDir, socketPath) // throws DaemonLockedError
-  let backend: FsBackend | undefined
+  let backend: StorageBackend | undefined
   let server: Server | undefined
   try {
-    backend = new FsBackend({
-      dir: project.storeDir,
-      minorBatchSeconds: config.hafiz.storage.git.minor_write_batch_seconds,
-    })
+    backend = createBackend(config, project.storeDir)
     await backend.open()
     const service = new DaemonService(
-      new Core({ config, backend, env, ...(opts.llm ? { llm: opts.llm } : {}) }),
+      new Core({
+        config,
+        backend,
+        env,
+        repoDir: project.repoRoot,
+        ...(opts.llm ? { llm: opts.llm } : {}),
+      }),
     )
     await service.init()
 

@@ -1,0 +1,122 @@
+// `hafiz install kilo [--global|--project]` / `hafiz uninstall kilo`: add or remove the Hafiz
+// plugin in Kilo's `plugin` array. The config is JSONC; edits are surgical so comments, key order
+// and formatting survive.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+import {
+  applyEdits,
+  type Edit,
+  format,
+  modify,
+  type ParseError,
+  parse,
+  printParseErrorCode,
+} from 'jsonc-parser'
+import { CliError, repoRootOf } from './resolve.js'
+import type { Io } from './shared.js'
+
+export const KILO_PLUGIN = '@hafiz/kilo-plugin'
+const FORMAT = { tabSize: 2, insertSpaces: true, eol: '\n' }
+
+/** Candidate Kilo config files, most specific first. */
+export function kiloConfigCandidates(io: Pick<Io, 'cwd' | 'env'>, global: boolean): string[] {
+  if (global) {
+    const base = io.env.XDG_CONFIG_HOME || join(io.env.HOME || homedir(), '.config')
+    return ['kilo.jsonc', 'kilo.json'].map((f) => join(base, 'kilo', f))
+  }
+  let root = io.cwd
+  try {
+    root = repoRootOf(io.cwd)
+  } catch {}
+  return [
+    join(root, 'kilo.jsonc'),
+    join(root, 'kilo.json'),
+    join(root, '.kilo', 'kilo.jsonc'),
+    join(root, '.kilo', 'kilo.json'),
+  ]
+}
+
+/** Apply edits, then format only the inserted text so the rest of the file stays as written. */
+function formatEdits(text: string, edits: Edit[]): string {
+  let out = text
+  for (const e of [...edits].sort((a, b) => b.offset - a.offset)) {
+    out = applyEdits(out, [e])
+    // Cover the rest of the touched line too: a removal can leave the closing bracket behind.
+    const eol = out.indexOf('\n', e.offset + e.content.length)
+    const length = (eol < 0 ? out.length : eol) - e.offset
+    const fmt = format(out, { offset: e.offset, length }, FORMAT)
+    out = applyEdits(out, fmt)
+  }
+  return out
+}
+
+const specifier = (entry: unknown): unknown => (Array.isArray(entry) ? entry[0] : entry)
+
+function parseConfig(file: string, text: string): { plugin?: unknown } {
+  const errors: ParseError[] = []
+  const v = parse(text, errors, { allowTrailingComma: true })
+  const first = errors[0]
+  if (first) throw new CliError(`${file} is not valid JSONC (${printParseErrorCode(first.error)})`)
+  return (v ?? {}) as { plugin?: unknown }
+}
+
+/** Index of the Hafiz plugin in the `plugin` array of `text`, or -1. */
+export function pluginIndex(file: string, text: string): number {
+  const plugin = parseConfig(file, text).plugin
+  return Array.isArray(plugin) ? plugin.findIndex((e) => specifier(e) === KILO_PLUGIN) : -1
+}
+
+/** Config files (project, then global) that list the Hafiz plugin. */
+export function kiloInstalledIn(io: Pick<Io, 'cwd' | 'env'>): string[] {
+  const out: string[] = []
+  for (const global of [false, true])
+    for (const file of kiloConfigCandidates(io, global))
+      if (existsSync(file)) {
+        try {
+          if (pluginIndex(file, readFileSync(file, 'utf8')) >= 0) out.push(file)
+        } catch {}
+      }
+  return out
+}
+
+export async function installHost(
+  io: Io,
+  action: 'install' | 'uninstall',
+  host: string,
+  opts: { global: boolean },
+): Promise<void> {
+  if (host !== 'kilo')
+    throw new CliError(`unknown host '${host}'; only 'kilo' is supported (HOST-MATRIX.md)`)
+  const candidates = kiloConfigCandidates(io, opts.global)
+  const holdsPlugin = (f: string) => existsSync(f) && pluginIndex(f, readFileSync(f, 'utf8')) >= 0
+  const file =
+    (action === 'uninstall' ? candidates.find(holdsPlugin) : undefined) ??
+    candidates.find((f) => existsSync(f)) ??
+    (candidates[0] as string)
+  const scope = opts.global ? 'global' : 'project'
+  const exists = existsSync(file)
+  let text = exists ? readFileSync(file, 'utf8') : '{\n}\n'
+  const idx = pluginIndex(file, text)
+
+  if (action === 'install') {
+    if (idx >= 0) return io.out(`already installed in ${file}`)
+    const plugin = parseConfig(file, text).plugin
+    if (plugin !== undefined && !Array.isArray(plugin))
+      throw new CliError(`${file}: "plugin" is not an array; add "${KILO_PLUGIN}" by hand`)
+    const edits = Array.isArray(plugin)
+      ? modify(text, ['plugin', -1], KILO_PLUGIN, { isArrayInsertion: true })
+      : modify(text, ['plugin'], [KILO_PLUGIN], {})
+    text = formatEdits(text, edits)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, text)
+    io.out(`installed ${KILO_PLUGIN} in ${file} (${scope})`)
+    io.out('restart Kilo to load it; `hafiz init <name>` enables it in a repo')
+    return
+  }
+
+  if (!exists || idx < 0) return io.out(`not installed in ${file}`)
+  text = formatEdits(text, modify(text, ['plugin', idx], undefined, {}))
+  writeFileSync(file, text)
+  io.out(`removed ${KILO_PLUGIN} from ${file} (${scope})`)
+}

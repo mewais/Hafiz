@@ -42,6 +42,11 @@ function git(cwd: string, args: string[]): string | null {
   }
 }
 
+/** The repo's current HEAD commit, or undefined when `dir` is not a git repo with commits. */
+export function gitHead(dir: string): string | undefined {
+  return git(dir, ['rev-parse', 'HEAD']) || undefined
+}
+
 /** Absolute root of the git repo containing `cwd`. */
 export function repoRootOf(cwd: string): string {
   const top = git(cwd, ['rev-parse', '--show-toplevel'])

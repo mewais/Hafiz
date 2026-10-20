@@ -1,13 +1,20 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { type Config, configSchema } from './schema.js'
 
-/** Directory holding the built-in defaults, shipped with the core package. */
+/**
+ * Directory holding the built-in defaults, shipped with the core package. In the published
+ * bundles (`hafiz`, `@hafiz/kilo-plugin`) the defaults are copied to `config/default` next to the
+ * bundled entry file.
+ */
 export function defaultConfigDir(): string {
-  // src/config/load.ts → ../../config/default ; dist/config/load.js → ../../config/default
-  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'config', 'default')
+  const here = dirname(fileURLToPath(import.meta.url))
+  // src/config/load.ts -> ../../config/default ; dist/config/load.js -> ../../config/default
+  const inPackage = resolve(here, '..', '..', 'config', 'default')
+  return existsSync(inPackage) ? inPackage : resolve(here, 'config', 'default')
 }
 
 const FILES = [
@@ -46,6 +53,13 @@ export function readLayer(dir: string): RawLayer {
     }
     out.schemas = schemas
   }
+  const migrationsDir = join(dir, 'migrations')
+  if (existsSync(migrationsDir)) {
+    const migrations: Record<string, unknown> = {}
+    for (const f of readdirSync(migrationsDir))
+      if (f.endsWith('.yaml')) migrations[f.slice(0, -5)] = readYaml(join(migrationsDir, f))
+    out.migrations = migrations
+  }
   const rulesDir = join(dir, 'rules')
   if (existsSync(rulesDir)) {
     const rules: Record<string, string> = {}
@@ -79,6 +93,12 @@ export function loadConfig(overrideDirs: string[] = []): Config {
   let raw = readLayer(defaultConfigDir())
   for (const d of overrideDirs) if (existsSync(d)) raw = mergeLayers(raw, readLayer(d))
   return configSchema.parse(raw)
+}
+
+/** Override layers for a project: user-level `~/.hafiz/config`, then `<store>/config`. */
+export function configDirs(storeDir: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const home = env.HAFIZ_HOME || join(homedir(), '.hafiz')
+  return [join(home, 'config'), join(storeDir, 'config')]
 }
 
 /** Rules shared by every agent role; prepended to the role's own file. */

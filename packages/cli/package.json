@@ -22,6 +22,7 @@
     "@hafiz/core": "workspace:*",
     "@hafiz/gateway-mcp": "workspace:*",
     "@hafiz/storage-fs": "workspace:*",
+    "jsonc-parser": "^3.3.1",
     "yaml": "^2.9.1"
   },
   "bin": {

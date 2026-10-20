@@ -1,3 +1,4 @@
+export * from './backend.js'
 export * from './daemon/client.js'
 export * from './daemon/lock.js'
 export * from './daemon/paths.js'

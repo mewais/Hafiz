@@ -1,0 +1,3 @@
+# Schema set v2: component designs rename `scope` to `boundaries`, gain a required `owner`, lose
+# `references`; features get their own design schema.
+schema_version: 2

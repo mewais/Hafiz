@@ -1,0 +1,2 @@
+kinds:
+  feature: { schemas: { design: feature-design } }

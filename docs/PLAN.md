@@ -4,6 +4,19 @@ Vertical slices, each ending in something runnable and tested. Order is chosen s
 assumptions (deterministic view engine, embedded-proxy shaping on Kilo, protocol compliance rate)
 are tested as early as possible. Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
+## Status
+
+| Milestone | State |
+|---|---|
+| M0 Scaffold | done: monorepo, biome, vitest, default config as fixtures |
+| M1 Core + storage-fs | done: domain, schemas, commands, journaled git-backed fs store, conformance suite |
+| M2 View engine + tail | done: Relate/Policy/Render/Degrade/Floor/Hash, tail policy, goldens |
+| M3 Daemon + MCP | done: daemon, sessions, role-filtered MCP, CLI status/review/direct/focus/explain |
+| M4 Kilo adapter | done: plugin (config/event/tool hooks), embedded-proxy and transform-hooks shapers, rules |
+| M5 Compliance, condenser, cost | done: compliance checks, nudge, LLM providers, condenser, drafters, cost table |
+| M6 Harness | built: scripted S/M/L tasks and metrics; baseline numbers need real models (see its README) |
+| M7 Hardening + packaging | done: storage-sqlite, migrate, doctor (incl. drift), export/import, install kilo, two npm packages, README |
+
 ## Stack (proposed defaults — change before M0 if you disagree)
 
 | Concern | Choice | Why |
@@ -115,6 +128,17 @@ config/default      (data; loaded by core)
 - `storage-sqlite` through the conformance suite; `migrate` with a real schema change; `doctor`
   drift check via `done_at.commit`; export/import; Kilo marketplace entry; install docs.
 - (Optional) Claude Code / Codex append-only adapters per HOST-MATRIX §3.
+- **Status:** done, except the marketplace listing and the optional adapters (not started).
+  - `storage-sqlite` on `node:sqlite` (no native dependency), selected by `hafiz.yaml
+    storage.backend: sqlite` through one factory (`createBackend` in gateway-mcp, used by the CLI
+    and the daemon); `hafiz init|import --backend sqlite` writes that setting into `<store>/config`.
+  - Schema sets carry `schema_version`; the project pins it; `migrations/<from>-<to>.yaml`
+    (`rename_section`, `add_section`, `drop_section`, `map_kind`); `hafiz migrate [--dry-run]` is
+    all-or-nothing and attributed to the user. Config layers (`~/.hafiz/config`, `<store>/config`)
+    are now actually loaded by the CLI, daemon and plugin.
+  - `hafiz doctor`, `export`, `import`, `install|uninstall kilo` (`jsonc-parser` edits).
+  - Packaging: `hafiz` and `@hafiz/kilo-plugin` are esbuild bundles (`scripts/bundle.mjs`, run by
+    `pnpm build`); the other `@hafiz/*` packages stay private workspace packages. Not published.
 
 ## Dogfooding
 

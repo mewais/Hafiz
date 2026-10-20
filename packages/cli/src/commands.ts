@@ -3,19 +3,18 @@ import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
   type Actor,
-  Core,
   type DocType,
   describeProposal,
   focusFromPolicy,
-  loadConfig,
-  type Notice,
   opaqueId,
-  type ResolvedProject,
   renderCostTable,
 } from '@hafiz/core'
 import { type DaemonClient, ensureDaemon, runMcpStdio, startDaemon } from '@hafiz/gateway-mcp'
-import { FsBackend } from '@hafiz/storage-fs'
 import { stringify } from 'yaml'
+import { doctor } from './doctor.js'
+import { installHost } from './install-host.js'
+import { migrate } from './migrate.js'
+import { exportCmd, importCmd } from './portable.js'
 import {
   CliError,
   defaultStoreRoot,
@@ -27,23 +26,23 @@ import {
   repoRootOf,
   resolveProject,
 } from './resolve.js'
+import {
+  type Io,
+  openAndRun,
+  printNotices,
+  userActor,
+  withCore,
+  writeStoreBackend,
+} from './shared.js'
 
-export interface Io {
-  cwd: string
-  env: NodeJS.ProcessEnv
-  out: (line: string) => void
-  err: (line: string) => void
-  /** Path of this CLI's entry script, used to spawn a detached `hafiz daemon`. */
-  entry?: string
-  /** Replace daemon discovery (tests run the daemon in-process). */
-  connect?: (project: ResolvedProject) => Promise<DaemonClient>
-}
+export { type Io, userActor } from './shared.js'
 
 const DOC_TYPES: readonly DocType[] = ['design', 'plan', 'digest']
 
 const USAGE = `usage: hafiz <command> [options]
 
-  init <name> [--store-root DIR] [--adopt]   create a store for the current repo
+  init <name> [--store-root DIR] [--adopt] [--backend fs|sqlite]
+                                             create a store for the current repo
   tree [--json]                              print the block tree
   show <block> [--zoom Z] [--json]           print a block at a zoom level (default FULL)
   context --role R [--focus a,b] [--budget N] [--explain id]
@@ -56,35 +55,15 @@ const USAGE = `usage: hafiz <command> [options]
   direct "<text>" [--block ID] [--kind K]    record a standing decision (K: never|always|prefer)
   focus [--role R]                           live sessions' focus (or the focus a role would get)
   explain <block> [--role R] [--session ID]  why a block shows at its zoom
+  migrate [--dry-run]                        upgrade docs to the schema set's version
+  doctor [--online] [--json]                 check wiring, store health, schema failures, drift
+  export <file>                              write a portable JSON snapshot of the store
+  import <file> [--as-new] [--backend B]    load a snapshot into an empty store
+  install kilo [--global|--project]          add the Hafiz plugin to Kilo's config
+  uninstall kilo [--global|--project]        remove it again
   daemon [--project DIR]                     run the project daemon in the foreground
   mcp --role R [--project DIR]               serve MCP on stdio for role R
 `
-
-export function userActor(): Actor {
-  return { sessionId: 'cli', role: 'user', agent: osUser() }
-}
-
-async function withCore<T>(io: Io, fn: (core: Core, storeDir: string) => Promise<T>): Promise<T> {
-  const { storeDir } = resolveProject(io.cwd, io.env)
-  return openAndRun(storeDir, fn)
-}
-
-async function openAndRun<T>(
-  storeDir: string,
-  fn: (core: Core, storeDir: string) => Promise<T>,
-): Promise<T> {
-  const backend = new FsBackend({ dir: storeDir, minorBatchSeconds: 0 })
-  await backend.open()
-  try {
-    return await fn(new Core({ config: loadConfig(), backend }), storeDir)
-  } finally {
-    await backend.close()
-  }
-}
-
-function printNotices(io: Io, notices: Notice[]) {
-  for (const n of notices) io.err(`${n.level}: ${n.text}`)
-}
 
 function docType(s: string | undefined): DocType {
   if (!DOC_TYPES.includes(s as DocType))
@@ -102,7 +81,11 @@ function need(v: string | undefined, what: string): string {
 export async function init(
   io: Io,
   name: string,
-  opts: { storeRoot?: string | undefined; adopt?: boolean | undefined },
+  opts: {
+    storeRoot?: string | undefined
+    adopt?: boolean | undefined
+    backend?: string | undefined
+  },
 ): Promise<void> {
   const repoRoot = repoRootOf(io.cwd)
   const pointerFile = join(repoRoot, POINTER_PATH)
@@ -120,7 +103,9 @@ export async function init(
   const id = opaqueId('prj', 4)
   const storeDir = join(root, id)
   const fingerprint = originFingerprint(repoRoot)
-  await openAndRun(storeDir, async (core) => {
+  // The store's own config layer selects the backend (hafiz.yaml storage.backend).
+  if (opts.backend) writeStoreBackend(storeDir, opts.backend)
+  await openAndRun(storeDir, io.env, async (core) => {
     const { notices } = await core.projectInit(userActor(), {
       name,
       originFingerprint: fingerprint,
@@ -404,8 +389,11 @@ export async function mcp(
 
 export async function run(argv: string[], io: Io): Promise<number> {
   try {
+    // `--project` is a DIR option elsewhere; for install/uninstall it is a bare scope flag.
+    const hostCmd = argv[0] === 'install' || argv[0] === 'uninstall'
+    const args = hostCmd ? argv.filter((x) => x !== '--project') : argv
     const { values, positionals } = parseArgs({
-      args: argv,
+      args,
       allowPositionals: true,
       options: {
         json: { type: 'boolean' },
@@ -421,6 +409,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
         kind: { type: 'string' },
         project: { type: 'string' },
         session: { type: 'string' },
+        backend: { type: 'string' },
+        'dry-run': { type: 'boolean' },
+        online: { type: 'boolean' },
+        'as-new': { type: 'boolean' },
+        global: { type: 'boolean' },
         'store-root': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -432,7 +425,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     switch (cmd) {
       case 'init':
-        await init(io, need(a, '<name>'), { storeRoot: values['store-root'], adopt: values.adopt })
+        await init(io, need(a, '<name>'), {
+          storeRoot: values['store-root'],
+          adopt: values.adopt,
+          backend: values.backend,
+        })
         break
       case 'tree':
         await tree(io, values)
@@ -466,6 +463,26 @@ export async function run(argv: string[], io: Io): Promise<number> {
         break
       case 'explain':
         await explain(io, need(a, '<block>'), values)
+        break
+      case 'migrate':
+        await migrate(io, { dryRun: values['dry-run'] })
+        break
+      case 'doctor':
+        return await doctor(io, { online: values.online, json: values.json })
+      case 'export':
+        await exportCmd(io, need(a, '<file>'))
+        break
+      case 'import':
+        await importCmd(io, need(a, '<file>'), {
+          asNew: values['as-new'],
+          backend: values.backend,
+        })
+        break
+      case 'install':
+      case 'uninstall':
+        if (values.global && args.length !== argv.length)
+          throw new CliError('use either --global or --project')
+        await installHost(io, cmd, need(a, '<host>'), { global: !!values.global })
         break
       case 'daemon':
         await daemon(io, values)

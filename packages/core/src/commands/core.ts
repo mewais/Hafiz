@@ -17,6 +17,7 @@ import {
   type CondenseCursor,
   type Decision,
   type DecisionView,
+  DOC_TYPES,
   type Doc,
   type DocType,
   deriveDecisionStatus,
@@ -37,6 +38,7 @@ import {
 } from '../domain/types.js'
 import { createProvider, NoneProvider, providerEnabled } from '../llm/providers.js'
 import type { LLMProvider, LLMUsage } from '../llm/types.js'
+import { gitHead } from '../project/resolve.js'
 import { type Notice, schemaFor, validateDoc } from '../schema/validate.js'
 import {
   type ComplianceCheck,
@@ -72,6 +74,8 @@ export interface CoreDeps {
   llm?: { condenser?: LLMProvider; drafter?: LLMProvider }
   /** Environment for provider API keys (default: process.env). */
   env?: NodeJS.ProcessEnv
+  /** The project's repo; `done` records its HEAD so `hafiz doctor` can detect drift. */
+  repoDir?: string
 }
 
 export interface CommandResult<T = unknown> {
@@ -150,9 +154,11 @@ export class Core {
   readonly compliance: ComplianceEngine
   readonly condenserProvider: LLMProvider
   readonly drafterProvider: LLMProvider
+  private readonly repoDir: string | undefined
 
   constructor(deps: CoreDeps) {
     this.config = deps.config
+    this.repoDir = deps.repoDir
     this.backend = deps.backend
     this.tok = deps.tokenizer ?? estimatorTokenizer
     this.clock = deps.clock ?? systemClock
@@ -353,7 +359,7 @@ export class Core {
           name: args.name,
           originFingerprint: args.originFingerprint,
           rootBlockId: root.id,
-          schemaSetVersion: this.config.hafiz.schema_set,
+          schemaSetVersion: this.config.hafiz.schema_version,
           epoch: 0,
           createdAt: now,
         }
@@ -363,6 +369,46 @@ export class Core {
       },
       { skipAuthz: true },
     )
+  }
+
+  /** Apply a planned schema migration atomically: rewrite the docs, then re-pin the project. */
+  async schemaMigrate(
+    by: Actor,
+    args: {
+      to: string
+      docs: Array<{ block: BlockId; type: DocType; sections: Record<string, SectionValue> }>
+    },
+  ): Promise<CommandResult<{ migrated: number }>> {
+    return this.run(
+      by,
+      'schema.migrate',
+      undefined,
+      true,
+      'project',
+      async (t, notices) => {
+        const project = await t.getProject()
+        if (!project) throw new ValidationError('project not initialised')
+        for (const d of args.docs) {
+          const b = await this.mustBlock(t, d.block)
+          await this.writeDoc(t, by, b, d.type, d.sections, undefined, notices)
+        }
+        await t.putProject({ ...project, schemaSetVersion: args.to })
+        return { migrated: args.docs.length }
+      },
+      { skipAuthz: true, message: `hafiz: migrate schema set to version ${args.to}` },
+    )
+  }
+
+  /** Every stored doc (current versions), for migration planning and doctor checks. */
+  async allDocs(): Promise<{ blocks: Block[]; docs: Doc[] }> {
+    const blocks = await this.backend.read.listBlocks()
+    const docs: Doc[] = []
+    for (const b of blocks)
+      for (const type of DOC_TYPES) {
+        const d = await this.backend.read.getDoc(b.id, type)
+        if (d) docs.push(d)
+      }
+    return { blocks, docs }
   }
 
   // ───────────────────────────── blocks ─────────────────────────────
@@ -509,7 +555,10 @@ export class Core {
         const nb: Block = { ...b, status: args.status, version: b.version + 1, updatedAt: now }
         delete nb.blockedOn
         if (args.status === 'blocked' && args.blockedOn) nb.blockedOn = args.blockedOn
-        if (args.status === 'done') nb.doneAt = { ts: now }
+        if (args.status === 'done') {
+          const commit = this.repoDir ? gitHead(this.repoDir) : undefined
+          nb.doneAt = commit ? { ts: now, commit } : { ts: now }
+        }
         if (reopen) {
           nb.digestStale = true
           delete nb.doneAt

@@ -1,0 +1,8 @@
+type: design
+sections:
+  - { name: purpose,     required: true,  cap: 150, format: prose }
+  - { name: boundaries,  required: true,  cap: 200, format: list }
+  - { name: interface,   required: true,  cap: 600, format: structured }
+  - { name: owner,       required: true,  cap: 30,  format: prose }
+  - { name: constraints, required: false, cap: 200, format: list }
+  - { name: rationale,   required: false, cap: 300, format: prose }
