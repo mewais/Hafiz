@@ -341,6 +341,12 @@ byte-identical output. That property is what makes caching work and makes the en
 - **Event bus**: Core emits `EpochChanged{project, epoch}`, `FocusChanged{session}`,
   `Notice{session, text}`, `ConfirmationRequested{session, command}`. Gateways subscribe. This is
   how the proxy knows to rebuild a prefix and how an adapter knows to steer compaction.
+- **Pending notices queue** per session: hosts offer injection only at fixed moments (prompt
+  submit, session start), so notices accumulate in Core and the next injection drains them.
+- **Structured handback**: worker roles end their final message with a fenced `hafiz-report` block
+  (outcome, progress written, blockers, open threads; capped). Adapters that can shape tool
+  results pass only that block to the parent; others instruct the parent to read only that block.
+  Protocol-level, not an adapter trick.
 
 ---
 
@@ -488,7 +494,10 @@ trees and for search later). Both ship with a conformance test suite run against
 ### 11.1 MCP server (`hafiz mcp --role <role> [--project <id>]`)
 
 - One process per host agent connection; `--role` selects the tool subset exposed (from
-  `roles.yaml`). The process is a shim to the daemon.
+  `roles.yaml`). The process is a shim to the daemon. **Role = server instance**: hosts register
+  `hafiz-<role>` servers and restrict agents at server granularity, which every host supports;
+  per-tool restriction is a bonus where available. The role is also declared to Core per session so
+  authorization holds even when a host cannot hide tools per subagent (Codex).
 - Tool names mirror Core commands (`hafiz_block_set_status`, …). Tool descriptions carry the
   protocol hints ("call before marking done…").
 - `confirm_done: ask` uses **MCP elicitation** when the client supports it; otherwise
@@ -499,12 +508,17 @@ trees and for search later). Both ship with a conformance test suite run against
 - Session: connection = session; project resolved from the client's cwd (`roots` if provided,
   else `--project`).
 
-### 11.2 Proxy (`hafiz proxy --listen …`)
+### 11.2 Proxy (`hafiz proxy --listen …`) — phase 2, optional
 
-Host-agnostic realization of principle 2 for hosts that cannot rebuild context natively.
+Host-agnostic realization of principle 2 for hosts that cannot rebuild context natively. Per the
+host matrix, all three hosts can inject and re-inject after compaction natively and Kilo can
+rewrite history, so the proxy is not load-bearing; it is the path to Kilo-grade tail control on
+Claude Code and Codex and a fallback if a host's hooks regress.
 
-- **Wire adapters**: Anthropic Messages; OpenAI Chat Completions; OpenAI Responses. Each maps to
-  and from a common `Conversation` model (system, messages, tool calls/results, cache hints).
+- **Wire adapters**: Anthropic Messages (Claude Code); OpenAI Responses (Codex — Chat Completions
+  was removed from Codex); OpenAI Chat Completions (Kilo's openai-compatible providers). Each maps
+  to and from a common `Conversation` model (system, messages, tool calls/results, cache hints).
+  Claude Code requires `anthropic-*` headers, `cache_control` and SSE pings forwarded untouched.
 - **Rewriter**: locates (or inserts) the `<hafiz …>` envelope at the stable position (end of system
   / first user turn, with a cache breakpoint where the wire supports it). On `EpochChanged` or
   `FocusChanged` → replace envelope with a fresh `context.for`. Apply tail policy (stub old tool
@@ -530,15 +544,24 @@ per-role agent/mode definitions with tool restrictions, install rules snippets),
 compaction where the host allows). Where the host offers nothing for observe/act, the proxy is
 used for both.
 
-> The per-host capability matrix (what each of Claude Code, Kilo Code and Codex actually exposes
-> for hooks, plugins, MCP elicitation, per-agent tool restriction, compaction steering and custom
-> base URLs) is being verified against current documentation and will be recorded in
-> [`docs/HOST-MATRIX.md`](HOST-MATRIX.md). Adapter designs below are placeholders until then.
+The verified per-host capability matrix and the full adapter designs are in
+[`docs/HOST-MATRIX.md`](HOST-MATRIX.md). The conclusions that shape all three adapters:
 
-- `host-claude-code/` — a Claude Code plugin: hooks (session start / prompt / tool / pre-compact)
-  calling the daemon; generated `agents/*.md` per role with `tools:` allowlists; MCP registration.
-- `host-kilo/` — Kilo plugin/modes + rules; MCP registration; proxy as needed.
-- `host-codex/` — `config.toml` MCP + profiles; `AGENTS.md` fragments; proxy as needed.
+| | Claude Code | Codex | Kilo (current) |
+|---|---|---|---|
+| Packaging | plugin (hooks+MCP+agents+skills) + installer step | plugin (hooks+MCP+skills) + installer step | one TS plugin module |
+| Inject view | `SessionStart` (incl. after compaction) + `UserPromptSubmit`, append-only | same | system-prompt transform, replaced in place |
+| Tail control | shape results on entry (`updatedToolOutput`); no retro-stub | none in-band (`output_token_limit`) | full history transform (experimental) |
+| Steer compaction | static CLAUDE.md section only; re-inject after | `compact_prompt`; re-inject after | replace compaction prompt |
+| Role isolation | per-agent server allowlist | advisory within a session; profiles across | per-agent permission globs |
+| `done` confirmation | elicitation | elicitation | `needs_confirmation` fallback |
+
+Cross-host decisions (HOST-MATRIX §2): **role = MCP server instance** (`hafiz mcp --role r`);
+**append-only injection with self-describing envelopes** where hosts cannot replace text, the
+highest epoch being authoritative; **re-injection after compaction** as the keystone on Claude Code
+and Codex; **structured handback** blocks from workers; **the proxy is optional (phase 2)** since
+every host offers native injection and post-compaction re-injection, and Kilo offers native rewrite;
+**installer writes user-level settings** that plugins cannot.
 
 ---
 
