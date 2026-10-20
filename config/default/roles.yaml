@@ -1,0 +1,25 @@
+# A role is data: view, focus policy, command allowlist, rules file installed as the agent prompt.
+roles:
+  manager:
+    view: default
+    focus_policy: all_active
+    tools: [context.*, block.*, tree.list, edge.*, doc.patch:plan, decision.record,
+            thread.*, progress.append, focus.set, proposal.*, session.status]
+    rules: rules/manager.md
+  designer:
+    view: designer
+    focus_policy: all_active
+    tools: [context.*, block.read, tree.list, doc.write:design, doc.patch:design,
+            edge.*, decision.record, thread.*]
+    rules: rules/designer.md
+  planner:
+    view: default
+    focus_policy: all_active
+    tools: [context.*, block.read, tree.list, block.create, doc.write:plan, doc.patch:plan, thread.*]
+    rules: rules/planner.md
+  worker:
+    view: worker
+    focus_policy: spawned_block
+    tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
+            doc.write:digest, block.request_done]
+    rules: rules/worker.md

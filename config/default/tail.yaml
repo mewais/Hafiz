@@ -1,0 +1,13 @@
+# The verbatim tail, delta channel, unfiled summary and condensation trigger.
+tail:
+  budget_share_of_window: 0.35
+  tool_result_max_age_turns: 6
+  stub_template: "[elided: {tokens} tokens — {tool}]"
+  never_stub: [user]
+delta:
+  cap_tokens: 800
+unfiled:
+  cap_tokens: 1500
+condensation:
+  trigger: tail_over_budget      # also /hafiz checkpoint
+  slice_min_turns: 6

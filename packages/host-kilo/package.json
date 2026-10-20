@@ -1,0 +1,25 @@
+{
+  "name": "@hafiz/host-kilo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kilo Code plugin: config/event hooks and RequestShaper",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@hafiz/core": "workspace:*",
+    "@hafiz/gateway-mcp": "workspace:*"
+  }
+}

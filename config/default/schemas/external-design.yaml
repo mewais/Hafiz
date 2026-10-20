@@ -1,0 +1,4 @@
+type: design
+sections:
+  - { name: interface,  required: true,  cap: 500, format: structured }
+  - { name: references, required: false, cap: 100, format: refs }

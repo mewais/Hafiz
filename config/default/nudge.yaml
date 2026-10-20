@@ -1,0 +1,5 @@
+# Only for projects with no tree. One line, once per session.
+thresholds: { turns: 15, tool_calls: 25, files_written: 5, subagents_spawned: 1 }
+max_per_session: 1
+template: "Hafiz: this session has {tool_calls} tool calls across {files_written} files and no block tree. If this is multi-step work, offer to track it (create_block)."
+auto_init: false

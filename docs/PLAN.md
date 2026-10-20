@@ -120,11 +120,26 @@ From M3 onward, Hafiz's own development is tracked in Hafiz: this plan becomes t
 sections as root design. It is the cheapest realistic test of the brownfield story and of the
 medium-scale case.
 
-## Inputs needed before M0
+## Resolved inputs
 
-1. Confirm the stack table (or amend).
-2. Which model providers you use in Kilo (determines which wire adapters M4 builds first).
-3. Node version floor on your machines.
+- Stack as above ("clean and light" was the only requirement). Node floor: 22.
+- Providers in Kilo are mixed per session (Anthropic, OpenAI, DeepSeek, Kimi, other open-source).
+  M4 builds OpenAI Chat Completions (covers most open-source gateways) and Anthropic Messages
+  first, OpenAI Responses next.
+
+## Testing without model access
+
+The development environment has npm and general HTTPS but no model API keys. By design this
+costs little:
+
+- **M0–M3** use no model: fixtures, golden files, a scripted MCP client.
+- **M4** installs the real Kilo CLI and `@kilocode/plugin` and points a custom OpenAI-compatible
+  provider at a **mock LLM server** (scripted responses incl. tool calls, streaming). This exercises
+  the real plugin end to end — hooks, shaping, MCP, report capture — with no external calls.
+  Recorded real requests (captured on a developer machine) become wire-adapter goldens.
+- **M5** tests the condenser against a deterministic fake `LLMProvider`.
+- **Real-model runs** (M4 smoke, M6 compliance numbers) run on a developer machine with real
+  providers, or from the dev environment if a Kilo / OpenRouter key is provided as a secret.
 
 ## Risks and where they are retired
 

@@ -1,0 +1,26 @@
+{
+  "name": "@hafiz/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "hafiz command-line interface",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@hafiz/core": "workspace:*",
+    "@hafiz/storage-fs": "workspace:*",
+    "@hafiz/gateway-mcp": "workspace:*"
+  }
+}

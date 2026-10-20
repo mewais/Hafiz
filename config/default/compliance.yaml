@@ -1,0 +1,11 @@
+# Mechanical checks evaluated on counter updates and at session end. No LLM.
+checks:
+  - { id: wrote_without_progress,  when: session_end,  cond: "files_written > 0 && progress == 0",      action: [notice, proposal] }
+  - { id: silent_active_block,     when: counters,     cond: "turns_since_progress >= 25",              action: [notice] }
+  - { id: open_threads_at_exit,    when: session_end,  cond: "threads_opened_open > 0",                 action: [notice, proposal] }
+  - { id: done_with_empty_log,     when: request_done, cond: "progress == 0",                           action: [notice] }
+  - { id: cap_reject_no_retry,     when: counters,     cond: "cap_rejections > retries_after_reject",   action: [notice] }
+  - { id: long_unthreaded_discussion, when: counters,  cond: "user_turns_on_focus_without_thread >= 12", action: [notice] }
+report_capture:
+  enabled: true
+  cap_tokens: 1500            # verbatim up to this; remainder spilled to the store

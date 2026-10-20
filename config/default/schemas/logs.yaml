@@ -1,0 +1,5 @@
+# Fixed small shapes for append-only logs.
+progress:  { fields: [kind, text, refs], kinds: [done, blocked, found, changed, question, report], cap: 120 }
+decision:  { fields: [title, decision, rationale, standing, supersedes], standing: [never, always, prefer], cap: 160, standing_cap: 40 }
+thread:    { fields: [title, gist], gist_cap: 200, entry_cap: 120 }
+step:      { fields: [step_id, status], statuses: [todo, doing, done, skipped] }

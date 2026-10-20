@@ -1,0 +1,5 @@
+type: plan
+sections:
+  - { name: steps,      required: true,  cap: 800, format: steps }       # [{id,title,notes?}]; status via step events
+  - { name: acceptance, required: true,  cap: 200, format: list }
+  - { name: risks,      required: false, cap: 200, format: list }

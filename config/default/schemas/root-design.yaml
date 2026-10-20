@@ -1,0 +1,7 @@
+type: design
+sections:
+  - { name: overview,    required: true,  cap: 300, format: prose }
+  - { name: topology,    required: true,  cap: 400, format: list }        # components and data flow
+  - { name: interface,   required: false, cap: 400, format: structured }  # external surface of the system
+  - { name: constraints, required: false, cap: 250, format: list }
+  - { name: references,  required: false, cap: 150, format: refs }

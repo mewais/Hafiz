@@ -1,0 +1,24 @@
+{
+  "name": "@hafiz/storage-fs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Git-backed, journaled filesystem storage backend",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@hafiz/core": "workspace:*"
+  }
+}

@@ -1,0 +1,6 @@
+type: design
+sections:
+  - { name: question,   required: true,  cap: 150, format: prose }
+  - { name: findings,   required: false, cap: 600, format: list }
+  - { name: conclusion, required: false, cap: 200, format: prose }
+  - { name: references, required: false, cap: 150, format: refs }

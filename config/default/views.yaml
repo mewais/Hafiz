@@ -1,0 +1,28 @@
+views:
+  default:
+    budget: { share_of_window: 0.30, min_tokens: 3000, max_tokens: 24000 }   # excludes floor
+    dependency_depth: 2
+    rules:                                                   # first match wins; max zoom across focus set
+      - { match: { relation: root },                        zoom: DESIGN, floor: DESIGN }
+      - { match: { relation: focus },                       zoom: FULL }
+      - { match: { relation: ancestor },                    zoom: DESIGN }
+      - { match: { relation: dependency, status: done },    zoom: DIGEST }
+      - { match: { relation: dependency, dep_distance: 1 }, zoom: INTERFACE }
+      - { match: { relation: dependency },                  zoom: LINE }
+      - { match: { relation: descendant, status: active },  zoom: INTERFACE }
+      - { match: { status: done },                          zoom: DIGEST }
+      - { match: { status: dropped },                       zoom: NONE }
+      - { default: LINE }
+    degrade:                                                 # applied in order until within budget
+      - { match: { status: done, relation: other },         to: LINE }
+      - { match: { relation: sibling },                     to: NONE }
+      - { match: { relation: ancestor },                    to: INTERFACE }
+      - { match: { relation: focus }, trim: { progress: 3, decisions: 2 } }
+      - { match: { relation: focus }, to: DESIGN, order: focus_reverse }
+  worker:
+    extends: default
+    budget: { share_of_window: 0.20 }
+  designer:
+    extends: default
+    rules_prepend:
+      - { match: { relation: descendant, status: planned }, zoom: DESIGN }

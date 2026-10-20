@@ -1,0 +1,18 @@
+status:
+  transitions:
+    planned: [active, dropped]
+    active:  [blocked, done, dropped]
+    blocked: [active, dropped]
+    done:    [active]            # reopen
+    dropped: []
+  guards:
+    to_done:    [digest_present_and_fresh, no_open_threads, children_closed, confirm_done]
+    to_blocked: [blocked_on_required]
+    to_dropped: [reason_required]
+    reopen:     [reason_required, mark_digest_stale]
+  activate_parent_on_child_active: true
+epoch:
+  minor_paths: [progress, steps, threads]     # writes here never bump the project epoch
+caps:
+  on_exceeded: reject                          # after the tokenizer soft zone
+  allow_block_overrides: true                  # recorded as a decision

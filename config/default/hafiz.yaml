@@ -1,0 +1,19 @@
+# Top-level Hafiz settings. Layered: built-in defaults -> ~/.hafiz/config -> <store>/config
+storage:
+  backend: fs
+  root: ~/.hafiz/projects          # data location; the repo holds only .hafiz/project.yaml
+  git:
+    enabled: true
+    minor_write_batch_seconds: 30
+schema_set: default
+tokenizer:
+  name: estimator
+  soft_zone: 0.15                  # writes within cap*(1+soft_zone) succeed with a notice
+windows:                           # context window per model family; used for budgets
+  default: 200000
+confirm_done: auto                 # auto | ask
+llm:
+  condenser: { provider: none, model: cheap }   # provider none = condensation disabled
+  drafters:  { enabled: false, provider: none, model: cheap }
+daemon:
+  idle_shutdown_seconds: 900

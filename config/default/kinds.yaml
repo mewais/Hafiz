@@ -1,0 +1,9 @@
+# Block kinds select the schema set used for each doc type and may override view behaviour.
+kinds:
+  root:      { schemas: { design: root-design, plan: plan, digest: digest } }
+  component: { schemas: { design: component-design, plan: plan, digest: digest } }
+  feature:   { schemas: { design: component-design, plan: plan, digest: digest } }
+  research:  { schemas: { design: research-design, plan: plan, digest: digest } }
+  doc:       { schemas: { design: component-design, plan: plan, digest: digest } }
+  external:  { schemas: { design: external-design }, no_children: true }   # stub for un-imported code
+default_kind: component

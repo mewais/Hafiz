@@ -1,0 +1,6 @@
+type: digest
+sections:
+  - { name: outcome,         required: true,  cap: 200, format: prose }
+  - { name: interface_delta, required: true,  cap: 200, format: list }   # "none" allowed
+  - { name: pointers,        required: true,  cap: 150, format: refs }   # files, commits, PRs
+  - { name: lessons,         required: false, cap: 150, format: list }
