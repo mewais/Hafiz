@@ -450,6 +450,14 @@ So:
   committed by default so clones and worktrees resolve to the same store; users may gitignore it.
 - Resolution order for a project id: pointer file → hash of the git remote URL → hash of the
   repo root path. `hafiz init` writes the pointer.
+- **No permission prompts follow from this.** Agents never write to the store directly; every
+  write is an MCP tool call served by the daemon, an ordinary host-spawned process outside the
+  host's filesystem permission model (and outside Codex's sandbox). Hosts prompt per *tool*, not
+  per *path*, and each adapter installs the host's allow-all for Hafiz's tools at setup
+  (Claude Code `permissions.allow: ["mcp__hafiz__*"]`, Codex
+  `mcp_servers.hafiz.default_tools_approval_mode = "auto"`, Kilo `permission: {"hafiz_*": "allow"}`).
+  An in-project store would be the prompt-prone option: files an agent can see in its tree invite
+  direct `Read`/`Edit`, which either prompts or silently bypasses versioning and role enforcement.
 
 Markdown headings map 1:1 to schema sections, so a human can read or hand-edit a design and Hafiz
 re-validates on next load. Atomicity: write-to-temp + rename; a per-project lock file held by the
