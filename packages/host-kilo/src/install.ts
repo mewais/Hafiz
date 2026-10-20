@@ -169,8 +169,11 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
   )
   cfg.permission = { ...global, ...storeDenies(plan.storeDir, base) }
 
-  // Hafiz owns the tail in managed projects; Kilo's own compaction would summarise it away.
-  cfg.compaction = { ...(cfg.compaction ?? {}), auto: false }
+  // With a condenser configured Hafiz owns the tail and Kilo's own compaction would summarise it
+  // away. Without one (llm.condenser.provider none) nothing trims the tail but the host, so its
+  // compaction stays as the user set it.
+  if (config.hafiz.llm.condenser.provider !== 'none')
+    cfg.compaction = { ...(cfg.compaction ?? {}), auto: false }
 
   // Slash commands.
   cfg.command ??= {}
@@ -180,9 +183,10 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
     template: `Hafiz project status:\n\n!\`${cli} status\`\n\nSummarise this for the user in a few lines. Do not call tools.`,
   }
   cfg.command['hafiz-checkpoint'] ??= {
-    description: 'Hafiz: record unrecorded work from this conversation',
-    // TODO(M5): also trigger condensation of the verbatim tail (CondensationDue).
+    description: 'Hafiz: record unrecorded work and condense the conversation tail',
+    // The shell line asks the daemon to condense this session at its next request.
     template:
+      `!\`${cli} checkpoint\`\n\n` +
       'Checkpoint. Record in Hafiz anything from this conversation the store does not hold yet: ' +
       'progress for work done, decisions taken, threads to open or park. Use your hafiz tools, ' +
       'one small entry per item. Then reply with one line listing what you recorded.',

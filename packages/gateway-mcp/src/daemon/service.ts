@@ -7,8 +7,10 @@ import {
   type ContextOptions,
   type Core,
   focusFromPolicy,
+  HafizError,
   isAllowed,
   type Notice,
+  nudgeText,
   type Session,
   ValidationError,
 } from '@hafiz/core'
@@ -59,6 +61,22 @@ const schemas = {
     status: z.enum(['pending', 'accepted', 'rejected']).optional(),
   }),
   'notices.drain': z.object(token),
+  /** Fold the turns leaving a session's tail into its unfiled summary (async, may take seconds). */
+  condense: z.object({
+    ...token,
+    turns: z
+      .array(
+        z.object({
+          role: z.string(),
+          content: z.string(),
+          toolName: optStr,
+        }),
+      )
+      .max(5000),
+    through: z.object({ index: z.number().int().min(0), fingerprint: z.string().min(1) }),
+  }),
+  /** `hafiz checkpoint`: ask sessions to condense at their next shaping. */
+  'checkpoint.request': z.object({ ...token, session: optStr }),
 } as const
 
 export type DaemonMethod = keyof typeof schemas
@@ -82,6 +100,8 @@ export class DaemonService {
   private chain: Promise<unknown> = Promise.resolve()
   private readonly queues = new Map<string, QueuedNotice[]>()
   private readonly nudged = new Map<string, number>()
+  /** Command whose last cap rejection a session has not yet retried. */
+  private readonly rejected = new Map<string, string>()
   /** Proposals already announced (everything pending at startup counts as old news). */
   private seenProposals = new Set<string>()
 
@@ -93,6 +113,9 @@ export class DaemonService {
 
   /** Entry point for one RPC call; errors surface as RpcFailure/HafizError for the caller to map. */
   handle(method: string, params: Record<string, unknown>): Promise<unknown> {
+    // `condense` waits on an LLM for seconds; it must not stall tool calls. Its store writes are
+    // single transactions that re-read the session, so running beside the chain is safe.
+    if (method === 'condense') return this.exec(method, params)
     const run = this.chain.then(() => this.exec(method, params))
     this.chain = run.catch(() => undefined)
     return run
@@ -130,11 +153,7 @@ export class DaemonService {
     const core = this.core
     switch (method as DaemonMethod) {
       case 'dispatch': {
-        const command = p.command as string
-        const out = await core.dispatch(by, command, p.args as Record<string, unknown>)
-        if (command.startsWith('block.') || command.startsWith('proposal.'))
-          await this.afterStatusWrite(by.sessionId)
-        return out
+        return this.dispatch(by, p.command as string, p.args as Record<string, unknown>)
       }
       case 'context.for': {
         await this.refreshIfStale(session)
@@ -177,28 +196,141 @@ export class DaemonService {
           pendingProposals: (await r.listProposals({ status: 'pending' })).length,
         }
       }
-      case 'session.end':
+      case 'session.end': {
+        // Last chance to say something: a resumed session finds these in its queue.
+        await this.compliance(session.id, 'session_end')
         await core.sessionEnd(session.id)
-        this.queues.delete(session.id)
         return { ended: true }
+      }
       case 'counters.add': {
         const s = await core.countersAdd(session.id, p.delta as Record<string, number>)
-        if (s) await this.maybeNudge(s)
+        if (s) {
+          await this.maybeNudge(s)
+          await this.compliance(s.id, 'counters')
+        }
         return s ? publicSession(s) : null
+      }
+      case 'condense':
+        return this.condense(session, p as never)
+      case 'checkpoint.request': {
+        // The user (CLI) may name a session; agents may only ask for their own.
+        const target = (p.session as string | undefined) ?? session.id
+        if (target !== session.id) authorize(core.config, by.role, 'session.status')
+        const live = target === '*' ? await core.backend.read.listSessions({ active: true }) : []
+        const ids =
+          target === '*' ? live.filter((x) => x.id !== session.id).map((x) => x.id) : [target]
+        const done: string[] = []
+        for (const id of ids) if (await core.checkpointRequest(id)) done.push(id)
+        return { requested: done }
       }
       case 'proposal.list': {
         authorize(core.config, by.role, 'proposal.list')
         const status = p.status as 'pending' | 'accepted' | 'rejected' | undefined
         return core.backend.read.listProposals(status ? { status } : undefined)
       }
-      case 'notices.drain': {
-        const q = this.queues.get(session.id) ?? []
-        this.queues.delete(session.id)
-        return q
-      }
+      case 'notices.drain':
+        return this.drainFor(session.id)
       default:
         throw new RpcFailure({ code: RPC_CODES.method_not_found, message: 'unknown method' })
     }
+  }
+
+  /** One dispatched command, with the bookkeeping compliance and cost need around it. */
+  private async dispatch(by: Actor, command: string, args: Record<string, unknown>) {
+    const core = this.core
+    const sid = by.sessionId
+    if (this.rejected.get(sid) === command) {
+      this.rejected.delete(sid)
+      await core.countersAdd(sid, { retries_after_reject: 1 })
+    }
+    if (command === 'thread.park' && !(typeof args.gist === 'string' && args.gist.trim()))
+      await this.draftGistHint(by, args)
+    let out: Awaited<ReturnType<Core['dispatch']>>
+    try {
+      out = await core.dispatch(by, command, args)
+    } catch (e) {
+      // a cap rejection: doc sections (cap_exceeded) and log entries (validation with a cap)
+      if (
+        e instanceof HafizError &&
+        (e.code === 'cap_exceeded' || typeof e.details.cap === 'number')
+      ) {
+        this.rejected.set(sid, command)
+        await core.countersAdd(sid, { cap_rejections: 1 })
+      }
+      throw e
+    }
+    if (command.startsWith('block.') || command.startsWith('proposal.'))
+      await this.afterStatusWrite(sid)
+    if (
+      command === 'block.request_done' ||
+      (command === 'block.set_status' && args.status === 'done')
+    ) {
+      const extra = await this.compliance(sid, 'request_done', false)
+      if (extra.length) out = { ...out, notices: [...out.notices, ...extra] }
+      await this.draftDigest(sid, args)
+    }
+    return out
+  }
+
+  /** Thin digest + drafters on: queue a better draft for review. Best effort. */
+  private async draftDigest(sid: string, args: Record<string, unknown>): Promise<void> {
+    const core = this.core
+    const digest = args.digest as Record<string, never> | undefined
+    const block = (args.id ?? args.block) as string | undefined
+    if (!core.draftersEnabled || !digest || !block || !core.digestIsThin(digest)) return
+    try {
+      if (await core.draftDigest(sid, block)) await this.announceNewProposals(sid)
+    } catch (e) {
+      this.enqueue(sid, { level: 'info', text: `digest drafter failed: ${String(e)}` }, 'drafter')
+    }
+  }
+
+  /** `thread.park` without a gist: hand the agent a draft to submit instead of a bare refusal. */
+  private async draftGistHint(by: Actor, args: Record<string, unknown>): Promise<void> {
+    const core = this.core
+    if (!core.draftersEnabled || typeof args.id !== 'string') return
+    try {
+      const d = await core.draftGist(by.sessionId, args.id)
+      if (d)
+        throw new ValidationError(
+          `a gist is required to park a thread: what was being discussed and where it stands. Draft (submit it if accurate, else fix it): ${JSON.stringify(d.gist)}`,
+        )
+    } catch (e) {
+      if (e instanceof ValidationError) throw e
+    }
+  }
+
+  /**
+   * Run a compliance hook. Notices go to the session's queue (delivered with its next tool reply
+   * or tail shaping) unless `enqueue` is false, in which case they are returned.
+   */
+  private async compliance(
+    sessionId: string,
+    when: 'counters' | 'session_end' | 'request_done',
+    enqueue = true,
+  ): Promise<Notice[]> {
+    const { notices, proposals } = await this.core.complianceRun(sessionId, when)
+    if (enqueue) for (const n of notices) this.enqueue(sessionId, n, 'compliance')
+    if (proposals.length) await this.announceNewProposals(sessionId)
+    return enqueue ? [] : notices
+  }
+
+  private async condense(
+    session: Session,
+    p: {
+      turns: Array<{ role: string; content: string; toolName?: string | undefined }>
+      through: { index: number; fingerprint: string }
+    },
+  ) {
+    const turns = p.turns.map((t) => ({
+      role: t.role,
+      content: t.content,
+      ...(t.toolName ? { toolName: t.toolName } : {}),
+    }))
+    const r = await this.core.sessionCondense(session.id, { turns, through: p.through })
+    for (const n of r.notices) if (n.level === 'warn') this.enqueue(session.id, n, 'condenser')
+    if (r.proposals) await this.announceNewProposals(session.id)
+    return r
   }
 
   private async authenticate(token: string): Promise<Session> {
@@ -257,6 +389,13 @@ export class DaemonService {
 
   // ───────────────────────── notices ─────────────────────────
 
+  /** Take a session's queued notices (what `notices.drain` does, for in-process callers). */
+  drainFor(sessionId: string): QueuedNotice[] {
+    const q = this.queues.get(sessionId) ?? []
+    this.queues.delete(sessionId)
+    return q
+  }
+
   enqueue(sessionId: string, n: Notice, event: string): void {
     const q = this.queues.get(sessionId) ?? []
     q.push({ ...n, event, ts: this.core.clock.now() })
@@ -285,12 +424,9 @@ export class DaemonService {
 
   /** Tree-less project and a session past a nudge threshold: one line, bounded per session. */
   private async maybeNudge(s: Session): Promise<void> {
-    const cfg = this.core.config.nudge
-    if ((this.nudged.get(s.id) ?? 0) >= cfg.max_per_session) return
-    const over = Object.entries(cfg.thresholds).some(([k, t]) => (s.counters[k] ?? 0) >= t)
-    if (!over || (await this.core.treeListRaw()).length > 1) return
+    const text = nudgeText(this.core.config.nudge, s.counters, this.nudged.get(s.id) ?? 0)
+    if (!text || (await this.core.treeListRaw()).length > 1) return
     this.nudged.set(s.id, (this.nudged.get(s.id) ?? 0) + 1)
-    const text = cfg.template.replace(/\{(\w+)\}/g, (_, k: string) => String(s.counters[k] ?? 0))
     this.enqueue(s.id, { level: 'info', text }, 'nudge')
   }
 }

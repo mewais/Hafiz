@@ -1,5 +1,8 @@
 // The Core service: every write and read agents can perform, host-agnostic.
 // Gateways map onto these 1:1. See docs/ARCHITECTURE.md §5.
+
+import { type CondenseInput, Condenser, type CondenseTurn } from '../condense/condenser.js'
+import { Drafters } from '../condense/drafter.js'
 import type { Config } from '../config/schema.js'
 import { type Clock, systemClock } from '../domain/clock.js'
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.js'
@@ -10,6 +13,8 @@ import {
   type Block,
   type BlockedOn,
   type BlockId,
+  type ComplianceState,
+  type CondenseCursor,
   type Decision,
   type DecisionView,
   type Doc,
@@ -30,7 +35,19 @@ import {
   type StepStatus,
   type Thread,
 } from '../domain/types.js'
+import { createProvider, NoneProvider, providerEnabled } from '../llm/providers.js'
+import type { LLMProvider, LLMUsage } from '../llm/types.js'
 import { type Notice, schemaFor, validateDoc } from '../schema/validate.js'
+import {
+  type ComplianceCheck,
+  ComplianceEngine,
+  type ComplianceWhen,
+  complianceProposals,
+  initialState,
+  type ProposalDraft,
+  renderMessage,
+} from '../session/compliance.js'
+import { COST } from '../session/cost.js'
 import type { StorageBackend, WriteOps } from '../store/backend.js'
 import { countValue, estimatorTokenizer, type Tokenizer } from '../tokenizer.js'
 import { computeDelta, type DeltaResult, deltaScope } from '../view/delta.js'
@@ -51,6 +68,10 @@ export interface CoreDeps {
   backend: StorageBackend
   tokenizer?: Tokenizer
   clock?: Clock
+  /** Replace the providers built from `hafiz.yaml llm.*` (tests inject fakes). */
+  llm?: { condenser?: LLMProvider; drafter?: LLMProvider }
+  /** Environment for provider API keys (default: process.env). */
+  env?: NodeJS.ProcessEnv
 }
 
 export interface CommandResult<T = unknown> {
@@ -111,6 +132,12 @@ export function focusFromPolicy(
   return { blocks: [], computed: true }
 }
 
+function bump(c: Record<string, number>, delta: Record<string, number>): Record<string, number> {
+  const out = { ...c }
+  for (const [k, v] of Object.entries(delta)) out[k] = (out[k] ?? 0) + v
+  return out
+}
+
 type Handler = (by: Actor, args: Record<string, unknown>) => Promise<CommandResult<unknown>>
 
 export class Core {
@@ -120,6 +147,9 @@ export class Core {
   readonly clock: Clock
   readonly status: StatusMachine
   private readonly handlers = new Map<string, Handler>()
+  readonly compliance: ComplianceEngine
+  readonly condenserProvider: LLMProvider
+  readonly drafterProvider: LLMProvider
 
   constructor(deps: CoreDeps) {
     this.config = deps.config
@@ -127,7 +157,23 @@ export class Core {
     this.tok = deps.tokenizer ?? estimatorTokenizer
     this.clock = deps.clock ?? systemClock
     this.status = new StatusMachine(this.config.policies.status)
+    this.compliance = new ComplianceEngine(this.config.compliance.checks)
+    const io = { env: deps.env ?? process.env }
+    const llm = this.config.hafiz.llm
+    this.condenserProvider = deps.llm?.condenser ?? createProvider(llm.condenser, io)
+    this.drafterProvider =
+      deps.llm?.drafter ??
+      (llm.drafters.enabled ? createProvider(llm.drafters, io) : new NoneProvider())
     this.registerHandlers()
+  }
+
+  /** True when a condenser provider is configured (otherwise the host keeps its own compaction). */
+  get condenserEnabled(): boolean {
+    return providerEnabled({ provider: this.condenserProvider.name })
+  }
+
+  get draftersEnabled(): boolean {
+    return this.config.hafiz.llm.drafters.enabled && this.drafterProvider.name !== 'none'
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
@@ -762,7 +808,7 @@ export class Core {
         )
       const n = this.tok.count(args.gist)
       if (n > cap * (1 + this.config.hafiz.tokenizer.soft_zone))
-        throw new ValidationError(`gist is ${n} tokens; cap is ${cap}.`)
+        throw new ValidationError(`gist is ${n} tokens; cap is ${cap}.`, { measured: n, cap })
       th.gist = args.gist
     })
   }
@@ -779,8 +825,9 @@ export class Core {
     return this.run(by, 'thread.append', undefined, false, args.id, async (t) => {
       const th = await t.getThread(args.id)
       if (!th) throw new NotFoundError('thread', args.id)
-      if (this.tok.count(args.text) > cap * (1 + this.config.hafiz.tokenizer.soft_zone))
-        throw new ValidationError(`entry exceeds ${cap} tokens`)
+      const n = this.tok.count(args.text)
+      if (n > cap * (1 + this.config.hafiz.tokenizer.soft_zone))
+        throw new ValidationError(`entry exceeds ${cap} tokens`, { measured: n, cap })
       th.entries.push({ ts: this.clock.now(), by, text: args.text })
       th.updatedAt = this.clock.now()
       await t.putThread(th)
@@ -816,7 +863,7 @@ export class Core {
       async (t) => {
         const now = this.clock.now()
         if (existing) {
-          const s: Session = { ...existing, updatedAt: now }
+          const s: Session = { ...((await t.getSession(args.id)) ?? existing), updatedAt: now }
           delete s.endedAt
           await t.putSession(s)
           return s
@@ -832,6 +879,7 @@ export class Core {
           ...(args.parentSessionId ? { parentSessionId: args.parentSessionId } : {}),
           focus,
           counters: {},
+          compliance: initialState(await t.currentSeq()),
           createdAt: now,
           updatedAt: now,
         }
@@ -857,7 +905,8 @@ export class Core {
       false,
       sessionId,
       async (t) => {
-        await t.putSession({ ...s, endedAt: this.clock.now(), updatedAt: this.clock.now() })
+        const cur = (await t.getSession(sessionId)) ?? s
+        await t.putSession({ ...cur, endedAt: this.clock.now(), updatedAt: this.clock.now() })
       },
       { skipAuthz: true },
     )
@@ -866,8 +915,6 @@ export class Core {
   async countersAdd(sessionId: string, delta: Record<string, number>): Promise<Session | null> {
     const s = await this.backend.read.getSession(sessionId)
     if (!s) return null
-    const counters = { ...s.counters }
-    for (const [k, v] of Object.entries(delta)) counters[k] = (counters[k] ?? 0) + v
     const { result } = await this.run(
       { sessionId, role: s.role },
       'session.counters',
@@ -875,13 +922,331 @@ export class Core {
       false,
       sessionId,
       async (t) => {
-        const ns = { ...s, counters, updatedAt: this.clock.now() }
+        // re-read inside the transaction: condensation and compliance write the session too
+        const cur = (await t.getSession(sessionId)) ?? s
+        const ns = { ...cur, counters: bump(cur.counters, delta), updatedAt: this.clock.now() }
         await t.putSession(ns)
         return ns
       },
       { skipAuthz: true },
     )
     return result
+  }
+
+  // ───────────────────────────── compliance ─────────────────────────────
+
+  /** Bring the session's compliance bookkeeping up to date from the store (incremental). */
+  private async complianceState(s: Session): Promise<{
+    state: ComplianceState
+    openThreads: Thread[]
+  }> {
+    const r = this.backend.read
+    const state: ComplianceState = {
+      ...(s.compliance ?? initialState()),
+      active: [...(s.compliance?.active ?? [])],
+    }
+    const turns = s.counters.turns ?? 0
+    for (;;) {
+      const rows = await r.readSince(state.seq, 500)
+      for (const row of rows) {
+        if (row.log === 'progress' && (row.entry as ProgressEntry).by.sessionId === s.id)
+          state.progress++
+        state.seq = Math.max(state.seq, row.seq)
+      }
+      if (rows.length < 500) break
+    }
+    const mine = (await r.listThreads()).filter((t) => t.by.sessionId === s.id)
+    if (state.progress > (s.compliance?.progress ?? 0)) state.progressTurn = turns
+    if (mine.length > state.threads) state.userTurnsAtThread = s.counters.user_turns ?? 0
+    state.threads = mine.length
+    return { state, openThreads: mine.filter((t) => t.status === 'open') }
+  }
+
+  /**
+   * Evaluate the compliance checks of one hook for a session. Returns the notices to show the
+   * session and the proposals queued for review. Each check fires once per false→true change.
+   */
+  async complianceRun(
+    sessionId: string,
+    when: ComplianceWhen,
+  ): Promise<{ notices: Notice[]; proposals: Proposal[] }> {
+    const none = { notices: [] as Notice[], proposals: [] as Proposal[] }
+    const s = await this.backend.read.getSession(sessionId)
+    if (!s || !this.compliance.forHook(when).length) return none
+    const { state, openThreads } = await this.complianceState(s)
+    const focused = s.focus.blocks.length > 0
+    const metrics: Record<string, number> = {
+      ...s.counters,
+      progress: state.progress,
+      turns_since_progress: focused ? (s.counters.turns ?? 0) - state.progressTurn : 0,
+      threads_opened_open: openThreads.length,
+      user_turns_on_focus_without_thread: focused
+        ? (s.counters.user_turns ?? 0) - state.userTurnsAtThread
+        : 0,
+    }
+    const { fired, active } = this.compliance.evaluate(when, metrics, state.active)
+    state.active = active
+    const changed = JSON.stringify(state) !== JSON.stringify(s.compliance)
+    if (changed)
+      await this.run(
+        { sessionId, role: s.role },
+        'session.compliance',
+        undefined,
+        false,
+        sessionId,
+        async (t) => {
+          const cur = (await t.getSession(sessionId)) ?? s
+          await t.putSession({ ...cur, compliance: state })
+        },
+        { skipAuthz: true },
+      )
+    const notices: Notice[] = []
+    const proposals: Proposal[] = []
+    for (const f of fired) {
+      if (f.check.action.includes('notice'))
+        notices.push({
+          level: 'warn',
+          text: renderMessage(f.check.message ?? defaultMessage(f.check), metrics),
+        })
+      if (f.check.action.includes('proposal'))
+        for (const d of complianceProposals(f.check.id, {
+          sessionId,
+          block: s.focus.blocks[0],
+          openThreads,
+          metrics,
+        }))
+          proposals.push(
+            await this.proposalAdd(proposalOf(d, 'compliance'), { sessionId, role: s.role }),
+          )
+    }
+    return { notices, proposals }
+  }
+
+  // ───────────────────────────── condensation ─────────────────────────────
+
+  /** `hafiz checkpoint`: have the next shaping condense whatever it can. */
+  async checkpointRequest(sessionId: string, on = true): Promise<boolean> {
+    const s = await this.backend.read.getSession(sessionId)
+    if (!s || s.endedAt) return false
+    if (!!s.checkpointRequested === on) return true
+    await this.run(
+      { sessionId, role: s.role },
+      'session.checkpoint',
+      undefined,
+      false,
+      sessionId,
+      async (t) => {
+        const cur = (await t.getSession(sessionId)) ?? s
+        const ns: Session = { ...cur, updatedAt: this.clock.now() }
+        if (on) ns.checkpointRequested = true
+        else delete ns.checkpointRequested
+        await t.putSession(ns)
+      },
+      { skipAuthz: true },
+    )
+    return true
+  }
+
+  /** The session's current envelope text, without recording a view hash. */
+  private async envelopeFor(s: Session): Promise<string> {
+    const snap = await this.snapshot()
+    return buildView(snap, this.config, this.tok, this.viewOptions(s.role, s.focus, {})).text
+  }
+
+  /**
+   * Fold `turns` (the slice leaving the tail, ending at `through`) into the session's unfiled
+   * summary. All-or-nothing: on any failure the previous summary and cursor stay, a warn notice
+   * is returned, and the tail keeps its turns. Proposals go to the review queue, nothing else
+   * is written to the store.
+   */
+  async sessionCondense(
+    sessionId: string,
+    args: { turns: CondenseTurn[]; through: CondenseCursor },
+  ): Promise<{
+    status: 'condensed' | 'skipped' | 'failed'
+    summaryTokens?: number
+    proposals: number
+    notices: Notice[]
+  }> {
+    const skip = (why: string) => ({
+      status: 'skipped' as const,
+      proposals: 0,
+      notices: [{ level: 'info' as const, text: why }],
+    })
+    const s = await this.backend.read.getSession(sessionId)
+    if (!s) throw new NotFoundError('session', sessionId)
+    if (!this.condenserEnabled) return skip('no condenser provider is configured')
+    if (s.condensed?.fingerprint === args.through.fingerprint)
+      return skip('already condensed up to that turn')
+    if (!args.turns.length) return skip('nothing to condense')
+    const actor: Actor = { sessionId, role: s.role }
+    const cap = this.config.tail.unfiled.cap_tokens
+    const input: CondenseInput = {
+      previous: s.unfiledSummary ?? '',
+      turns: args.turns,
+      envelope: await this.envelopeFor(s),
+      focus: s.focus.blocks,
+      capTokens: cap,
+    }
+    let out: Awaited<ReturnType<Condenser['run']>>
+    try {
+      out = await new Condenser(this.condenserProvider, this.tok).run(input)
+    } catch (e) {
+      const text = `condensation failed, keeping the previous summary: ${e instanceof Error ? e.message : String(e)}`
+      await this.run(
+        actor,
+        'session.condense_failed',
+        undefined,
+        false,
+        sessionId,
+        async (t) => {
+          const cur = (await t.getSession(sessionId)) ?? s
+          const ns: Session = {
+            ...cur,
+            counters: bump(cur.counters, { [COST.condenseFailures]: 1 }),
+          }
+          delete ns.checkpointRequested
+          await t.putSession(ns)
+        },
+        { skipAuthz: true },
+      )
+      return { status: 'failed', proposals: 0, notices: [{ level: 'warn', text }] }
+    }
+    const usage: LLMUsage = out.usage ?? {
+      inputTokens:
+        this.tok.count(input.previous) +
+        this.tok.count(input.envelope) +
+        args.turns.reduce((n, t) => n + this.tok.count(t.content), 0),
+      outputTokens: this.tok.count(out.summary),
+    }
+    const notices: Notice[] = []
+    if (out.truncated)
+      notices.push({
+        level: 'info',
+        text: `unfiled summary exceeded ${cap} tokens and was truncated`,
+      })
+    if (out.dropped)
+      notices.push({
+        level: 'info',
+        text: `${out.dropped} malformed condenser proposal(s) dropped`,
+      })
+    const drafts: Array<Omit<Proposal, 'id' | 'status' | 'createdAt'>> = []
+    for (const p of out.proposals) {
+      const block = p.block ?? s.focus.blocks[0]
+      if (!block || !(await this.backend.read.getBlock(block))) {
+        notices.push({
+          level: 'info',
+          text: `condenser ${p.kind} proposal dropped: no valid block`,
+        })
+        continue
+      }
+      drafts.push(condenserProposal(p.kind, block, p.payload))
+    }
+    await this.run(
+      actor,
+      'session.condense',
+      undefined,
+      false,
+      sessionId,
+      async (t) => {
+        const cur = (await t.getSession(sessionId)) ?? s
+        const ns: Session = {
+          ...cur,
+          unfiledSummary: out.summary,
+          condensed: args.through,
+          counters: bump(cur.counters, {
+            [COST.condensations]: 1,
+            [COST.condenseTokensIn]: usage.inputTokens,
+            [COST.condenseTokensOut]: usage.outputTokens,
+          }),
+          updatedAt: this.clock.now(),
+        }
+        if (!out.summary) delete ns.unfiledSummary
+        delete ns.checkpointRequested
+        await t.putSession(ns)
+        for (const d of drafts)
+          await t.putProposal({
+            ...d,
+            id: opaqueId('prop'),
+            status: 'pending',
+            createdAt: this.clock.now(),
+          })
+      },
+      { skipAuthz: true },
+    )
+    return {
+      status: 'condensed',
+      summaryTokens: this.tok.count(out.summary),
+      proposals: drafts.length,
+      notices,
+    }
+  }
+
+  // ───────────────────────────── drafters ─────────────────────────────
+
+  /** A gist draft for a thread, queued as a proposal (`thread.park` with the gist). */
+  async draftGist(
+    sessionId: string,
+    threadId: string,
+  ): Promise<{ gist: string; proposal: Proposal } | null> {
+    if (!this.draftersEnabled) return null
+    const th = await this.backend.read.getThread(threadId)
+    if (!th) return null
+    const draft = await new Drafters(this.drafterProvider).gist(
+      th,
+      this.config.logs.thread.gist_cap,
+    )
+    if (!draft) return null
+    const gist = draft.value
+    const proposal = await this.proposalAdd(
+      {
+        kind: 'gist',
+        source: 'drafter',
+        blockId: th.blockId,
+        payload: { command: 'thread.park', args: { id: th.id, gist } },
+        note: `drafted gist for thread "${th.title}": ${gist}`,
+      },
+      { sessionId, role: 'user' },
+    )
+    return { gist, proposal }
+  }
+
+  /** Digest sections are thin when the outcome is a few words or no pointers are given. */
+  digestIsThin(digest: Record<string, SectionValue>): boolean {
+    const outcome = typeof digest.outcome === 'string' ? digest.outcome : ''
+    const pointers = Array.isArray(digest.pointers) ? digest.pointers : []
+    return this.tok.count(outcome) < 15 || pointers.length === 0
+  }
+
+  /** A fuller digest drafted from the block's progress log, queued as a proposal. */
+  async draftDigest(sessionId: string, blockId: BlockId): Promise<Proposal | null> {
+    if (!this.draftersEnabled) return null
+    const b = await this.backend.read.getBlock(blockId)
+    if (!b) return null
+    const log = (await this.backend.read.readLog(blockId, 'progress')).map((x) => x.entry)
+    const draft = await new Drafters(this.drafterProvider).digest(b, log)
+    if (!draft) return null
+    const d = draft.value
+    const sections: Record<string, SectionValue> = { outcome: String(d.outcome) }
+    sections.interface_delta = strList(d.interface_delta, ['none'])
+    sections.pointers = (Array.isArray(d.pointers) ? d.pointers : [])
+      .filter(
+        (p): p is { label: string; ref: string } =>
+          !!p && typeof p.label === 'string' && typeof p.ref === 'string',
+      )
+      .map((p) => ({ label: p.label, ref: p.ref }))
+    const lessons = strList(d.lessons, [])
+    if (lessons.length) sections.lessons = lessons
+    return this.proposalAdd(
+      {
+        kind: 'digest',
+        source: 'drafter',
+        blockId,
+        payload: { command: 'doc.write', args: { block: blockId, type: 'digest', sections } },
+        note: `drafted digest for "${b.title}" (the submitted one looked thin): ${String(d.outcome)}`,
+      },
+      { sessionId, role: 'user' },
+    )
   }
 
   async focusSet(
@@ -920,7 +1285,7 @@ export class Core {
       sessionId,
       async (t) => {
         const ns = {
-          ...s,
+          ...((await t.getSession(sessionId)) ?? s),
           focus: await this.computeFocus(t, 'all_active'),
           updatedAt: this.clock.now(),
         }
@@ -1125,6 +1490,9 @@ export class Core {
           const cur = (await t.getSession(session.id)) ?? session
           await t.putSession({
             ...cur,
+            counters: changed
+              ? bump(cur.counters, { [COST.viewEmits]: 1, [COST.viewTokens]: v.tokens })
+              : cur.counters,
             lastViewHash: v.hash,
             deltaCursor: cur.deltaCursor ?? cursor,
             updatedAt: this.clock.now(),
@@ -1183,7 +1551,14 @@ export class Core {
         session.id,
         async (t) => {
           const cur = (await t.getSession(session.id)) ?? session
-          await t.putSession({ ...cur, deltaCursor: d.cursor, updatedAt: this.clock.now() })
+          await t.putSession({
+            ...cur,
+            counters: d.text
+              ? bump(cur.counters, { [COST.deltaTokens]: this.tok.count(d.text) })
+              : cur.counters,
+            deltaCursor: d.cursor,
+            updatedAt: this.clock.now(),
+          })
         },
         { skipAuthz: true },
       )
@@ -1236,5 +1611,56 @@ export class Core {
     const h = this.handlers.get(command)
     if (!h) throw new ValidationError(`unknown command '${command}'`)
     return h(by, args)
+  }
+}
+
+function strList(v: unknown, fallback: string[]): string[] {
+  const l = Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === 'string' && !!x.trim())
+    : []
+  return l.length ? l : fallback
+}
+
+function defaultMessage(c: ComplianceCheck): string {
+  return `Hafiz compliance check '${c.id}' tripped (${c.cond}).`
+}
+
+function proposalOf(
+  d: ProposalDraft,
+  source: Proposal['source'],
+): Omit<Proposal, 'id' | 'status' | 'createdAt'> {
+  return {
+    kind: d.kind,
+    source,
+    ...(d.blockId ? { blockId: d.blockId } : {}),
+    payload: d.payload,
+    note: d.note,
+  }
+}
+
+/** A condenser proposal as the command it would run, with a note a reviewer can act on. */
+function condenserProposal(
+  kind: 'decision' | 'thread' | 'progress',
+  block: BlockId,
+  p: Record<string, unknown>,
+): Omit<Proposal, 'id' | 'status' | 'createdAt'> {
+  const text = (k: string) => String(p[k] ?? '')
+  const base = { kind, source: 'condenser' as const, blockId: block }
+  if (kind === 'decision')
+    return {
+      ...base,
+      payload: { command: 'decision.record', args: { block, ...p } },
+      note: `condenser: the user seems to have decided "${text('title')}": ${text('decision')}`,
+    }
+  if (kind === 'thread')
+    return {
+      ...base,
+      payload: { command: 'thread.open', args: { block, ...p } },
+      note: `condenser: unrecorded discussion "${text('title')}"${p.text ? `: ${text('text')}` : ''}`,
+    }
+  return {
+    ...base,
+    payload: { command: 'progress.append', args: { block, ...p } },
+    note: `condenser: unrecorded ${text('kind')}: ${text('text')}`,
   }
 }

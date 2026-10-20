@@ -5,11 +5,13 @@ import {
   type Actor,
   Core,
   type DocType,
+  describeProposal,
   focusFromPolicy,
   loadConfig,
   type Notice,
   opaqueId,
   type ResolvedProject,
+  renderCostTable,
 } from '@hafiz/core'
 import { type DaemonClient, ensureDaemon, runMcpStdio, startDaemon } from '@hafiz/gateway-mcp'
 import { FsBackend } from '@hafiz/storage-fs'
@@ -48,7 +50,8 @@ const USAGE = `usage: hafiz <command> [options]
                                              print the view an agent in role R would get
   history <block> [type] [--json]            git history of a block or one doc
   revert <block> <type> <commit>             restore a doc from an earlier commit
-  status [--json]                            project, epoch, sessions, pending proposals
+  status [--json]                            project, epoch, sessions, cost, pending proposals
+  checkpoint [--session ID]                  condense live sessions' conversation tails now
   review [--accept ID | --reject ID]         list or resolve the proposal queue
   direct "<text>" [--block ID] [--kind K]    record a standing decision (K: never|always|prefer)
   focus [--role R]                           live sessions' focus (or the focus a role would get)
@@ -285,8 +288,20 @@ export async function review(
     core.backend.read.listProposals({ status: 'pending' }),
   )
   if (!pending.length) return io.out('no pending proposals')
-  for (const p of pending)
-    io.out(`${p.id}  ${p.kind}/${p.source}  ${p.blockId ?? '-'}  ${p.note ?? p.payload.command}`)
+  for (const p of pending) for (const line of describeProposal(p)) io.out(line)
+}
+
+export async function checkpoint(io: Io, opts: { session?: string | undefined }): Promise<void> {
+  await withDaemon(io, async (c) => {
+    const r = await c.call<{ requested: string[] }>('checkpoint.request', {
+      session: opts.session ?? '*',
+    })
+    io.out(
+      r.requested.length
+        ? `checkpoint requested for ${r.requested.join(', ')}: they condense at their next request`
+        : 'no live session to checkpoint',
+    )
+  })
 }
 
 // ───────────────────────────── status / focus / explain ─────────────────────────────
@@ -319,6 +334,10 @@ export async function status(io: Io, opts: { json?: boolean | undefined }): Prom
     io.out(
       `  ${s.endedAt ? 'x' : '*'} ${s.role.padEnd(8)} ${s.id}${s.agent ? ` (${s.agent})` : ''}  focus: ${s.focus.blocks.join(', ') || '-'}${s.focus.computed ? ' (computed)' : ''}${counters ? `  ${counters}` : ''}`,
     )
+  }
+  if (sessions.some((s) => Object.keys(s.counters).length)) {
+    io.out('cost:')
+    for (const line of renderCostTable(sessions)) io.out(`  ${line}`)
   }
   io.out(`proposals: ${data.pending.length} pending`)
 }
@@ -438,6 +457,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
         break
       case 'direct':
         await direct(io, need(a, '<text>'), values)
+        break
+      case 'checkpoint':
+        await checkpoint(io, values)
         break
       case 'focus':
         await focus(io, values)

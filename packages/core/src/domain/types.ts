@@ -182,6 +182,30 @@ export interface Focus {
   computed: boolean
 }
 
+/** Bookkeeping the compliance engine keeps per session (§7). */
+export interface ComplianceState {
+  /** Checks whose condition currently holds; a check fires again only after it was false. */
+  active: string[]
+  /** Store log cursor for counting this session's progress entries incrementally. */
+  seq: number
+  /** Progress entries written by this session. */
+  progress: number
+  /** `turns` counter when progress last grew. */
+  progressTurn: number
+  /** Threads opened by this session. */
+  threads: number
+  /** `user_turns` counter when a thread was last opened. */
+  userTurnsAtThread: number
+}
+
+/** Where the condenser stopped: turns up to and including this one are covered by the summary. */
+export interface CondenseCursor {
+  /** Position in the host conversation when condensed (hint; the fingerprint is authoritative). */
+  index: number
+  /** sha256 prefix of `role \0 content` of the last condensed turn. */
+  fingerprint: string
+}
+
 export interface Session {
   /** Host session id where available, so reconnects re-attach. */
   id: SessionId
@@ -196,6 +220,11 @@ export interface Session {
   counters: Record<string, number>
   lastViewHash?: string
   unfiledSummary?: string
+  /** Leading turns of the host conversation already folded into `unfiledSummary`. */
+  condensed?: CondenseCursor
+  /** `hafiz checkpoint` asked for a condensation at the next shaping. */
+  checkpointRequested?: boolean
+  compliance?: ComplianceState
   /** Delta channel cursor: last log sequence delivered. */
   deltaCursor?: number
   createdAt: string

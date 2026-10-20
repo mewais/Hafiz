@@ -172,8 +172,10 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
   },
   "command": {
     "hafiz-checkpoint": {
-      "description": "Hafiz: record unrecorded work from this conversation",
-      "template": "Checkpoint. Record in Hafiz anything from this conversation the store does not hold yet: progress for work done, decisions taken, threads to open or park. Use your hafiz tools, one small entry per item. Then reply with one line listing what you recorded.",
+      "description": "Hafiz: record unrecorded work and condense the conversation tail",
+      "template": "!\`node /opt/hafiz/bin.js checkpoint\`
+
+Checkpoint. Record in Hafiz anything from this conversation the store does not hold yet: progress for work done, decisions taken, threads to open or park. Use your hafiz tools, one small entry per item. Then reply with one line listing what you recorded.",
     },
     "hafiz-status": {
       "description": "Hafiz: project status (epoch, sessions, pending proposals)",
@@ -183,9 +185,6 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
 
 Summarise this for the user in a few lines. Do not call tools.",
     },
-  },
-  "compaction": {
-    "auto": false,
   },
   "permission": {
     "edit": {

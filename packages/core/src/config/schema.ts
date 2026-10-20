@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ExprError, parseExpr } from '../session/expr.js'
 
 // Zod schemas for every configuration file. The YAML in config/default is the reference.
 
@@ -37,6 +38,16 @@ export const logsSchemaFile = z.object({
   step: z.object({ fields: z.array(z.string()), statuses: z.array(z.string()) }),
 })
 
+// none | fake | openai-compatible | anthropic. `api_key_env` names the variable holding the key.
+const llmSettings = z.object({
+  provider: z.string(),
+  model: z.string(),
+  base_url: z.string().optional(),
+  api_key_env: z.string().optional(),
+  max_tokens: z.number().int().positive().optional(),
+  timeout_seconds: z.number().positive().optional(),
+})
+
 export const hafizFile = z.object({
   storage: z.object({
     backend: z.string().default('fs'),
@@ -57,8 +68,8 @@ export const hafizFile = z.object({
   confirm_done: z.enum(['auto', 'ask']).default('auto'),
   llm: z
     .object({
-      condenser: z.object({ provider: z.string(), model: z.string() }),
-      drafters: z.object({ enabled: z.boolean(), provider: z.string(), model: z.string() }),
+      condenser: llmSettings,
+      drafters: llmSettings.extend({ enabled: z.boolean().default(false) }),
     })
     .default({
       condenser: { provider: 'none', model: 'cheap' },
@@ -170,8 +181,16 @@ export const complianceFile = z.object({
     z.object({
       id: z.string(),
       when: z.enum(['session_end', 'counters', 'request_done']),
-      cond: z.string(),
+      cond: z.string().superRefine((src, ctx) => {
+        try {
+          parseExpr(src)
+        } catch (e) {
+          ctx.addIssue({ code: 'custom', message: e instanceof ExprError ? e.message : String(e) })
+        }
+      }),
       action: z.array(z.enum(['notice', 'proposal'])),
+      /** Notice text; `{metric}` placeholders. */
+      message: z.string().optional(),
     }),
   ),
   report_capture: z.object({ enabled: z.boolean(), cap_tokens: z.number().int() }),

@@ -107,6 +107,54 @@ describe('cli: daemon-backed commands', () => {
     expect(await run(['review', '--accept', 'a', '--reject', 'b'], io)).toBe(1)
   })
 
+  it('status shows a cost table; review lists source, note and the command; checkpoint flags sessions', async () => {
+    const { io, out, d } = await setup()
+    const core = d.service.core
+    const root = (await core.backend.read.getProject())?.rootBlockId as string
+    const mgr = await DaemonClient.connect(d.socketPath)
+    cleanup.push(() => mgr.close())
+    await mgr.openSession({ id: 'mgr', host: 't', role: 'manager' })
+    await mgr.contextFor() // one view re-emit
+    await mgr.countersAdd({
+      wire_requests: 2,
+      wire_input: 100,
+      wire_cache_read: 300,
+      condensations: 1,
+    })
+    await core.proposalAdd(
+      {
+        kind: 'decision',
+        source: 'condenser',
+        blockId: root,
+        payload: {
+          command: 'decision.record',
+          args: { block: root, title: 'Cents', decision: 'Integer cents.' },
+        },
+        note: 'condenser: the user seems to have decided "Cents"',
+      },
+      { sessionId: 'mgr', role: 'manager' },
+    )
+
+    expect(await run(['status'], io)).toBe(0)
+    const status = out.join('\n')
+    expect(status).toMatch(
+      /cost:\n\s+session\s+role\s+re-emits\s+tok\/view\s+delta tok\s+cache hit\s+condense/,
+    )
+    expect(status).toMatch(/mgr\s+manager\s+1\s+\d+\s+0\s+75%\s+1\s+0/)
+
+    out.length = 0
+    expect(await run(['review'], io)).toBe(0)
+    expect(out[0]).toMatch(/^prop_\w+ {2}decision {2}from condenser {2}on \S+/)
+    expect(out[1]).toContain('condenser: the user seems to have decided "Cents"')
+    expect(out[2]).toContain('accept runs: decision.record {"block":')
+
+    out.length = 0
+    expect(await run(['checkpoint'], io)).toBe(0)
+    expect(out.join('\n')).toContain('checkpoint requested for mgr')
+    expect((await core.backend.read.getSession('mgr'))?.checkpointRequested).toBe(true)
+    expect((await core.backend.read.getSession('cli'))?.checkpointRequested).toBeUndefined()
+  })
+
   it('smoke: a write command spawns a detached daemon that serves it, then idles out', async () => {
     const bin = join(import.meta.dirname, '../dist/bin.js')
     if (!existsSync(bin)) return // run `pnpm build` first

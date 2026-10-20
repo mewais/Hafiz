@@ -11,7 +11,7 @@ import {
   type Tokenizer,
 } from '@hafiz/core'
 import type { DaemonClient } from '@hafiz/gateway-mcp'
-import type { SessionSource } from './shaper/core.js'
+import type { CondenseRequest, SessionSource, UnfiledState } from './shaper/core.js'
 
 /** Convention: a task prompt containing `hafiz:block=<id>` spawns the subagent on that block. */
 export const BLOCK_MARKER = /hafiz:block=([A-Za-z0-9_.-]+)/
@@ -243,13 +243,34 @@ export class SessionRegistry implements SessionSource {
     return { envelope: rules ? `${rules}\n\n${v.text}` : v.text, floor: v.floorText }
   }
 
+  /**
+   * The delta plus any notices queued for the session (compliance, nudge, proposals). They ride
+   * in the tail so a session that never calls a Hafiz tool still hears them; the shaper's ledger
+   * keeps them in place on later requests.
+   */
   async delta(id: string): Promise<string> {
-    return (await this.call<{ text: string }>(id, 'context.delta')).text
+    const [d, queued] = await Promise.all([
+      this.call<{ text: string }>(id, 'context.delta'),
+      this.call<Array<{ event: string; text: string }>>(id, 'notices.drain').catch(() => []),
+    ])
+    if (!queued.length) return d.text
+    const notes = queued.map((n) => `- [${n.event}] ${n.text}`).join('\n')
+    return [d.text, `<hafiz-notices>\n${notes}\n</hafiz-notices>`].filter(Boolean).join('\n')
   }
 
-  async unfiled(id: string): Promise<string | undefined> {
-    const s = await this.call<{ unfiledSummary?: string }>(id, 'session.self')
-    return s.unfiledSummary
+  async unfiled(id: string): Promise<UnfiledState | undefined> {
+    const s = await this.call<
+      Pick<Session, 'unfiledSummary' | 'condensed' | 'checkpointRequested'>
+    >(id, 'session.self')
+    return {
+      summary: s.unfiledSummary,
+      cursor: s.condensed,
+      checkpoint: s.checkpointRequested,
+    }
+  }
+
+  condense(id: string, req: CondenseRequest): Promise<unknown> {
+    return this.call(id, 'condense', { ...req })
   }
 
   async close(): Promise<void> {

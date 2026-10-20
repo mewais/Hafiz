@@ -1,7 +1,7 @@
 // The per-project daemon: lock the store, serve JSON-RPC on a Unix socket, exit when idle.
 import { chmodSync, existsSync, unlinkSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { type Config, Core, loadConfig, resolveProject } from '@hafiz/core'
+import { type Config, Core, type CoreDeps, loadConfig, resolveProject } from '@hafiz/core'
 import { FsBackend } from '@hafiz/storage-fs'
 import { acquireLock } from './lock.js'
 import { ensureRuntimeDir, socketPathFor } from './paths.js'
@@ -13,6 +13,8 @@ export interface DaemonOptions {
   projectDir: string
   env?: NodeJS.ProcessEnv
   config?: Config
+  /** LLM providers instead of the ones `hafiz.yaml llm.*` names (tests). */
+  llm?: CoreDeps['llm']
   /** Overrides `hafiz.yaml daemon.idle_shutdown_seconds` (milliseconds; 0 disables). */
   idleShutdownMs?: number
 }
@@ -44,7 +46,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       minorBatchSeconds: config.hafiz.storage.git.minor_write_batch_seconds,
     })
     await backend.open()
-    const service = new DaemonService(new Core({ config, backend }))
+    const service = new DaemonService(
+      new Core({ config, backend, env, ...(opts.llm ? { llm: opts.llm } : {}) }),
+    )
     await service.init()
 
     const sockets = new Set<Socket>()

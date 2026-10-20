@@ -310,6 +310,29 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   construction: each slice is condensed once.
 - A counter-based notice fires when a user exchange has run `N` turns with no thread opened on
   the focus block.
+- **As built (M5).** The shaper asks `shapeTail`; when it returns `condense` it calls the daemon's
+  `condense` method **without waiting**: the current request goes out with the un-condensed tail,
+  the next one finds the summary. One condensation per session at a time. The daemon runs it
+  beside its serial request chain (an LLM call must not stall tool calls); its single store write
+  re-reads the session. `/hafiz-checkpoint` and `hafiz checkpoint` set `checkpointRequested` on
+  live sessions; the next shaping then condenses everything before the newest user turn.
+  - *Cursor.* A condensation stores `session.condensed = {index, fingerprint}` for the last turn
+    it folded (sha256 of `role\0content` of the host's own, unstubbed turn). Every later shaping
+    drops the host turns up to that turn before `shapeTail` runs; the fingerprint decides, the
+    index is only a tie-breaker. So the cut is a pure function of (conversation, stored cursor):
+    two shapes of the same conversation are byte-identical, and a cursor that cannot be found
+    drops nothing (the summary is then redundant, never lossy).
+  - *Failure.* Unparseable output, an empty summary that would erase a previous one, or a provider
+    error keep the previous summary and cursor, count `condense_failures`, and queue a warn
+    notice. The condenser tolerates fenced JSON; it drops malformed proposals individually, caps
+    them at six, truncates an over-cap summary (newest lines kept), and proposals need a block
+    (default: the session's first focus block) that exists.
+  - *No provider.* With `llm.condenser.provider: none` nothing condenses and the tail grows, so
+    the plugin leaves Kilo's own compaction as the user set it; it sets `compaction.auto: false`
+    only when a condenser is configured.
+  - *Notices ride the tail.* Queued notices (compliance, nudge, proposals) are drained by the
+    shaper into the same inserted turn as the delta, so a session that never calls a Hafiz tool
+    still hears them.
 
 ### 6.6 Engine conventions (as built in M2)
 
@@ -346,14 +369,26 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   record their parent.
 - **Counters** (`turns`, `tool_calls`, `files_written`, `subagents_spawned`, `tokens_in/out`,
   `cache_read/write`) are fed by the adapter; Core never observes the host.
-- **Compliance checks** (config `compliance.yaml`), evaluated on counter updates and session end:
+- **Compliance checks** (config `compliance.yaml`), evaluated on counter updates, `request_done`
+  and session end:
   `files_written > 0 ∧ progress == 0`; active focus block silent for `N` turns; session ending with
   threads it opened still `open`; `request_done` with an empty progress log; cap rejections
-  followed by no retry. Each yields a notice to the session and, where it matters, a proposal.
+  followed by no retry. Each yields a notice to the session and, where it matters, a proposal
+  carrying the concrete command (e.g. `progress.append` kind `report` on the focus block).
+  `cond` is a tiny expression language (numbers, identifiers, `> >= < <= == !=`, `&& || !`,
+  parentheses; no property access or calls, parsed at config load, unknown identifiers read 0)
+  over the session's counters plus derived `progress`, `turns_since_progress`,
+  `threads_opened_open`, `user_turns_on_focus_without_thread`. Checks are **edge-triggered**: one
+  fires when its condition turns true and not again until it was false, so each state change is
+  reported once. Cap rejections are counted by the daemon from real errors; a call to the same
+  command after a rejection counts as a retry.
 - **Report capture**: the adapter hands every subagent's final message to Core, which stores it as
   a `progress` entry of kind `report` on the worker's block, verbatim up to a cap, with the rest
   spilled to the store. Mechanical, unconditional, no LLM.
-- **Nudge**: counter thresholds in a tree-less project → one-line notice, once per session.
+- **Nudge**: counter thresholds in a tree-less project → one-line notice, once per session. With
+  no Hafiz project at all the plugin takes a cheap path: it returns four tiny hooks, keeps the
+  counters in memory and, when a threshold trips, appends the line to the session's next system
+  prompt (`system.transform`), once. No daemon, config change or proxy is ever started.
 - **Drafters** (opt-in, default off): at `request_done` (digest draft from the progress log) and at
   `thread.park` without a gist (gist draft). Event-triggered, cheap model, output is a proposal or a
   pre-filled argument the agent must submit, never a direct write.
@@ -361,9 +396,13 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   non-blocking by design — `auto` statuses proceed, the queue is for the user's later pass.
 - **Events**: `ViewChanged{session, hash}`, `DeltaAvailable{session}`, `Notice{session}`,
   `ProposalAdded`, `CondensationDue{session}`. The adapter subscribes.
-- **Cost instrumentation**: per session and project — view re-emits/hour, tokens per rebuild,
-  cache read/write ratio, condensations/hour and their token cost. Reported by `hafiz status`. The
-  "cheaper than summarization" thesis is measured, not asserted.
+- **Cost instrumentation**: per session and project — view re-emits, tokens per rebuild, delta
+  tokens, cache read/write ratio, condensations and their token cost. All plain session counters
+  (`view_emits`, `view_tokens`, `delta_tokens`, `condensations`, `condense_tokens_in/out`,
+  `wire_*`); the embedded proxy reads `usage` off every managed response (OpenAI
+  `prompt_tokens_details.cached_tokens`, Anthropic `cache_*_input_tokens`; JSON bodies and the
+  final SSE usage event, nothing buffered). `hafiz status` prints the table. The "cheaper than
+  summarization" thesis is measured, not asserted.
 
 ---
 

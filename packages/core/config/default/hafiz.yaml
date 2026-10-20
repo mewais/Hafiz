@@ -13,7 +13,12 @@ windows:                           # context window per model family; used for b
   default: 200000
 confirm_done: auto                 # auto | ask
 llm:
-  condenser: { provider: none, model: cheap }   # provider none = condensation disabled
+  # provider: none | openai-compatible | anthropic | fake (tests).  none = condensation disabled
+  # (the host's own compaction stays on). Real providers need model, api_key_env (the NAME of the
+  # environment variable holding the key) and, for openai-compatible, base_url.
+  #   condenser: { provider: openai-compatible, base_url: https://openrouter.ai/api/v1,
+  #                api_key_env: OPENROUTER_API_KEY, model: google/gemini-2.5-flash }
+  condenser: { provider: none, model: cheap }
   drafters:  { enabled: false, provider: none, model: cheap }
 daemon:
   idle_shutdown_seconds: 900

@@ -10,7 +10,7 @@ import type {
   Proposal,
   RoleTool,
 } from '@hafiz/core'
-import { toCoreArgs } from '@hafiz/core'
+import { suggestedCommand, toCoreArgs } from '@hafiz/core'
 import { RpcError } from '../daemon/rpc.js'
 import type { QueuedNotice } from '../daemon/service.js'
 
@@ -74,8 +74,11 @@ async function body(
     case 'session.status':
       return JSON.stringify(await call('session.status'))
     case 'proposal.list':
+      // Each entry says where it came from and what accepting it would run.
       return JSON.stringify(
-        await call<Proposal[]>('proposal.list', a.status ? { status: a.status } : {}),
+        (await call<Proposal[]>('proposal.list', a.status ? { status: a.status } : {})).map(
+          (p) => ({ ...p, suggested: suggestedCommand(p) }),
+        ),
       )
     default: {
       let out = await call<CommandResult>('dispatch', { command, args: a })

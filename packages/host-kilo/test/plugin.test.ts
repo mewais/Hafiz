@@ -1,14 +1,16 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
+import { loadConfig } from '@hafiz/core'
 import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   capReport,
   createHafizPlugin,
   type Hooks,
+  installConfig,
   type KiloConfig,
   type KiloMessageWithParts,
   type PluginInput,
@@ -133,10 +135,98 @@ describe('plugin: config hook', () => {
   it('does nothing at all without a Hafiz tree', async () => {
     const r = await repo(false)
     const hooks = await plugin(r)
-    expect(hooks).toEqual({})
+    // only the in-memory nudge hooks; nothing that touches the config, tools, proxy or daemon
+    expect(Object.keys(hooks).sort()).toEqual([
+      'chat.message',
+      'event',
+      'experimental.chat.system.transform',
+      'tool.execute.after',
+    ])
+    expect(hooks.config).toBeUndefined()
+    expect(hooks.tool).toBeUndefined()
     const cfg: KiloConfig = { provider: { a: { options: { baseURL: 'http://x' } } } }
     await hooks.config?.(cfg)
     expect(cfg).toEqual({ provider: { a: { options: { baseURL: 'http://x' } } } })
+  })
+})
+
+describe('plugin: nudge without a project', () => {
+  it('counts in memory, says one line once at the threshold, and never touches a daemon', async () => {
+    const r = await repo(false)
+    const refuse = async () => {
+      throw new Error('the daemon must not be contacted')
+    }
+    const hooks = await plugin(r, {}, { connect: refuse })
+    const transform = async (sessionID = 's1') => {
+      const system = ['You are Kilo.']
+      await hooks['experimental.chat.system.transform']?.(
+        { sessionID, model: { id: 'm', providerID: 'p' } },
+        { system },
+      )
+      return system
+    }
+    const say = (n: number, sessionID = 's1') =>
+      Promise.all(
+        Array.from({ length: n }, () =>
+          hooks['chat.message']?.(
+            { sessionID },
+            { message: {}, parts: [{ type: 'text', text: 'hi' }] },
+          ),
+        ),
+      )
+    await say(14)
+    expect(await transform()).toEqual(['You are Kilo.'])
+    await say(1) // turns: 15
+    const tripped = await transform()
+    expect(tripped).toHaveLength(2)
+    expect(tripped[1]).toMatch(
+      /^Hafiz: this session has 0 tool calls across 0 files and no block tree/,
+    )
+    // once: not again on the next request, nor after much more activity
+    expect(await transform()).toEqual(['You are Kilo.'])
+    for (let i = 0; i < 40; i++)
+      await hooks['tool.execute.after']?.(
+        { tool: 'edit', sessionID: 's1', callID: `c${i}`, args: {} },
+        { title: '', output: '', metadata: {} },
+      )
+    expect(await transform()).toEqual(['You are Kilo.'])
+    // other sessions count on their own
+    await say(3, 's2')
+    expect(await transform('s2')).toEqual(['You are Kilo.'])
+    // nothing was started or written
+    expect(readdirSync(r.env.XDG_RUNTIME_DIR as string)).toEqual([])
+    expect(readdirSync(r.env.HAFIZ_STORE_ROOT as string)).toEqual([])
+  })
+
+  it('file writes alone trip it, with the counts in the line', async () => {
+    const r = await repo(false)
+    const hooks = await plugin(r)
+    for (let i = 0; i < 5; i++)
+      await hooks['tool.execute.after']?.(
+        { tool: i % 2 ? 'write' : 'edit', sessionID: 's1', callID: `c${i}`, args: {} },
+        { title: '', output: '', metadata: {} },
+      )
+    const system: string[] = []
+    await hooks['experimental.chat.system.transform']?.(
+      { sessionID: 's1', model: { id: 'm', providerID: 'p' } },
+      { system },
+    )
+    expect(system[0]).toContain('5 tool calls across 5 files')
+  })
+})
+
+describe('plugin: host compaction', () => {
+  it('is disabled only when a condenser provider is configured', () => {
+    const base = loadConfig()
+    const plan = { repoRoot: '/r', storeDir: '/s', hafiz: ['hafiz'] }
+    const none: KiloConfig = { compaction: { prune: true } }
+    installConfig(none, { ...plan, config: base })
+    expect(none.compaction).toEqual({ prune: true })
+    const cfg = loadConfig()
+    cfg.hafiz.llm.condenser.provider = 'openai-compatible'
+    const on: KiloConfig = { compaction: { prune: true } }
+    installConfig(on, { ...plan, config: cfg })
+    expect(on.compaction).toEqual({ prune: true, auto: false })
   })
 })
 

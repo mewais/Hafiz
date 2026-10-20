@@ -15,8 +15,10 @@ import {
   resolveProject,
 } from '@hafiz/core'
 import { type DaemonClient, ensureDaemon } from '@hafiz/gateway-mcp'
+import { toolCounters, USER_TURN_COUNTERS } from './counters.js'
 import { installConfig } from './install.js'
 import type { Hooks, KiloEvent, KiloMessageWithParts, Plugin, PluginInput } from './kilo.js'
+import { createNudgeHooks } from './nudge.js'
 import { SessionRegistry } from './sessions.js'
 import { ConversationShaper } from './shaper/core.js'
 import { TransformHooksShaper } from './shaper/hooks.js'
@@ -77,7 +79,6 @@ function hafizCommand(env: NodeJS.ProcessEnv): string[] {
 
 const TASK_RESULT =
   /<task id="([^"]+)" state="completed">\n(?:<summary>[\s\S]*?<\/summary>\n)?<task_result>\n?([\s\S]*?)\n?<\/task_result>/
-const WRITE_TOOLS = new Set(['edit', 'write', 'patch', 'apply_patch', 'multiedit'])
 
 /** Final non-synthetic assistant text of a message list (what Kilo's task tool returns). */
 export function finalAssistantText(messages: KiloMessageWithParts[]): string | undefined {
@@ -97,7 +98,15 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
     const env = deps.env ?? process.env
     const log = deps.log ?? ((l: string) => console.error(l))
     const found = detect(input.directory, env, log, !deps.noCache)
-    if (!found) return {}
+    // No Hafiz project: in-memory nudge only. No daemon, no config changes, no proxy.
+    if (!found) {
+      try {
+        return createNudgeHooks(loadConfig())
+      } catch (e) {
+        log(`hafiz: config unreadable, nudge disabled: ${String(e)}`)
+        return {}
+      }
+    }
     const { project, config } = found
     const hafiz = deps.hafiz ?? hafizCommand(env)
 
@@ -120,11 +129,24 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
           },
         }))
     const sessions = new SessionRegistry({ project, config, connect: () => connect(project), log })
-    const shaper = new ConversationShaper({ config, source: sessions })
+    const shaper = new ConversationShaper({ config, source: sessions, log })
     const useHooks = setting !== 'proxy'
     const useProxy = setting !== 'hooks'
     const hooks = useHooks ? new TransformHooksShaper(shaper, log) : undefined
-    const proxy = useProxy ? new EmbeddedProxy({ shaper, log }) : undefined
+    const proxy = useProxy
+      ? new EmbeddedProxy({
+          shaper,
+          log,
+          onUsage: (sid, u) =>
+            void sessions.counters(sid, {
+              wire_requests: 1,
+              wire_input: u.input,
+              wire_output: u.output,
+              wire_cache_read: u.cacheRead,
+              wire_cache_write: u.cacheWrite,
+            }),
+        })
+      : undefined
     const fallbackMs = deps.reportFallbackMs ?? 1500
 
     const childReport = async (childId: string) => {
@@ -206,16 +228,12 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
           .map((x) => x.text)
           .join('\n')
         if (await sessions.open(i.sessionID, { agent, prompt }))
-          await sessions.counters(i.sessionID, { turns: 1 })
+          await sessions.counters(i.sessionID, USER_TURN_COUNTERS)
       },
 
       async 'tool.execute.after'(i, o) {
         if (!sessions.isManaged(i.sessionID)) return
-        await sessions.counters(i.sessionID, {
-          tool_calls: 1,
-          ...(WRITE_TOOLS.has(i.tool) ? { files_written: 1 } : {}),
-          ...(i.tool === 'task' ? { subagents_spawned: 1 } : {}),
-        })
+        await sessions.counters(i.sessionID, toolCounters(i.tool))
         if (i.tool !== 'task') return
         const m = TASK_RESULT.exec(o.output)
         if (!m) return

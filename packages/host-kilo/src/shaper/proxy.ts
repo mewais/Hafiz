@@ -12,6 +12,7 @@ import { request as httpsRequest } from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { applyAnthropic, isMessages, parseAnthropic } from '../wire/anthropic.js'
 import { applyOpenAi, isChatCompletions, parseOpenAi } from '../wire/openai.js'
+import { UsageTap, type WireUsage } from '../wire/usage.js'
 import type { ConversationShaper } from './core.js'
 import type { RequestShaper } from './types.js'
 
@@ -37,6 +38,8 @@ export function wireFormat(path: string): WireFormat | null {
 export interface EmbeddedProxyOptions {
   shaper: ConversationShaper
   log?: (line: string) => void
+  /** Token usage of a managed session's completed response (streamed or not). */
+  onUsage?: (sessionId: string, usage: WireUsage) => void
 }
 
 const HOP_BY_HOP = new Set([
@@ -150,9 +153,22 @@ export class EmbeddedProxy implements RequestShaper<ProxyRequest> {
       if (v !== undefined && !HOP_BY_HOP.has(k.toLowerCase())) out[k] = v
     if (method !== 'GET' && method !== 'HEAD') out['content-length'] = String(shaped.body.length)
     const send = target.protocol === 'https:' ? httpsRequest : httpRequest
+    const sessionId = header(headers, SESSION_HEADER)
+    const format = wireFormat(path)
     const up = send(target, { method, headers: out }, (ur) => {
       res.writeHead(ur.statusCode ?? 502, ur.statusMessage ?? '', ur.headers)
       res.flushHeaders()
+      if (this.opts.onUsage && sessionId && format && ur.statusCode === 200) {
+        // Observe only: the pipe below is the response; this reads the same chunks.
+        const tap = new UsageTap(format, header(ur.headers, 'content-type'))
+        ur.on('data', (c: Buffer) => tap.push(c))
+        ur.on('end', () => {
+          try {
+            const u = tap.result()
+            if (u) this.opts.onUsage?.(sessionId, u)
+          } catch {}
+        })
+      }
       ur.pipe(res)
     })
     up.on('error', (e) => {

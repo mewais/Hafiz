@@ -1,11 +1,41 @@
-# Mechanical checks evaluated on counter updates and at session end. No LLM.
+# Mechanical checks evaluated on counter updates, at request_done and at session end. No LLM.
+# `cond` is a tiny expression over session counters and derived metrics: numbers, identifiers,
+# comparisons (> >= < <= == !=), && || ! and parentheses. Unknown identifiers read as 0.
+# Derived metrics: progress (entries by this session), turns_since_progress,
+# threads_opened_open, user_turns_on_focus_without_thread. Every raw counter is usable too
+# (turns, user_turns, tool_calls, files_written, cap_rejections, retries_after_reject, …).
+# A check fires once when its condition becomes true, and again only after it was false.
 checks:
-  - { id: wrote_without_progress,  when: session_end,  cond: "files_written > 0 && progress == 0",      action: [notice, proposal] }
-  - { id: silent_active_block,     when: counters,     cond: "turns_since_progress >= 25",              action: [notice] }
-  - { id: open_threads_at_exit,    when: session_end,  cond: "threads_opened_open > 0",                 action: [notice, proposal] }
-  - { id: done_with_empty_log,     when: request_done, cond: "progress == 0",                           action: [notice] }
-  - { id: cap_reject_no_retry,     when: counters,     cond: "cap_rejections > retries_after_reject",   action: [notice] }
-  - { id: long_unthreaded_discussion, when: counters,  cond: "user_turns_on_focus_without_thread >= 12", action: [notice] }
+  - id: wrote_without_progress
+    when: session_end
+    cond: "files_written > 0 && progress == 0"
+    action: [notice, proposal]
+    message: "This session wrote {files_written} files and recorded no progress. Record what was done (progress.append)."
+  - id: silent_active_block
+    when: counters
+    cond: "turns_since_progress >= 25"
+    action: [notice]
+    message: "{turns_since_progress} turns since the last progress entry on your focus block. Record what you have found or done so far (progress.append)."
+  - id: open_threads_at_exit
+    when: session_end
+    cond: "threads_opened_open > 0"
+    action: [notice, proposal]
+    message: "{threads_opened_open} thread(s) this session opened are still open. Park each with a gist (thread.park) or resolve it."
+  - id: done_with_empty_log
+    when: request_done
+    cond: "progress == 0"
+    action: [notice]
+    message: "You marked work done but recorded no progress this session. Add a progress entry so the log shows what happened."
+  - id: cap_reject_no_retry
+    when: counters
+    cond: "cap_rejections > retries_after_reject"
+    action: [notice]
+    message: "A write was rejected for exceeding its cap and has not been retried. Shorten it, or split it into several entries, and resubmit."
+  - id: long_unthreaded_discussion
+    when: counters
+    cond: "user_turns_on_focus_without_thread >= 12"
+    action: [notice]
+    message: "{user_turns_on_focus_without_thread} user turns on the focus block without a thread. If this is a discussion worth keeping, open one (thread.open)."
 report_capture:
   enabled: true
   cap_tokens: 1500            # verbatim up to this; remainder spilled to the store

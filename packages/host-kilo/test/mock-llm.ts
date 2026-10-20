@@ -13,6 +13,10 @@ export interface ScriptedToolCall {
 export interface ScriptedReply {
   text?: string
   toolCalls?: ScriptedToolCall[]
+  /** Answer with this HTTP error status instead of a completion. */
+  status?: number
+  /** Reported token usage (defaults: input 10, output 5, no cache). */
+  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
 }
 
 export interface RecordedRequest {
@@ -71,7 +75,13 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
       function: { name: t.name, arguments: JSON.stringify(t.arguments) },
     }))
     const finish = toolCalls.length ? 'tool_calls' : 'stop'
-    const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+    const u = { input: 10, output: 5, cacheRead: 0, ...reply.usage }
+    const usage = {
+      prompt_tokens: u.input + u.cacheRead,
+      completion_tokens: u.output,
+      total_tokens: u.input + u.cacheRead + u.output,
+      ...(u.cacheRead ? { prompt_tokens_details: { cached_tokens: u.cacheRead } } : {}),
+    }
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
@@ -140,7 +150,13 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
         input: t.arguments,
       })
     const stop = reply.toolCalls?.length ? 'tool_use' : 'end_turn'
-    const usage = { input_tokens: 10, output_tokens: 5 }
+    const u = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, ...reply.usage }
+    const usage = {
+      input_tokens: u.input,
+      output_tokens: u.output,
+      cache_read_input_tokens: u.cacheRead,
+      cache_creation_input_tokens: u.cacheWrite,
+    }
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
@@ -172,7 +188,7 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
         content: [],
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 0 },
+        usage: { ...usage, output_tokens: 1 },
       },
     })
     for (const [index, b] of blocks.entries()) {
@@ -194,7 +210,7 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
     }
     await ev('message_delta', {
       delta: { stop_reason: stop, stop_sequence: null },
-      usage: { output_tokens: 5 },
+      usage: { output_tokens: u.output },
     })
     await ev('message_stop', {})
     res.end()
@@ -229,9 +245,13 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
       if (req.method === 'GET' && path.endsWith('/models')) {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-model', object: 'model' }] }))
-      } else if (path.endsWith('/chat/completions')) done(openai(res, b, next(rec)))
-      else if (path.endsWith('/messages')) done(anthropic(res, b, next(rec)))
-      else {
+      } else if (path.endsWith('/chat/completions') || path.endsWith('/messages')) {
+        const reply = next(rec)
+        if (reply.status) {
+          res.writeHead(reply.status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: `mock: scripted ${reply.status}` } }))
+        } else done((path.endsWith('/messages') ? anthropic : openai)(res, b, reply))
+      } else {
         res.writeHead(404, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ error: { message: `mock: no route ${path}` } }))
       }

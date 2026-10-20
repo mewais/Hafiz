@@ -30,7 +30,7 @@ export function fakeSource(o: { deltas?: string[]; unfiled?: string } = {}): Fak
       return { envelope: ENVELOPE, floor: FLOOR }
     },
     delta: async () => src.deltas.shift() ?? '',
-    unfiled: async () => src.unfiledText,
+    unfiled: async () => (src.unfiledText ? { summary: src.unfiledText } : undefined),
   }
   if (o.unfiled) src.unfiledText = o.unfiled
   return src
