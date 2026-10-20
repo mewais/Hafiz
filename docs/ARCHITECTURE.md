@@ -110,9 +110,14 @@ registered predicate (code) with parameters.
 
 ### 3.3 Epochs
 
-- `project.epoch` increments on: block create/drop/move, status change, design/plan version bump,
-  decision recorded, directive recorded/retired, edge change. **Not** on progress entries or thread entries (those are
-  append-only tail material and are rendered as "last N").
+- `project.epoch` increments on **major writes**: block create/drop/move, any block status change
+  (`done` included), design/plan content changes, decision recorded, directive recorded/retired,
+  edge change.
+- It does **not** increment on **minor writes**: progress entries, thread entries, and plan step
+  status ticks (`plan.steps[].status`). These are frequent, the consumer who cares learns of them
+  from its own tail (a worker's report, its own tool result), and bumping the epoch for them would
+  rebuild every consumer's prefix and churn prompt caches. The rendered view simply reflects their
+  current state at the next epoch. The minor-path list is config (`policies.epoch.minor_paths`).
 - `session.focus_epoch` increments on focus change for that session only.
 - A rendered view carries `(project.epoch, session.focus_epoch)`. Gateways re-emit the context
   block only when either changed; otherwise the prefix is byte-identical.
