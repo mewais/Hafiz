@@ -212,4 +212,16 @@ describe('daemon', () => {
       code: RPC_CODES.unauthorized,
     })
   })
+
+  it('lets any role read its own session record via session.self', async () => {
+    const { d } = await boot()
+    const u = await user(d)
+    const { block } = await seed(u)
+    const w = await client(d)
+    await w.openSession({ id: 'w1', host: 'test', role: 'worker', spawnedBlock: block })
+    const self = await w.sessionSelf()
+    expect(self).toMatchObject({ id: 'w1', role: 'worker', focus: { blocks: [block] } })
+    expect(self).not.toHaveProperty('token')
+    await expect(w.sessionStatus()).rejects.toBeInstanceOf(RpcError)
+  })
 })

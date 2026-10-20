@@ -142,6 +142,10 @@ export class DaemonClient {
   sessionStatus() {
     return this.call<SessionStatus>('session.status')
   }
+  /** This session's own record; unlike session.status, open to every role. */
+  sessionSelf() {
+    return this.call<Omit<Session, 'token'>>('session.self')
+  }
   projectStatus() {
     return this.call<ProjectStatus>('project.status')
   }

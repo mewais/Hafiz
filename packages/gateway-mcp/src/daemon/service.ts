@@ -50,6 +50,7 @@ const schemas = {
   'block.read': z.object({ ...token, id: z.string(), zoom: optStr }),
   'tree.list': z.object(token),
   'session.status': z.object(token),
+  'session.self': z.object(token),
   'project.status': z.object(token),
   'session.end': z.object(token),
   'counters.add': z.object({ ...token, delta: z.record(z.string(), z.number()) }),
@@ -155,6 +156,11 @@ export class DaemonService {
           epoch: (await core.backend.read.getProject())?.epoch ?? 0,
           pendingNotices: this.queues.get(session.id)?.length ?? 0,
         }
+      }
+      case 'session.self': {
+        // A session's own record (focus, counters, unfiled summary): not role-gated.
+        const fresh = (await core.backend.read.getSession(session.id)) ?? session
+        return publicSession(fresh)
       }
       case 'project.status': {
         authorize(core.config, by.role, 'session.status')

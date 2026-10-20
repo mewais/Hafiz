@@ -1,0 +1,262 @@
+{
+  "model": "claude-mock",
+  "max_tokens": 4000,
+  "system": [
+    {
+      "type": "text",
+      "text": "You are Kilo, a highly skilled software engineer.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "<env>\n  Working directory: /work/shop\n</env>",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Fix the rounding bug in payments."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:01:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "step 0",
+          "signature": "sig0=="
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_0",
+          "name": "read",
+          "input": {
+            "filePath": "/work/shop/src/payments.ts"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_0",
+          "content": "payments.ts line 0: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 1: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 2: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 3: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 4: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 5: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 6: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 7: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 8: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 9: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 10: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 11: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 12: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 13: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 14: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 15: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 16: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 17: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 18: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 19: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 20: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 21: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 22: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 23: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 24: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 25: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 26: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 27: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 28: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 29: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 30: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 31: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 32: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 33: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 34: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 35: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 36: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 37: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 38: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 39: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet "
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Step 0 done."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue with step 1."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:02:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "step 1",
+          "signature": "sig1=="
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "bash",
+          "input": {
+            "command": "pnpm test payments"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_1",
+          "content": "vitest line 0: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 1: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 2: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 3: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 4: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 5: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 6: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 7: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 8: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 9: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 10: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 11: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 12: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 13: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 14: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 15: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 16: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 17: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 18: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 19: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 20: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 21: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 22: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 23: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 24: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 25: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 26: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 27: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 28: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 29: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet ",
+          "is_error": true
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Step 1 done."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue with step 2."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:03:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "step 2",
+          "signature": "sig2=="
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_2",
+          "name": "read",
+          "input": {
+            "filePath": "/work/shop/src/refunds.ts"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_2",
+          "content": "refunds.ts line 0: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 1: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 2: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 3: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 4: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 5: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 6: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 7: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 8: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 9: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 10: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 11: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 12: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 13: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 14: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 15: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 16: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 17: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 18: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 19: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 20: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 21: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 22: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 23: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 24: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet "
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Step 2 done."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue with step 3."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:04:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_9",
+          "name": "bash",
+          "input": {
+            "command": "git diff"
+          },
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_9",
+          "content": [
+            {
+              "type": "text",
+              "text": "diff --git a/src/payments.ts b/src/payments.ts\n+  return Math.round(x * 100) / 100"
+            }
+          ],
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "read",
+      "description": "Read a file.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          }
+        },
+        "required": ["filePath"]
+      }
+    },
+    {
+      "name": "bash",
+      "description": "Run a shell command.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          }
+        },
+        "required": ["command"]
+      },
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "stream": true,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "metadata": {
+    "user_id": "u-123"
+  }
+}

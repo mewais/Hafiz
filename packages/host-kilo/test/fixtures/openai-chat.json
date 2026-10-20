@@ -1,0 +1,206 @@
+{
+  "model": "mock-model",
+  "max_tokens": 4000,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are Kilo, a highly skilled software engineer.\n\n# Tone\nBe concise."
+    },
+    {
+      "role": "system",
+      "content": "Here is useful information about the environment you are running in:\n<env>\n  Working directory: /work/shop\n</env>"
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Fix the rounding bug in payments."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:01:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_0",
+          "type": "function",
+          "function": {
+            "name": "read",
+            "arguments": "{\"filePath\":\"/work/shop/src/payments.ts\"}"
+          }
+        }
+      ],
+      "reasoning_content": "thinking about step 0"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_0",
+      "content": "payments.ts line 0: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 1: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 2: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 3: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 4: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 5: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 6: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 7: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 8: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 9: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 10: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 11: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 12: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 13: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 14: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 15: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 16: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 17: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 18: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 19: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 20: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 21: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 22: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 23: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 24: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 25: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 26: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 27: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 28: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 29: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 30: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 31: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 32: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 33: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 34: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 35: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 36: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 37: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 38: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \npayments.ts line 39: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet "
+    },
+    {
+      "role": "assistant",
+      "content": "Step 0 done."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue with step 1."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:02:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"pnpm test payments\"}"
+          }
+        }
+      ],
+      "reasoning_content": "thinking about step 1"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "vitest line 0: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 1: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 2: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 3: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 4: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 5: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 6: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 7: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 8: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 9: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 10: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 11: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 12: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 13: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 14: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 15: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 16: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 17: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 18: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 19: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 20: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 21: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 22: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 23: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 24: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 25: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 26: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 27: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 28: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nvitest line 29: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet "
+    },
+    {
+      "role": "assistant",
+      "content": "Step 1 done."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue with step 2."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:03:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_2",
+          "type": "function",
+          "function": {
+            "name": "read",
+            "arguments": "{\"filePath\":\"/work/shop/src/refunds.ts\"}"
+          }
+        }
+      ],
+      "reasoning_content": "thinking about step 2"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_2",
+      "content": "refunds.ts line 0: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 1: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 2: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 3: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 4: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 5: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 6: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 7: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 8: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 9: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 10: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 11: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 12: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 13: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 14: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 15: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 16: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 17: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 18: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 19: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 20: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 21: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 22: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 23: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet \nrefunds.ts line 24: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet "
+    },
+    {
+      "role": "assistant",
+      "content": "Step 2 done."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue with step 3."
+        },
+        {
+          "type": "text",
+          "text": "\n\n<environment_details>\nMessage time: 2026-10-20T05:04:00Z\nWorking directory: /work/shop\n</environment_details>"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_9",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"git diff\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_9",
+      "content": "diff --git a/src/payments.ts b/src/payments.ts\n-  return Math.round(x)\n+  return Math.round(x * 100) / 100"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read",
+        "description": "Read a file from the local filesystem.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "filePath": {
+              "type": "string",
+              "description": "Absolute path"
+            },
+            "offset": {
+              "type": "number"
+            }
+          },
+          "required": ["filePath"],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "bash",
+        "description": "Run a shell command.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            }
+          },
+          "required": ["command"]
+        },
+        "strict": false
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "x_vendor_extension": {
+    "keep": ["me", 1, true, null]
+  }
+}

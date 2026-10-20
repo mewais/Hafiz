@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@hafiz/core": "workspace:*",
-    "@hafiz/gateway-mcp": "workspace:*"
+    "@hafiz/gateway-mcp": "workspace:*",
+    "@hafiz/cli": "workspace:*"
   }
 }

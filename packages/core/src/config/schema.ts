@@ -65,6 +65,18 @@ export const hafizFile = z.object({
       drafters: { enabled: false, provider: 'none', model: 'cheap' },
     }),
   daemon: z.object({ idle_shutdown_seconds: z.number().default(900) }).prefault({}),
+  host: z
+    .object({
+      kilo: z
+        .object({
+          // proxy = embedded-proxy, hooks = experimental transform hooks, auto = hooks if present
+          shaper: z.enum(['proxy', 'hooks', 'auto']).default('auto'),
+          // Role for Kilo agents that are not Hafiz roles (build, plan, …); unset = unmanaged.
+          default_role: z.string().optional(),
+        })
+        .prefault({}),
+    })
+    .prefault({}),
 })
 
 export const kindsFile = z.object({

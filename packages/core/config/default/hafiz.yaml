@@ -17,3 +17,7 @@ llm:
   drafters:  { enabled: false, provider: none, model: cheap }
 daemon:
   idle_shutdown_seconds: 900
+host:
+  kilo:
+    shaper: auto                   # proxy | hooks | auto (hooks when the host exposes them)
+    # default_role: user           # role for non-Hafiz Kilo agents (build, plan); unset = unmanaged

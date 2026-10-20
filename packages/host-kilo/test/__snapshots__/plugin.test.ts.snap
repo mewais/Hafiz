@@ -1,0 +1,195 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`plugin: config hook > installs servers, agents, permissions, commands and compaction in a Hafiz repo 1`] = `
+{
+  "agent": {
+    "designer": {
+      "description": "Hafiz designer: writes and revises block designs",
+      "mode": "subagent",
+      "permission": {
+        "edit": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "external_directory": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "hafiz-*": "deny",
+        "hafiz-designer_*": "allow",
+        "read": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "task": "deny",
+      },
+      "prompt": "<56 chars>",
+    },
+    "manager": {
+      "description": "Hafiz manager: runs the block tree, delegates designer/planner/worker subagents",
+      "mode": "primary",
+      "permission": {
+        "edit": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "external_directory": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "hafiz-*": "deny",
+        "hafiz-manager_*": "allow",
+        "read": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "task": "allow",
+      },
+      "prompt": "<55 chars>",
+    },
+    "planner": {
+      "description": "Hafiz planner: breaks designed blocks into plans and child blocks",
+      "mode": "subagent",
+      "permission": {
+        "edit": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "external_directory": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "hafiz-*": "deny",
+        "hafiz-planner_*": "allow",
+        "read": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "task": "deny",
+      },
+      "prompt": "<55 chars>",
+    },
+    "worker": {
+      "description": "Hafiz worker: implements one block; spawn with hafiz:block=<id> in the prompt",
+      "mode": "subagent",
+      "permission": {
+        "edit": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "external_directory": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "hafiz-*": "deny",
+        "hafiz-worker_*": "allow",
+        "read": {
+          "<STORE_ROOT>/<PROJECT>/**": "deny",
+        },
+        "task": "deny",
+      },
+      "prompt": "<54 chars>",
+    },
+  },
+  "command": {
+    "hafiz-checkpoint": {
+      "description": "Hafiz: record unrecorded work from this conversation",
+      "template": "Checkpoint. Record in Hafiz anything from this conversation the store does not hold yet: progress for work done, decisions taken, threads to open or park. Use your hafiz tools, one small entry per item. Then reply with one line listing what you recorded.",
+    },
+    "hafiz-status": {
+      "description": "Hafiz: project status (epoch, sessions, pending proposals)",
+      "template": "Hafiz project status:
+
+!\`node /opt/hafiz/bin.js status\`
+
+Summarise this for the user in a few lines. Do not call tools.",
+    },
+  },
+  "compaction": {
+    "auto": false,
+  },
+  "mcp": {
+    "hafiz-designer": {
+      "command": [
+        "node",
+        "/opt/hafiz/bin.js",
+        "mcp",
+        "--role",
+        "designer",
+        "--project",
+        "<REPO>",
+      ],
+      "enabled": true,
+      "environment": {
+        "HAFIZ_AGENT": "designer",
+        "HAFIZ_HOST": "kilo",
+        "HAFIZ_SESSION_ID": "kilo-mcp-designer",
+        "HAFIZ_STORE_ROOT": "<STORE_ROOT>",
+        "XDG_RUNTIME_DIR": "<RUNTIME>",
+      },
+      "type": "local",
+    },
+    "hafiz-manager": {
+      "command": [
+        "node",
+        "/opt/hafiz/bin.js",
+        "mcp",
+        "--role",
+        "manager",
+        "--project",
+        "<REPO>",
+      ],
+      "enabled": true,
+      "environment": {
+        "HAFIZ_AGENT": "manager",
+        "HAFIZ_HOST": "kilo",
+        "HAFIZ_SESSION_ID": "kilo-mcp-manager",
+        "HAFIZ_STORE_ROOT": "<STORE_ROOT>",
+        "XDG_RUNTIME_DIR": "<RUNTIME>",
+      },
+      "type": "local",
+    },
+    "hafiz-planner": {
+      "command": [
+        "node",
+        "/opt/hafiz/bin.js",
+        "mcp",
+        "--role",
+        "planner",
+        "--project",
+        "<REPO>",
+      ],
+      "enabled": true,
+      "environment": {
+        "HAFIZ_AGENT": "planner",
+        "HAFIZ_HOST": "kilo",
+        "HAFIZ_SESSION_ID": "kilo-mcp-planner",
+        "HAFIZ_STORE_ROOT": "<STORE_ROOT>",
+        "XDG_RUNTIME_DIR": "<RUNTIME>",
+      },
+      "type": "local",
+    },
+    "hafiz-worker": {
+      "command": [
+        "node",
+        "/opt/hafiz/bin.js",
+        "mcp",
+        "--role",
+        "worker",
+        "--project",
+        "<REPO>",
+      ],
+      "enabled": true,
+      "environment": {
+        "HAFIZ_AGENT": "worker",
+        "HAFIZ_HOST": "kilo",
+        "HAFIZ_SESSION_ID": "kilo-mcp-worker",
+        "HAFIZ_STORE_ROOT": "<STORE_ROOT>",
+        "XDG_RUNTIME_DIR": "<RUNTIME>",
+      },
+      "type": "local",
+    },
+  },
+  "permission": {
+    "edit": {
+      "<STORE_ROOT>/<PROJECT>/**": "deny",
+    },
+    "external_directory": {
+      "<STORE_ROOT>/<PROJECT>/**": "deny",
+    },
+    "hafiz-*": "deny",
+    "read": {
+      "<STORE_ROOT>/<PROJECT>/**": "deny",
+    },
+  },
+}
+`;

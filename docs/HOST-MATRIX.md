@@ -162,6 +162,42 @@ only for the optional proxy).
 Limits: the three key hooks are experimental; the adapter degrades to Claude-Code-style
 append-only injection via `chat.message` if they disappear.
 
+**Verified (M4, `@kilocode/plugin` + `@kilocode/cli` 7.8.15, types + CLI bundle + `kilo run`
+against a mock LLM; corrections to the above in bold):**
+- Module shape: `export default { id, server }` (a path plugin **must** export `id`); without
+  it Kilo calls **every** exported function as a plugin. `config(cfg)` mutates the loaded config
+  before providers/agents/MCP are built, so agents, MCP servers, `compaction.auto`, commands and
+  `provider.<id>.options.baseURL` rewrites all take effect. The plugin runs **under Bun** (the
+  kilo binary): child processes must name `node` explicitly. `kilo run` takes its directory
+  from **`$PWD`**, not the process cwd.
+- Both transform hooks exist and work: `experimental.chat.system.transform({sessionID, model},
+  {system})` — entries pushed after the first are joined into a second system message;
+  `experimental.chat.messages.transform({}, {messages})` — **no sessionID in the input** (read
+  `messages[0].info.sessionID`); Kilo's message model keeps tool results as `tool` parts of
+  assistant messages. The system transform also fires for title generation (same sessionID,
+  no agent in the input), so the envelope can reach that call.
+- `chat.headers({sessionID, agent, model, provider}, {headers})` adds per-request headers on
+  every provider; Kilo itself already sends `x-session-id` and `x-parent-session-id`.
+- Wire format follows `model.api.npm`; custom providers default to **`@ai-sdk/openai-compatible`
+  (Chat Completions, compact JSON, `stream_options.include_usage`)**; `@ai-sdk/anthropic` sends
+  Messages with `cache_control` on both system blocks and the last two messages; `@ai-sdk/openai`
+  would be Responses (not adapted).
+- Subagents: `session.created` carries `info.parentID` **and `info.agent`**; the child's first
+  `chat.message` holds the task prompt (Hafiz convention: `hafiz:block=<id>` marks the spawned
+  block). `tool.execute.after` for `task` gives `metadata.sessionId` and output
+  `<task id="…" state="completed">\n<task_result>\n…\n</task_result>\n</task>`; the child's
+  `session.idle` arrives first. Background tasks (`background: true`, behind
+  `KILO_EXPERIMENTAL_BACKGROUND_SUBAGENTS`) return `state="running"`; their result comes later.
+- Permissions: last match wins; **a parent agent's denies on server-prefixed patterns
+  (`hafiz-worker_*`) are copied into every subagent it spawns**, so role isolation uses the
+  unprefixed `hafiz-*: deny` plus `hafiz-<role>_*: allow` (verified: the manager sees only
+  `hafiz-manager_*` tools). MCP tool names are `<server>_<tool>`, e.g.
+  `hafiz-worker_hafiz_progress_append`.
+- **MCP servers are per Kilo instance, not per session**: one `hafiz-worker` process serves all
+  worker sessions, so MCP calls cannot carry the Kilo session id. `file.edited` carries no
+  session id either (counters use `tool.execute.after` on edit/write/patch tools).
+- `session.compacted` exists; `compaction` is global config (`auto`, `prune`, `tail_turns`, …).
+
 ---
 
 ## 4. Where the hosts bend the core
