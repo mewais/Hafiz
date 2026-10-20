@@ -12,6 +12,9 @@
     },
     {
       "path": "../storage-fs"
+    },
+    {
+      "path": "../gateway-mcp"
     }
   ]
 }

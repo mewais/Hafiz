@@ -1,7 +1,17 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { type Actor, Core, type DocType, loadConfig, type Notice, opaqueId } from '@hafiz/core'
+import {
+  type Actor,
+  Core,
+  type DocType,
+  focusFromPolicy,
+  loadConfig,
+  type Notice,
+  opaqueId,
+  type ResolvedProject,
+} from '@hafiz/core'
+import { type DaemonClient, ensureDaemon, runMcpStdio, startDaemon } from '@hafiz/gateway-mcp'
 import { FsBackend } from '@hafiz/storage-fs'
 import { stringify } from 'yaml'
 import {
@@ -21,6 +31,10 @@ export interface Io {
   env: NodeJS.ProcessEnv
   out: (line: string) => void
   err: (line: string) => void
+  /** Path of this CLI's entry script, used to spawn a detached `hafiz daemon`. */
+  entry?: string
+  /** Replace daemon discovery (tests run the daemon in-process). */
+  connect?: (project: ResolvedProject) => Promise<DaemonClient>
 }
 
 const DOC_TYPES: readonly DocType[] = ['design', 'plan', 'digest']
@@ -34,6 +48,13 @@ const USAGE = `usage: hafiz <command> [options]
                                              print the view an agent in role R would get
   history <block> [type] [--json]            git history of a block or one doc
   revert <block> <type> <commit>             restore a doc from an earlier commit
+  status [--json]                            project, epoch, sessions, pending proposals
+  review [--accept ID | --reject ID]         list or resolve the proposal queue
+  direct "<text>" [--block ID] [--kind K]    record a standing decision (K: never|always|prefer)
+  focus [--role R]                           live sessions' focus (or the focus a role would get)
+  explain <block> [--role R] [--session ID]  why a block shows at its zoom
+  daemon [--project DIR]                     run the project daemon in the foreground
+  mcp --role R [--project DIR]               serve MCP on stdio for role R
 `
 
 export function userActor(): Actor {
@@ -202,6 +223,164 @@ export async function revert(io: Io, block: string, type: string, commit: string
   })
 }
 
+// ───────────────────────────── daemon-backed writes ─────────────────────────────
+
+/** Writes go through the project's daemon (started on demand) so there is a single writer. */
+async function withDaemon<T>(io: Io, fn: (c: DaemonClient) => Promise<T>): Promise<T> {
+  const project = resolveProject(io.cwd, io.env)
+  const client = io.connect
+    ? await io.connect(project)
+    : await ensureDaemon(project, {
+        env: io.env,
+        ...(io.entry ? { entry: io.entry } : {}),
+      })
+  try {
+    await client.openSession({ id: 'cli', host: 'cli', role: 'user', agent: osUser() })
+    return await fn(client)
+  } finally {
+    client.close()
+  }
+}
+
+export async function direct(
+  io: Io,
+  text: string,
+  opts: { block?: string | undefined; kind?: string | undefined },
+): Promise<void> {
+  const standing = opts.kind ?? 'always'
+  if (!['never', 'always', 'prefer'].includes(standing))
+    throw new CliError('--kind must be never, always or prefer')
+  await withDaemon(io, async (c) => {
+    const block = opts.block ?? (await c.treeList())[0]?.id
+    if (!block) throw new CliError('the project has no blocks')
+    const title = text.length > 60 ? `${text.slice(0, 57)}...` : text
+    const { result, notices } = await c.dispatch<{ id: string }>('decision.record', {
+      block,
+      title,
+      decision: text,
+      standing,
+    })
+    printNotices(io, notices)
+    io.out(`recorded standing decision ${result.id} (${standing}) on ${block}`)
+  })
+}
+
+export async function review(
+  io: Io,
+  opts: { accept?: string | undefined; reject?: string | undefined },
+): Promise<void> {
+  if (opts.accept && opts.reject) throw new CliError('use either --accept or --reject')
+  const id = opts.accept ?? opts.reject
+  if (id) {
+    await withDaemon(io, async (c) => {
+      const { notices } = await c.dispatch(opts.accept ? 'proposal.accept' : 'proposal.reject', {
+        id,
+      })
+      printNotices(io, notices)
+      io.out(`${opts.accept ? 'accepted' : 'rejected'} ${id}`)
+    })
+    return
+  }
+  const pending = await withCore(io, (core) =>
+    core.backend.read.listProposals({ status: 'pending' }),
+  )
+  if (!pending.length) return io.out('no pending proposals')
+  for (const p of pending)
+    io.out(`${p.id}  ${p.kind}/${p.source}  ${p.blockId ?? '-'}  ${p.note ?? p.payload.command}`)
+}
+
+// ───────────────────────────── status / focus / explain ─────────────────────────────
+
+export async function status(io: Io, opts: { json?: boolean | undefined }): Promise<void> {
+  const data = await withCore(io, async (core) => {
+    const r = core.backend.read
+    const project = await r.getProject()
+    const sessions = await r.listSessions()
+    const pending = await r.listProposals({ status: 'pending' })
+    return { project, sessions, pending }
+  })
+  const sessions = data.sessions.map(({ token: _t, ...s }) => s)
+  if (opts.json)
+    return io.out(
+      JSON.stringify(
+        { project: data.project, sessions, pendingProposals: data.pending.length },
+        null,
+        2,
+      ),
+    )
+  const p = data.project
+  io.out(`project ${p?.id} (${p?.name}) epoch ${p?.epoch}`)
+  const live = sessions.filter((s) => !s.endedAt)
+  io.out(`sessions: ${live.length} active, ${sessions.length - live.length} ended`)
+  for (const s of sessions) {
+    const counters = Object.entries(s.counters)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ')
+    io.out(
+      `  ${s.endedAt ? 'x' : '*'} ${s.role.padEnd(8)} ${s.id}${s.agent ? ` (${s.agent})` : ''}  focus: ${s.focus.blocks.join(', ') || '-'}${s.focus.computed ? ' (computed)' : ''}${counters ? `  ${counters}` : ''}`,
+    )
+  }
+  io.out(`proposals: ${data.pending.length} pending`)
+}
+
+export async function focus(io: Io, opts: { role?: string | undefined }): Promise<void> {
+  await withCore(io, async (core) => {
+    if (opts.role) {
+      const def = core.config.roles.roles[opts.role]
+      if (!def) throw new CliError(`unknown role '${opts.role}'`)
+      const f = focusFromPolicy(await core.backend.read.listBlocks(), def.focus_policy)
+      return io.out(`${opts.role} (${def.focus_policy}): ${f.blocks.join(', ') || '-'}`)
+    }
+    const live = await core.backend.read.listSessions({ active: true })
+    if (!live.length) return io.out('no active sessions')
+    for (const s of live)
+      io.out(
+        `${s.role.padEnd(8)} ${s.id}: ${s.focus.blocks.join(', ') || '-'}${s.focus.computed ? ' (computed)' : ' (explicit)'}`,
+      )
+  })
+}
+
+export async function explain(
+  io: Io,
+  block: string,
+  opts: { role?: string | undefined; session?: string | undefined },
+): Promise<void> {
+  await withCore(io, async (core) => {
+    if (opts.session) {
+      const by: Actor = { ...userActor(), sessionId: opts.session }
+      return io.out((await core.contextExplain(by, block)).text)
+    }
+    const role = opts.role ?? 'manager'
+    io.out((await core.contextExplain(userActor(), block, { adhoc: { role } })).text)
+  })
+}
+
+// ───────────────────────────── daemon / mcp ─────────────────────────────
+
+export async function daemon(io: Io, opts: { project?: string | undefined }): Promise<void> {
+  const d = await startDaemon({ projectDir: resolve(io.cwd, opts.project ?? '.'), env: io.env })
+  const stop = () => void d.close()
+  process.once('SIGINT', stop)
+  process.once('SIGTERM', stop)
+  io.err(`hafiz daemon for ${d.projectId} listening on ${d.socketPath}`)
+  await d.closed
+  process.off('SIGINT', stop)
+  process.off('SIGTERM', stop)
+}
+
+export async function mcp(
+  io: Io,
+  opts: { role?: string | undefined; project?: string | undefined },
+): Promise<void> {
+  await runMcpStdio({
+    role: need(opts.role, '--role'),
+    projectDir: opts.project ? resolve(io.cwd, opts.project) : undefined,
+    cwd: io.cwd,
+    env: io.env,
+    daemon: io.entry ? { entry: io.entry } : {},
+  })
+}
+
 // ───────────────────────────── dispatch ─────────────────────────────
 
 export async function run(argv: string[], io: Io): Promise<number> {
@@ -217,6 +396,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
         budget: { type: 'string' },
         explain: { type: 'string' },
         adopt: { type: 'boolean' },
+        accept: { type: 'string' },
+        reject: { type: 'string' },
+        block: { type: 'string' },
+        kind: { type: 'string' },
+        project: { type: 'string' },
+        session: { type: 'string' },
         'store-root': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -244,6 +429,27 @@ export async function run(argv: string[], io: Io): Promise<number> {
         break
       case 'revert':
         await revert(io, need(a, '<block>'), need(b, '<type>'), need(c, '<commit>'))
+        break
+      case 'status':
+        await status(io, values)
+        break
+      case 'review':
+        await review(io, values)
+        break
+      case 'direct':
+        await direct(io, need(a, '<text>'), values)
+        break
+      case 'focus':
+        await focus(io, values)
+        break
+      case 'explain':
+        await explain(io, need(a, '<block>'), values)
+        break
+      case 'daemon':
+        await daemon(io, values)
+        break
+      case 'mcp':
+        await mcp(io, values)
         break
       default:
         throw new CliError(`unknown command '${cmd}'\n\n${USAGE}`)

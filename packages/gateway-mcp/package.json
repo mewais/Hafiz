@@ -19,6 +19,10 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@hafiz/core": "workspace:*"
+    "@hafiz/core": "workspace:*",
+    "@hafiz/storage-fs": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   }
 }

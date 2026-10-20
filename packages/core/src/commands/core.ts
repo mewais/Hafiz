@@ -943,7 +943,9 @@ export class Core {
     if (!p) throw new NotFoundError('proposal', args.id)
     if (p.status !== 'pending') throw new ValidationError(`proposal already ${p.status}`)
     // Accepting a not-yet-applied proposal performs its command as the accepting actor.
-    if (args.accept && p.source !== 'auto_done') {
+    // (An 'auto_done' review item is already applied; a queued request_done carries confirmed: true.)
+    const applied = p.source === 'auto_done' && p.payload.args.confirmed !== true
+    if (args.accept && !applied) {
       const h = this.handlers.get(p.payload.command)
       if (!h) throw new ValidationError(`proposal command '${p.payload.command}' is not executable`)
       await h(by, p.payload.args)
@@ -1221,6 +1223,8 @@ export class Core {
     reg('thread.resolve', (b, a) => this.threadResolve(b, a as never))
     reg('thread.append', (b, a) => this.threadAppend(b, a as never))
     reg('focus.set', (b, a) => this.focusSet(b, a as never))
+    reg('proposal.accept', (b, a) => this.proposalResolve(b, { id: String(a.id), accept: true }))
+    reg('proposal.reject', (b, a) => this.proposalResolve(b, { id: String(a.id), accept: false }))
   }
 
   /** Generic entry point used by gateways and by proposal acceptance. */
