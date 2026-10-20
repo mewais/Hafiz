@@ -38,6 +38,8 @@ judgement:
 | 13 | `done` is agent-declared with **MCP elicitation** confirmation (`ask`/`auto`), with a host-agnostic fallback. Digest written by the finishing agent. | User mostly out of the loop; confirmation is the moment to catch stray threads. |
 | 14 | **Config over code** for roles, views, zooms, schemas, guards, nudge. Code supplies interfaces (backend, tokenizer, renderer, validators, predicates). | Extensible without inheritance hierarchies; experiments are config diffs. |
 | 15 | Brownfield: **import what you are about to touch**, via the designer agent using normal write tools; the rest is "the existing codebase" referenced from root. | No importer code path; partial adoption is the realistic path. |
+| 16 | **Directives** (`never`/`always`/`prefer`) are a first-class, block-scoped, append-only entity rendered verbatim as part of the view floor for focus + ancestors. Capped, with a consolidate notice. | Standing user instructions learned mid-work must never be summarized away; they differ from decisions (imperative vs. record) and from host rules files (dynamic vs. static). |
+| 17 | Store **data in home** (`~/.hafiz/projects/<id>/`) with a **pointer file in the repo** (`.hafiz/project.yaml`, committed by default). | In-repo storage fragments across worktrees/clones and sits inside every agent's writable tree; the pointer keeps discoverability and shared resolution. |
 
 ## Explicitly deferred
 

@@ -70,11 +70,21 @@ All identifiers are stable, short, human-readable slugs with a random suffix (`b
 | `Doc` | block_id, type (`design`\|`plan`\|`digest`\|…), version, sections{name→content} | CAS on `version`; validated against its schema |
 | `ProgressEntry` | block_id, ts, session_id, role, kind (`done`\|`blocked`\|`found`\|`changed`\|`question`\|…), text, refs[] | append-only |
 | `Decision` | id, block_id, ts, title, decision, rationale, supersedes?, by{session,role} | append-only (supersede, never edit) |
+| `Directive` | id, block_id, kind (`never`\|`always`\|`prefer`), text, rationale?, status (`active`\|`retired`), by, ts | append-only; retire, never edit; scoped to the block's subtree |
 | `Thread` | id, block_id, title, gist, status (`open`\|`parked`\|`resolved`), entries[] | append-only entries; status transitions |
 | `Session` | id, project_id, host, role, focus{block_ids[], order?}, counters, last_epoch_seen | ephemeral; per gateway connection |
 
 `kind` on `Block` is a free string (`component`, `feature`, `research`, `doc`, …). Hafiz attaches no
 semantics to it; schemas and views *may* match on it.
+
+**Directives vs. decisions.** A decision records *what was chosen* and why; a directive is a standing
+*imperative* the user (or manager on the user's behalf) has issued: "never commit generated files",
+"always use the result type". Root directives are project-wide; a block's directives apply to its
+subtree. They are part of the view **floor**: rendered verbatim for the focus and all its ancestors
+at every zoom, never degraded. Each is capped (~40 tokens) and a per-block total cap triggers a
+"consolidate directives" notice rather than silent growth. Host rules files (`CLAUDE.md`,
+`AGENTS.md`) remain the place for static repo conventions; directives are what is learned mid-work
+and travel with the Hafiz store across hosts.
 
 ### 3.2 Status machine
 
@@ -101,7 +111,7 @@ registered predicate (code) with parameters.
 ### 3.3 Epochs
 
 - `project.epoch` increments on: block create/drop/move, status change, design/plan version bump,
-  decision recorded, edge change. **Not** on progress entries or thread entries (those are
+  decision recorded, directive recorded/retired, edge change. **Not** on progress entries or thread entries (those are
   append-only tail material and are rendered as "last N").
 - `session.focus_epoch` increments on focus change for that session only.
 - A rendered view carries `(project.epoch, session.focus_epoch)`. Gateways re-emit the context
@@ -177,6 +187,7 @@ The Core API is the single internal contract. Every gateway maps onto it 1:1.
 | `doc.patch(block, type, {section: content}, expected_version)` | section-level; same guarantees |
 | `progress.append(block, entry)` | append-only; no epoch |
 | `decision.record(block, decision)` | append-only; epoch |
+| `directive.record(block, kind, text, rationale?)` / `directive.retire(id)` | append-only; epoch; manager/user only by default |
 | `thread.open/park/resume/resolve(...)` | `park` requires `gist`; `resume` returns gist+entries |
 | `focus.set(session, block_ids, order?)` | session-scoped; focus_epoch |
 
@@ -244,7 +255,12 @@ zooms:
   DIGEST:    [block.header, digest.*, design.interface]
   LINE:      [block.line]            # "- [active] billing-7f2a — Billing (2 children)"
   NONE:      []
+floor:                               # rendered regardless of zoom, never degraded
+  - { match: { relation: [root, focus, ancestor] }, sections: [directives.active] }
 ```
+
+`floor` entries are appended to whatever zoom the policy chose; the degrade stage is not allowed to
+touch them. This is where directives live.
 
 Levels are an ordered list (for degradation to know what "one step down" means). Adding a level
 is a config change; a view then references it.
@@ -348,7 +364,7 @@ roles:
     view: default
     tools: [context.for, block.read, tree.list, thread.list, session.status,
             block.create, block.update, block.move, block.set_status, edge.*,
-            decision.record, thread.*, progress.append, focus.set]
+            decision.record, directive.*, thread.*, progress.append, focus.set]
     rules: rules/manager.md
   designer:
     view: designer
@@ -417,9 +433,23 @@ blocks/<block-id>/
   digest.md
   progress.jsonl
   decisions.jsonl
+  directives.jsonl
   threads/<thread-id>.md
 state/                       # sessions, counters — not part of export
 ```
+
+**Location: data in home, pointer in repo.** Keeping the data inside the project (`<repo>/.hafiz/`,
+gitignored) would give every git worktree and every clone its own store — fragmentation, which is
+worse than either pure option — and would put the design docs inside every agent's writable tree.
+So:
+
+- Data lives in `~/.hafiz/projects/<id>/` (`storage-fs.root` is configurable; in-project storage
+  remains possible, it is just not the default). Outside the workspace, Codex's default sandbox
+  cannot write there; the Claude Code and Kilo adapters install a deny rule for the path.
+- `<repo>/.hafiz/project.yaml` holds only the project id and optional config overrides. It is
+  committed by default so clones and worktrees resolve to the same store; users may gitignore it.
+- Resolution order for a project id: pointer file → hash of the git remote URL → hash of the
+  repo root path. `hafiz init` writes the pointer.
 
 Markdown headings map 1:1 to schema sections, so a human can read or hand-edit a design and Hafiz
 re-validates on next load. Atomicity: write-to-temp + rename; a per-project lock file held by the
