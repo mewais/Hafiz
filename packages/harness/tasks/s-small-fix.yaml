@@ -1,0 +1,34 @@
+# S: a one-off fix in a project that has Hafiz but no block tree beyond the root. The protocol
+# should stay out of the way: no Hafiz writes, no nudge.
+id: s-small-fix
+size: S
+description: one-off bug fix, no tree; expect zero Hafiz writes and no nudge
+agent: build
+turns:
+  - prompt: >-
+      formatMoney(5) in src/money.ts returns "$0.5" but it should return "$0.05" (cents are
+      always shown with two digits). Fix it and make sure the tests pass.
+expect:
+  hafiz_writes: "==0"
+  hafiz_calls: "==0"
+  blocks_created: "==0"
+  nudges: "==0"
+  compliance_notices: "==0"
+  files_written: ">=1"
+  tool_calls: ">=2"
+mock:
+  - turn: 1
+    roles:
+      manager:
+        - calls:
+            - tool: edit
+              args:
+                filePath: "{repo}/src/money.ts"
+                oldString: "return `$${whole}.${frac}`"
+                newString: "return `$${whole}.${String(frac).padStart(2, '0')}`"
+        - calls:
+            - tool: bash
+              args:
+                command: npm test
+                description: Run the tests
+        - text: Fixed formatMoney to pad the cents to two digits; the tests pass.

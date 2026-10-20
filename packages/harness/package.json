@@ -1,0 +1,34 @@
+{
+  "name": "@hafiz/harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Compliance harness: scripted tasks run on Kilo, per-role metrics, expectation scoring",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "hafiz-harness": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "tasks"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "harness": "node dist/bin.js"
+  },
+  "dependencies": {
+    "@hafiz/cli": "workspace:*",
+    "@hafiz/core": "workspace:*",
+    "@hafiz/gateway-mcp": "workspace:*",
+    "@hafiz/host-kilo": "workspace:*",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  }
+}

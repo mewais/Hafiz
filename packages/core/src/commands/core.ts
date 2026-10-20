@@ -1019,6 +1019,8 @@ export class Core {
             await this.proposalAdd(proposalOf(d, 'compliance'), { sessionId, role: s.role }),
           )
     }
+    // measurable for the compliance harness (M6): how often the engine spoke to this session
+    if (notices.length) await this.countersAdd(sessionId, { compliance_notices: notices.length })
     return { notices, proposals }
   }
 

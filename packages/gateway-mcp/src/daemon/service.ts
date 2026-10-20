@@ -427,6 +427,7 @@ export class DaemonService {
     const text = nudgeText(this.core.config.nudge, s.counters, this.nudged.get(s.id) ?? 0)
     if (!text || (await this.core.treeListRaw()).length > 1) return
     this.nudged.set(s.id, (this.nudged.get(s.id) ?? 0) + 1)
+    await this.core.countersAdd(s.id, { nudges: 1 })
     this.enqueue(s.id, { level: 'info', text }, 'nudge')
   }
 }

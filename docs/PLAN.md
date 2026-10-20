@@ -106,6 +106,9 @@ config/default      (data; loaded by core)
   measures per role: decisions recorded, progress appended, threads parked, reports captured, cap
   rejections, retries. Baseline first, then tune rules/tool descriptions/notices; re-measure.
 - Drafters (digest at `request_done`, gist at `park`) implemented, opt-in, measured.
+- **Status:** harness built (`packages/harness`: S/M/L tasks, runner, per-role metrics, `compare`;
+  verified end to end on real Kilo against the mock LLM). Baseline and tuned numbers need real
+  models: run on a developer machine per `packages/harness/README.md`.
 - **Exit:** a published baseline number per role and a tuned number; decision on drafters' default.
 
 ### M7 — Hardening and packaging

@@ -67,6 +67,27 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
+  packages/harness:
+    dependencies:
+      '@hafiz/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@hafiz/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hafiz/gateway-mcp':
+        specifier: workspace:*
+        version: link:../gateway-mcp
+      '@hafiz/host-kilo':
+        specifier: workspace:*
+        version: link:../host-kilo
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   packages/host-kilo:
     dependencies:
       '@hafiz/cli':

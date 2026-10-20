@@ -5,6 +5,7 @@
     { "path": "packages/storage-fs" },
     { "path": "packages/gateway-mcp" },
     { "path": "packages/cli" },
-    { "path": "packages/host-kilo" }
+    { "path": "packages/host-kilo" },
+    { "path": "packages/harness" }
   ]
 }

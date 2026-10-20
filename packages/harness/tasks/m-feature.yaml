@@ -1,0 +1,109 @@
+# M: a feature that should become a tracked block with 3-5 children, one worker per child.
+id: m-feature
+size: M
+description: order discounts feature; expect a feature block + 4 children and a worker per child
+agent: build
+turns:
+  - prompt: >-
+      Add order discounts to the shop: percentage coupon codes, a bulk-quantity discount rule,
+      applying discounts in the cart total, and showing them in the order summary. This is a
+      multi-part feature, so plan it as tracked work: one block for the feature, one child block
+      per part, and a worker subagent implementing each part (hafiz:block=<id> in its task
+      prompt). Keep the work in src/.
+expect:
+  blocks_created: ">=4"
+  manager_decisions: ">=1"
+  worker_sessions: "==4"
+  worker_request_done: "==4"
+  worker_progress_min: ">=2"
+  worker_reports: ">=4"
+  subagents_spawned: "==4"
+  files_written: ">=4"
+  cap_rejections: "==0"
+  nudges: "==0"
+mock:
+  - turn: 1
+    roles:
+      manager:
+        - calls:
+            - tool: hafiz_block_create
+              as: feat
+              args:
+                parent: "{b.root}"
+                title: Order discounts
+                kind: feature
+                design:
+                  purpose: Let shoppers pay less through coupon codes and bulk-quantity rules.
+                  scope: ["in: coupons, bulk rule, cart and order integration", "out: payment"]
+                  interface: { provides: [{ name: applyDiscounts(cart), type: fn }], consumes: [] }
+        - calls:
+            - tool: hafiz_block_create
+              as: coupons
+              args: &child
+                parent: "{b.feat}"
+                title: Coupon codes
+                plan: { steps: [{ id: s1, title: Model coupons }, { id: s2, title: Validate and apply }], acceptance: [tests pass] }
+            - tool: hafiz_block_create
+              as: bulk
+              args: { <<: *child, title: Bulk quantity rule }
+            - tool: hafiz_block_create
+              as: cartint
+              args: { <<: *child, title: Cart integration }
+            - tool: hafiz_block_create
+              as: summary
+              args: { <<: *child, title: Order summary lines }
+        - calls:
+            - tool: hafiz_decision_record
+              args:
+                block: "{b.feat}"
+                title: Discounts apply before tax
+                decision: Discounts are computed on the pre-tax cart total, in integer cents.
+            - tool: hafiz_block_set_status
+              args: { id: "{b.feat}", status: active }
+            - tool: hafiz_block_set_status
+              args: { id: "{b.coupons}", status: active }
+            - tool: hafiz_block_set_status
+              args: { id: "{b.bulk}", status: active }
+            - tool: hafiz_block_set_status
+              args: { id: "{b.cartint}", status: active }
+            - tool: hafiz_block_set_status
+              args: { id: "{b.summary}", status: active }
+        - calls:
+            - tool: task
+              args: &spawn
+                description: Coupon codes
+                subagent_type: worker
+                prompt: "hafiz:block={b.coupons} [[turn:{turn}]] Implement the coupon codes part in src/."
+            - tool: task
+              args: { <<: *spawn, description: Bulk quantity rule, prompt: "hafiz:block={b.bulk} [[turn:{turn}]] Implement the bulk-quantity rule in src/." }
+            - tool: task
+              args: { <<: *spawn, description: Cart integration, prompt: "hafiz:block={b.cartint} [[turn:{turn}]] Apply discounts in the cart total in src/." }
+            - tool: task
+              args: { <<: *spawn, description: Order summary, prompt: "hafiz:block={b.summary} [[turn:{turn}]] Show discounts in order summaries in src/." }
+        - text: All four parts of the discount feature are implemented and reported.
+      worker:
+        - calls:
+            - tool: hafiz_progress_append
+              args: { block: "{block}", kind: found, text: "Reviewed src/cart.ts and src/money.ts; the new code can live in its own module." }
+        - calls:
+            - tool: hafiz_step_set
+              args: { block: "{block}", step_id: s1, status: doing }
+        - calls:
+            - tool: write
+              args:
+                filePath: "{repo}/src/discount-{block}.ts"
+                content: "export const part = '{block}'\n"
+        - calls:
+            - tool: hafiz_step_set
+              args: { block: "{block}", step_id: s1, status: done }
+            - tool: hafiz_progress_append
+              args: { block: "{block}", kind: done, text: "Implemented the part in its own module." }
+        - calls:
+            - tool: hafiz_block_request_done
+              args:
+                id: "{block}"
+                digest:
+                  outcome: The part is implemented in a new module under src/.
+                  interface_delta: ["none"]
+                  pointers: [{ label: file, ref: "src/discount-{block}.ts" }]
+        - text: "Implemented the part.\n```hafiz-report\noutcome: done\n```"

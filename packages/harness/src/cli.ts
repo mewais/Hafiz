@@ -1,0 +1,127 @@
+// hafiz-harness: run | compare | report | tasks
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { parseArgs } from 'node:util'
+import { buildReport, compareReports, type Report, renderMarkdown } from './report.js'
+import { MOCK_MODEL, type RunResult, resolveKilo, runTask } from './runner.js'
+import { DEFAULT_TASKS_DIR, loadTasks } from './tasks.js'
+
+const USAGE = `hafiz-harness — compliance harness for Hafiz on Kilo
+
+  run      --model provider/model [--model …] [--tasks dir|file[,…]] [--only S,M,<id>]
+           [--repeat N] [--kilo-bin path] [--out dir] [--shaper proxy|hooks|auto] [--keep]
+           [--mock]                      (scripted mock LLM instead of a model; no --model needed)
+  compare  a.json b.json                 diff a baseline run against a tuned one
+  report   run.json                      print a result file as the markdown table
+  tasks    [--tasks dir|file[,…]]        list the task set
+`
+
+export interface CliIo {
+  out: (line: string) => void
+  err: (line: string) => void
+}
+
+const split = (s: string | undefined) =>
+  s
+    ? s
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean)
+    : []
+const slug = (s: string) => s.replace(/[^\w.-]+/g, '_')
+const readReport = (p: string): Report => JSON.parse(readFileSync(resolve(p), 'utf8')) as Report
+
+export async function main(argv: string[], io: CliIo): Promise<number> {
+  const [cmd, ...rest] = argv
+  try {
+    switch (cmd) {
+      case 'run':
+        return await runCommand(rest, io)
+      case 'compare': {
+        const [a, b] = rest
+        if (!a || !b) throw new Error('usage: hafiz-harness compare a.json b.json')
+        io.out(compareReports(readReport(a), readReport(b)))
+        return 0
+      }
+      case 'report': {
+        if (!rest[0]) throw new Error('usage: hafiz-harness report run.json')
+        io.out(renderMarkdown(readReport(rest[0])))
+        return 0
+      }
+      case 'tasks': {
+        const { values } = parseArgs({ args: rest, options: { tasks: { type: 'string' } } })
+        for (const t of loadTasks(
+          split(values.tasks).length ? split(values.tasks) : [DEFAULT_TASKS_DIR],
+        ))
+          io.out(`${t.id}\t${t.size}\t${t.turns.length} turn(s)\t${t.description}`)
+        return 0
+      }
+      default:
+        io.err(USAGE)
+        return cmd === undefined || cmd === '--help' || cmd === 'help' ? 0 : 2
+    }
+  } catch (e) {
+    io.err(`hafiz-harness: ${e instanceof Error ? e.message : String(e)}`)
+    return 1
+  }
+}
+
+async function runCommand(args: string[], io: CliIo): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      tasks: { type: 'string' },
+      only: { type: 'string' },
+      model: { type: 'string', multiple: true },
+      repeat: { type: 'string' },
+      'kilo-bin': { type: 'string' },
+      out: { type: 'string' },
+      shaper: { type: 'string' },
+      mock: { type: 'boolean' },
+      keep: { type: 'boolean' },
+    },
+  })
+  const mock = !!values.mock
+  const models = mock ? [MOCK_MODEL] : (values.model ?? [])
+  if (!models.length) throw new Error('pass --model provider/model (or --mock)')
+  for (const m of models)
+    if (!mock && !m.includes('/')) throw new Error(`model '${m}' must be provider/model`)
+  const repeat = Math.max(1, Number(values.repeat ?? 1) || 1)
+  const tasks = loadTasks(
+    split(values.tasks).length ? split(values.tasks) : [DEFAULT_TASKS_DIR],
+    split(values.only),
+  )
+  const kiloBin = resolveKilo(values['kilo-bin'])
+  const out = resolve(values.out ?? 'harness-results')
+  mkdirSync(out, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  let failed = false
+  for (const model of models) {
+    const runDir = join(out, `${slug(model)}-${stamp}`)
+    const results: RunResult[] = []
+    for (const task of tasks)
+      for (let n = 1; n <= repeat; n++) {
+        const r = await runTask(task, n, {
+          model,
+          mock,
+          kiloBin,
+          outDir: runDir,
+          shaper: values.shaper,
+          keep: values.keep,
+          log: (l) => io.err(l),
+        })
+        results.push(r)
+        io.err(
+          `${task.id}#${n}: ${r.passed ? 'passed' : `FAILED${r.error ? ` (${r.error})` : ''}`}`,
+        )
+      }
+    const report = buildReport(results, { model, mock })
+    const md = renderMarkdown(report)
+    writeFileSync(join(runDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`)
+    writeFileSync(join(runDir, 'report.md'), md)
+    io.out(md)
+    io.err(`results: ${runDir}/report.json`)
+    if (results.some((r) => !r.passed)) failed = true
+  }
+  return failed ? 1 : 0
+}

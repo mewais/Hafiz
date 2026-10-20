@@ -1,0 +1,172 @@
+# L: a seeded multi-level tree. The manager delegates to a designer, a planner and three parallel
+# workers; later the user opens a side discussion that should become a standing decision and one
+# that should be parked as a thread.
+id: l-seeded-tree
+size: L
+description: seeded 3-level tree, designer + planner + 3 workers, a standing decision and a parked thread
+agent: build
+setup:
+  project_name: Toy Shop
+  seed:
+    - as: checkout
+      title: Checkout
+      kind: feature
+      status: active
+      purpose: Turn a cart into a placed order with correct totals.
+      decisions:
+        - { title: No card data, decision: Never store or log card numbers., standing: never }
+      children:
+        - as: cart
+          title: Cart
+          status: active
+          purpose: Hold lines and compute the pre-discount total.
+          children:
+            - as: totals
+              title: Cart totals
+              purpose: Sum line totals in integer cents.
+              steps: [Total per line, Total per cart]
+        - as: pricing
+          title: Pricing
+          purpose: Price rules applied to a cart.
+        - as: orders
+          title: Orders
+          purpose: Place an order and take stock.
+turns:
+  - prompt: >-
+      Checkout is the active piece of work and it is in the Hafiz tree. Get it moving: have a
+      designer refine the Checkout design, a planner write plans for Pricing and Orders, then
+      run workers in parallel on the three leaf blocks Cart totals, Pricing and Orders (give
+      each worker hafiz:block=<id> in its task prompt). Each worker implements its block in
+      src/ and reports back.
+  - prompt: >-
+      Side note while that is going on: let's settle that all money in this project is stored as
+      integer cents, never floats. Make that a standing rule for the whole project.
+  - prompt: >-
+      Unrelated thought: maybe we should move order storage to Postgres some day. Talk it
+      through with me briefly on the Orders block, but we are not doing it now, so park it.
+expect:
+  designer_sessions: "==1"
+  planner_sessions: "==1"
+  worker_sessions: "==3"
+  designer_docs_written: ">=1"
+  planner_docs_written: ">=2"
+  worker_request_done: "==3"
+  worker_progress_min: ">=2"
+  decisions_standing: ">=1"
+  threads_opened: "==1"
+  threads_parked: "==1"
+  threads_open_at_end: "==0"
+  cap_rejections: "==0"
+  nudges: "==0"
+mock:
+  - turn: 1
+    roles:
+      manager:
+        - calls:
+            - tool: task
+              args:
+                description: Refine Checkout design
+                subagent_type: designer
+                prompt: "[[turn:{turn}]] Refine the design of Checkout (block {b.checkout}): add its constraints."
+        - calls:
+            - tool: task
+              args:
+                description: Plan Pricing and Orders
+                subagent_type: planner
+                prompt: "[[turn:{turn}]] Write plans for Pricing ({b.pricing}) and Orders ({b.orders})."
+        - calls:
+            - tool: hafiz_block_set_status
+              args: { id: "{b.pricing}", status: active }
+            - tool: hafiz_block_set_status
+              args: { id: "{b.orders}", status: active }
+            - tool: hafiz_block_set_status
+              args: { id: "{b.totals}", status: active }
+        - calls:
+            - tool: task
+              args: &spawn
+                description: Cart totals
+                subagent_type: worker
+                prompt: "hafiz:block={b.totals} [[turn:{turn}]] Implement cart totals in src/."
+            - tool: task
+              args: { <<: *spawn, description: Pricing, prompt: "hafiz:block={b.pricing} [[turn:{turn}]] Implement pricing in src/." }
+            - tool: task
+              args: { <<: *spawn, description: Orders, prompt: "hafiz:block={b.orders} [[turn:{turn}]] Implement orders in src/." }
+        - text: Design refined, plans written, and the three leaf blocks implemented.
+      designer:
+        - calls:
+            - tool: hafiz_doc_patch
+              args:
+                block: "{b.checkout}"
+                type: design
+                sections: { constraints: ["Money is integer cents.", "No card data is stored."] }
+        - text: Checkout design updated.
+      planner:
+        - calls:
+            - tool: hafiz_doc_write
+              args:
+                block: "{b.pricing}"
+                type: plan
+                sections:
+                  steps: [{ id: s1, title: Define rule shape }, { id: s2, title: Apply rules }]
+                  acceptance: [tests pass]
+            - tool: hafiz_doc_write
+              args:
+                block: "{b.orders}"
+                type: plan
+                sections:
+                  steps: [{ id: s1, title: Place order }, { id: s2, title: Take stock }]
+                  acceptance: [tests pass]
+        - text: Plans written for Pricing and Orders.
+      worker:
+        - calls:
+            - tool: hafiz_progress_append
+              args: { block: "{block}", kind: found, text: "Read the existing modules; the change fits in a new function." }
+        - calls:
+            - tool: hafiz_step_set
+              args: { block: "{block}", step_id: s1, status: doing }
+        - calls:
+            - tool: write
+              args:
+                filePath: "{repo}/src/part-{block}.ts"
+                content: "export const part = '{block}'\n"
+        - calls:
+            - tool: hafiz_step_set
+              args: { block: "{block}", step_id: s1, status: done }
+            - tool: hafiz_progress_append
+              args: { block: "{block}", kind: done, text: "Implemented the block in its own module." }
+        - calls:
+            - tool: hafiz_block_request_done
+              args:
+                id: "{block}"
+                digest:
+                  outcome: Implemented in a new module under src/.
+                  interface_delta: ["none"]
+                  pointers: [{ label: file, ref: "src/part-{block}.ts" }]
+        - text: "Done.\n```hafiz-report\noutcome: done\n```"
+  - turn: 2
+    roles:
+      manager:
+        - calls:
+            - tool: hafiz_decision_record
+              args:
+                block: "{b.root}"
+                title: Money is integer cents
+                decision: All money is stored as integer cents, never floats.
+                standing: always
+        - text: Recorded as a standing rule for the whole project.
+  - turn: 3
+    roles:
+      manager:
+        - calls:
+            - tool: hafiz_thread_open
+              as: pg
+              args:
+                block: "{b.orders}"
+                title: Move order storage to Postgres?
+                text: User wonders about Postgres for order storage some day.
+        - calls:
+            - tool: hafiz_thread_park
+              args:
+                id: "{b.pg}"
+                gist: Considered moving order storage to Postgres; deferred, nothing to do now.
+        - text: Parked the Postgres discussion on Orders.
