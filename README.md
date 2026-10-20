@@ -161,7 +161,14 @@ two publishable packages, `packages/hafiz` (`hafiz-context-manager`, bin `hafiz`
 
 ## Releasing
 
-`scripts/publish.sh` (or `pnpm release`) builds, tests, runs `npm pack --dry-run` on both packages
-and `pnpm publish --dry-run`; it only really publishes with `--yes`, and refuses on a dirty tree.
-`hafiz-context-manager` goes first, then `hafiz-kilo`; `pnpm publish` replaces the plugin's
-`workspace:` dependency with the core's real version. Bump both versions together first.
+`pnpm release` (`scripts/publish.sh`) is a dry run; `pnpm release -- --yes` really publishes
+`hafiz-context-manager`, then `hafiz-kilo` (pass a version to set both with `scripts/set-version.mjs`).
+
+1. Publish once manually (`pnpm release -- --yes`): npm trusted publishing can only be configured
+   on an existing package.
+2. On npmjs.com, add a Trusted Publisher to both packages: GitHub Actions, repo `mewais/Hafiz`,
+   workflow `release.yml`.
+3. From then on, create a GitHub release with tag `vX.Y.Z` from `main`; `release.yml` sets the version
+   from the tag, runs lint/build/test and publishes with provenance (`-rc.N` tags go to `next`).
+
+Alternative to step 2: add an `NPM_TOKEN` repository secret (automation token); the workflow uses it.

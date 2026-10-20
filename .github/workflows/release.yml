@@ -1,0 +1,80 @@
+name: release
+# Publishes hafiz-context-manager and hafiz-kilo to npm when a GitHub release is published.
+# The tag (vX.Y.Z, or vX.Y.Z-rc.1 for a prerelease -> dist-tag "next") is the version; it is not
+# committed back. Auth: npm trusted publishing (OIDC, no secret needed), or an NPM_TOKEN secret
+# as a fallback. Manual run: Actions -> release -> Run workflow (dry_run defaults to true).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run `pnpm publish --dry-run` instead of publishing
+        type: boolean
+        default: true
+      version:
+        description: Version to use for a manual run (default 0.0.0-manual.<run number>)
+        type: string
+        default: ''
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm >= 11.5.1 (Node 22 ships npm 10).
+      - run: npm install -g npm@^11.5.1 && npm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Set version from tag
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = release ]; then
+            version="${TAG#v}"
+          else
+            version="${INPUT_VERSION:-0.0.0-manual.$GITHUB_RUN_NUMBER}"
+          fi
+          node scripts/set-version.mjs "$version"
+          case "$version" in
+            *-*) dist_tag=next ;;
+            *) dist_tag=latest ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm test
+      - name: Publish
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_TAG: ${{ steps.version.outputs.dist_tag }}
+        run: |
+          # Fall back to the token only when the secret exists; otherwise npm uses OIDC.
+          if [ -n "$NPM_TOKEN" ]; then export NODE_AUTH_TOKEN="$NPM_TOKEN"; else unset NODE_AUTH_TOKEN; fi
+          flags=(--no-git-checks --access public --provenance --tag "$DIST_TAG")
+          if [ "$DRY_RUN" = true ]; then flags+=(--dry-run); fi
+          # Core first: the plugin depends on its exact version.
+          for dir in packages/hafiz packages/kilo-plugin; do
+            name=$(node -p "require('./$dir/package.json').name")
+            if [ -n "$(npm view "$name@$VERSION" version 2>/dev/null)" ]; then
+              echo "$name@$VERSION is already on npm, skipping"
+              continue
+            fi
+            (cd "$dir" && pnpm publish "${flags[@]}")
+          done
