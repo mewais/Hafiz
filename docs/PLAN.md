@@ -138,8 +138,8 @@ config/default      (data; loaded by core)
     all-or-nothing and attributed to the user. Config layers (`~/.hafiz/config`, `<store>/config`)
     are now actually loaded by the CLI, daemon and plugin.
   - `hafiz doctor`, `export`, `import`, `install|uninstall kilo` (`jsonc-parser` edits).
-  - Packaging: `hafiz` and `@hafiz/kilo-plugin` are esbuild bundles (`scripts/bundle.mjs`, run by
-    `pnpm build`); the other `@hafiz/*` packages stay private workspace packages. Not published.
+  - Packaging: `hafiz-context-manager` (bin `hafiz`) and `hafiz-kilo` are esbuild bundles (`scripts/bundle.mjs`, run by
+    `pnpm build`); the other `@hafiz/*` packages stay private workspace packages. Publish with `scripts/publish.sh`.
 
 ## Dogfooding
 

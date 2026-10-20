@@ -1,5 +1,5 @@
 // Real Kilo, real TUI: the Kilo TUI runs in a pseudo-terminal (a detached tmux pane of a fixed
-// size) with the mock LLM and both halves of @hafiz/kilo-plugin loaded from dist; a captured
+// size) with the mock LLM and both halves of hafiz-kilo loaded from dist; a captured
 // frame must show the Hafiz sidebar and the /hafiz route. A second test routes the condenser
 // through Kilo (`llm.condenser.provider: kilo`) and checks that the child session it creates is
 // billed into the condensed session's family in Kilo's own store. Slow and needs the Kilo CLI and

@@ -39,7 +39,7 @@ describe('published bundle: hafiz', () => {
     expect(hafiz('--help')).toContain('usage: hafiz <command>')
     expect(hafiz('init', 'Shop', '--backend', 'sqlite')).toContain('initialised project')
     expect(hafiz('tree')).toMatch(/\[active\] shop-\w+ — Shop \(root\)/)
-    expect(hafiz('install', 'kilo')).toContain('installed @hafiz/kilo-plugin')
+    expect(hafiz('install', 'kilo')).toContain('installed hafiz-kilo')
     expect(hafiz('doctor')).toContain('clean (sqlite backend)')
 
     const daemon = spawn(process.execPath, [bin, 'daemon', '--project', repo], {

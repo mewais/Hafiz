@@ -7,7 +7,7 @@ import { type Config, configSchema } from './schema.js'
 
 /**
  * Directory holding the built-in defaults, shipped with the core package. In the published
- * bundles (`hafiz`, `@hafiz/kilo-plugin`) the defaults are copied to `config/default` next to the
+ * bundles (`hafiz-context-manager`, `hafiz-kilo`) the defaults are copied to `config/default` next to the
  * bundled entry file.
  */
 export function defaultConfigDir(): string {

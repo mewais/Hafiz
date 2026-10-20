@@ -1,6 +1,7 @@
 {
   "name": "@hafiz/harness",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Compliance harness: scripted tasks run on Kilo, per-role metrics, expectation scoring",

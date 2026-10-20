@@ -1,6 +1,7 @@
 {
   "name": "@hafiz/storage-fs",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Git-backed, journaled filesystem storage backend",

@@ -1,7 +1,30 @@
 {
-  "name": "@hafiz/kilo-plugin",
+  "name": "hafiz-kilo",
   "version": "0.1.0",
   "description": "Kilo plugin for Hafiz: role agents, Hafiz tools, and context shaping for the project block tree.",
+  "keywords": [
+    "kilo",
+    "kilo-plugin",
+    "hafiz",
+    "context",
+    "agents",
+    "llm",
+    "mcp",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Mohammad Ewais"
+  },
+  "homepage": "https://github.com/mewais/Hafiz/tree/main/packages/kilo-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/mewais/Hafiz/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mewais/Hafiz.git",
+    "directory": "packages/kilo-plugin"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
@@ -18,20 +41,17 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.5"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/mewais/Hafiz.git"
   },
   "scripts": {
     "build": "tsc -b ../.. && node ../../scripts/bundle.mjs kilo-plugin"
   },
   "dependencies": {
-    "hafiz": "workspace:^0.1.0"
+    "hafiz-context-manager": "workspace:0.1.0"
   },
   "publishConfig": {
     "access": "public"

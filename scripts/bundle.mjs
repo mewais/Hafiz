@@ -1,11 +1,12 @@
 // Builds the two publishable packages from the tsc output of the workspace:
-//   packages/hafiz        -> dist/hafiz.js        one executable: CLI + daemon + MCP gateway
-//   packages/kilo-plugin  -> dist/index.js        the Kilo server plugin (`export default { id, server }`)
-//                         -> dist/tui.js          the Kilo TUI plugin (`export default { id, tui }`)
+//   packages/hafiz        (hafiz-context-manager) -> dist/hafiz.js   one executable: CLI + daemon + MCP gateway
+//   packages/kilo-plugin  (hafiz-kilo)            -> dist/index.js   the Kilo server plugin (`export default { id, server }`)
+//                                                 -> dist/tui.js     the Kilo TUI plugin (`export default { id, tui }`)
 // Each bundle inlines every @hafiz/* package and the npm dependencies, so a published package has
 // no runtime dependencies. The default configuration (YAML + rules) is copied next to the entry.
+// The repo LICENSE is copied next to each package.json (git-ignored there) so it ships in the tarball.
 // Usage: node scripts/bundle.mjs [hafiz|kilo-plugin ...]   (run `tsc -b` first)
-import { chmodSync, cpSync, mkdirSync, rmSync } from 'node:fs'
+import { chmodSync, copyFileSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transformAsync } from '@babel/core'
@@ -92,6 +93,7 @@ for (const name of wanted.length ? wanted : Object.keys(targets)) {
   cpSync(join(pkg('core'), 'config', 'default'), join(dist, 'config', 'default'), {
     recursive: true,
   })
+  copyFileSync(join(root, 'LICENSE'), join(dirname(dist), 'LICENSE'))
   if (t.executable) chmodSync(t.outfile, 0o755)
   console.log(`bundled ${name} -> ${t.outfile}`)
 }

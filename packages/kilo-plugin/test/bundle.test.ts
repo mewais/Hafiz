@@ -13,7 +13,7 @@ beforeAll(() => {
   })
 }, 60_000)
 
-describe('published bundle: @hafiz/kilo-plugin', () => {
+describe('published bundle: hafiz-kilo', () => {
   it('is self-contained and default-exports { id, server } as Kilo (Bun) requires', async () => {
     const specifiers = [
       ...readFileSync(entry, 'utf8').matchAll(/^import .*? from "([^"]+)"/gm),
@@ -28,7 +28,7 @@ describe('published bundle: @hafiz/kilo-plugin', () => {
   })
 })
 
-describe('published bundle: @hafiz/kilo-plugin/tui', () => {
+describe('published bundle: hafiz-kilo/tui', () => {
   const tui = join(root, 'packages/kilo-plugin/dist/tui.js')
   it('is compiled Solid (universal, @opentui/solid) importing only what Kilo provides', () => {
     const code = readFileSync(tui, 'utf8')

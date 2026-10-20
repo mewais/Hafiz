@@ -228,7 +228,7 @@ that Kilo finds through the package's `exports["./tui"]` when the package is lis
 its own daemon connection as a `read_only` `viewer` session (`tree.summary`, `project.status`,
 `proposal.list`, `notices.peek` — which never drains —, `block.read`, `block.history`; every write
 method is refused). Kilo compiles `.tsx` with Solid's universal transform only outside
-`node_modules`, so `@hafiz/kilo-plugin/tui` ships compiled JS (babel-preset-solid,
+`node_modules`, so `hafiz-kilo/tui` ships compiled JS (babel-preset-solid,
 `generate: universal`, `moduleName: @opentui/solid`) with `solid-js` and `@opentui/*` left as
 imports, which Kilo's runtime plugin maps onto its own instances. It registers a
 `sidebar_content` slot (opentui delivers `onMouseDown` to boxes there, so rows fold on click), a

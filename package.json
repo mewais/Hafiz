@@ -2,6 +2,7 @@
   "name": "hafiz",
   "private": true,
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "engines": {
@@ -13,7 +14,8 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release": "bash scripts/publish.sh"
   },
   "devDependencies": {
     "@babel/core": "7.28.0",

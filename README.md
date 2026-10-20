@@ -11,15 +11,20 @@ git or a single SQLite file.
 Requires Node 22.5 or newer.
 
 ```sh
-npm i -g hafiz            # the CLI, daemon and MCP gateway (one file, no dependencies)
-hafiz install kilo        # add the plugin to your global Kilo config (or --project for this repo)
+npm i -g hafiz-context-manager   # the `hafiz` CLI, daemon and MCP gateway (one file, no dependencies)
+hafiz install kilo               # add the plugin to your global Kilo config (or --project for this repo)
 ```
+
+From a local clone instead: `pnpm install && pnpm build`, `npm i -g ./packages/hafiz`, then either
+`hafiz install kilo` (installs the npm plugin `hafiz-kilo`) or point Kilo's `plugin` array at the
+clone's `packages/kilo-plugin` directory; `hafiz install kilo` and `hafiz doctor` recognise that
+path and will not add a second entry.
 
 That is all: tracking starts automatically (below).
 
 `hafiz install kilo` edits `~/.config/kilo/kilo.jsonc` in place (with `--project`, the repo's
 `kilo.jsonc` or `.kilo/kilo.jsonc` instead), keeping your comments,
-and adds `@hafiz/kilo-plugin` to its `plugin` array; it adds the same package to `tui.jsonc` next
+and adds `hafiz-kilo` to its `plugin` array; it adds the same package to `tui.jsonc` next
 to it for the TUI panel. It is idempotent; `hafiz uninstall kilo` removes both. Kilo loads the
 plugin on its next start.
 
@@ -151,5 +156,12 @@ detected and reported by `hafiz doctor`.
 [Compliance harness](packages/harness/README.md)
 
 Development: `pnpm install && pnpm lint && pnpm build && pnpm test`. `pnpm build` also bundles the
-two publishable packages, `packages/hafiz` (`hafiz`) and `packages/kilo-plugin`
-(`@hafiz/kilo-plugin`).
+two publishable packages, `packages/hafiz` (`hafiz-context-manager`, bin `hafiz`) and
+`packages/kilo-plugin` (`hafiz-kilo`). Releasing: `scripts/publish.sh` (dry run by default).
+
+## Releasing
+
+`scripts/publish.sh` (or `pnpm release`) builds, tests, runs `npm pack --dry-run` on both packages
+and `pnpm publish --dry-run`; it only really publishes with `--yes`, and refuses on a dirty tree.
+`hafiz-context-manager` goes first, then `hafiz-kilo`; `pnpm publish` replaces the plugin's
+`workspace:` dependency with the core's real version. Bump both versions together first.

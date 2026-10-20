@@ -97,7 +97,7 @@ function nodeBinary(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * argv prefix for the hafiz CLI: $HAFIZ_BIN, else the `hafiz` package's bin (published layout),
+ * argv prefix for the hafiz CLI: $HAFIZ_BIN, else the `hafiz-context-manager` package's bin (published layout),
  * else @hafiz/cli's bin.js (workspace layout), else `hafiz` on PATH.
  */
 function hafizCommand(env: NodeJS.ProcessEnv): string[] {
@@ -105,7 +105,7 @@ function hafizCommand(env: NodeJS.ProcessEnv): string[] {
   if (env.HAFIZ_BIN) return [node, env.HAFIZ_BIN]
   // Both packages export only an `import` condition, so resolve as ESM (works in Node and Bun).
   const candidates: Array<() => string> = [
-    () => fileURLToPath(import.meta.resolve('hafiz/bin')),
+    () => fileURLToPath(import.meta.resolve('hafiz-context-manager/bin')),
     () => join(dirname(fileURLToPath(import.meta.resolve('@hafiz/cli'))), 'bin.js'),
   ]
   for (const candidate of candidates)

@@ -1,7 +1,30 @@
 {
-  "name": "hafiz",
+  "name": "hafiz-context-manager",
   "version": "0.1.0",
   "description": "Shared project memory for coding agents: a block tree of designs, plans and decisions with role-shaped views, served over MCP.",
+  "keywords": [
+    "context",
+    "context-management",
+    "agents",
+    "llm",
+    "mcp",
+    "multi-agent",
+    "project-memory",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Mohammad Ewais"
+  },
+  "homepage": "https://github.com/mewais/Hafiz/tree/main/packages/hafiz#readme",
+  "bugs": {
+    "url": "https://github.com/mewais/Hafiz/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mewais/Hafiz.git",
+    "directory": "packages/hafiz"
+  },
   "type": "module",
   "bin": {
     "hafiz": "./dist/hafiz.js"
@@ -12,20 +35,11 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.5"
-  },
-  "keywords": [
-    "mcp",
-    "agents",
-    "kilo",
-    "project-memory"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/mewais/Hafiz.git"
   },
   "scripts": {
     "build": "tsc -b ../.. && node ../../scripts/bundle.mjs hafiz"

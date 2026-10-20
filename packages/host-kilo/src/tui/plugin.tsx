@@ -1,4 +1,4 @@
-// The Hafiz panel in Kilo's TUI (a separate module: `@hafiz/kilo-plugin/tui`). Strictly
+// The Hafiz panel in Kilo's TUI (a separate module: `hafiz-kilo/tui`). Strictly
 // view-only: a sidebar section with the block tree, a status chip next to the prompt, toasts for
 // new review items and compliance notices, and a full-screen `/hafiz` route (Tree / Review /
 // Decisions). Nothing here writes; changes go through agents or the `hafiz` CLI.

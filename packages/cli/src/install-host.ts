@@ -16,7 +16,7 @@ import {
 import { CliError, repoRootOf } from './resolve.js'
 import type { Io } from './shared.js'
 
-export const KILO_PLUGIN = '@hafiz/kilo-plugin'
+export const KILO_PLUGIN = 'hafiz-kilo'
 const FORMAT = { tabSize: 2, insertSpaces: true, eol: '\n' }
 
 /** Candidate Kilo config files, most specific first. */
@@ -53,6 +53,16 @@ function formatEdits(text: string, edits: Edit[]): string {
 
 const specifier = (entry: unknown): unknown => (Array.isArray(entry) ? entry[0] : entry)
 
+/** The Hafiz plugin: the npm package, or a local clone given as a path ending in `packages/kilo-plugin`. */
+export function isHafizPlugin(entry: unknown): boolean {
+  const s = specifier(entry)
+  if (typeof s !== 'string') return false
+  if (s === KILO_PLUGIN) return true
+  return /(^|[\\/])packages[\\/]kilo-plugin$/.test(
+    s.replace(/^file:(\/\/)?/, '').replace(/[\\/]+$/, ''),
+  )
+}
+
 function parseConfig(file: string, text: string): { plugin?: unknown } {
   const errors: ParseError[] = []
   const v = parse(text, errors, { allowTrailingComma: true })
@@ -64,7 +74,7 @@ function parseConfig(file: string, text: string): { plugin?: unknown } {
 /** Index of the Hafiz plugin in the `plugin` array of `text`, or -1. */
 export function pluginIndex(file: string, text: string): number {
   const plugin = parseConfig(file, text).plugin
-  return Array.isArray(plugin) ? plugin.findIndex((e) => specifier(e) === KILO_PLUGIN) : -1
+  return Array.isArray(plugin) ? plugin.findIndex(isHafizPlugin) : -1
 }
 
 /** Config files (project, then global) that list the Hafiz plugin. */

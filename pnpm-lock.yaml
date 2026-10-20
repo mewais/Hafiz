@@ -135,8 +135,8 @@ importers:
 
   packages/kilo-plugin:
     dependencies:
-      hafiz:
-        specifier: workspace:^0.1.0
+      hafiz-context-manager:
+        specifier: workspace:0.1.0
         version: link:../hafiz
 
   packages/storage-fs:

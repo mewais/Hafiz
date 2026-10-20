@@ -419,15 +419,15 @@ describe('hafiz install kilo', () => {
     expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
     const file = join(cwd, 'kilo.jsonc')
     const tui = join(cwd, 'tui.jsonc')
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ plugin: ['@hafiz/kilo-plugin'] })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ plugin: ['hafiz-kilo'] })
     // the TUI panel: same package, registered in Kilo's tui.json(c)
-    expect(JSON.parse(readFileSync(tui, 'utf8'))).toEqual({ plugin: ['@hafiz/kilo-plugin'] })
+    expect(JSON.parse(readFileSync(tui, 'utf8'))).toEqual({ plugin: ['hafiz-kilo'] })
     clear()
     expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
     expect(out.join('\n')).toContain('already installed (server plugin)')
     expect(out.join('\n')).toContain('already installed (TUI panel)')
-    expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
-    expect(JSON.parse(readFileSync(tui, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
+    expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual(['hafiz-kilo'])
+    expect(JSON.parse(readFileSync(tui, 'utf8')).plugin).toEqual(['hafiz-kilo'])
     expect(await run(['uninstall', 'kilo', '--project'], io)).toBe(0)
     expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual([])
     expect(JSON.parse(readFileSync(tui, 'utf8')).plugin).toEqual([])
@@ -458,11 +458,11 @@ describe('hafiz install kilo', () => {
     expect(after).toContain('// my model')
     expect(after).toContain('/* keep */')
     expect(after).toContain('// trailing note')
-    expect(after).toContain('"@hafiz/kilo-plugin"')
+    expect(after).toContain('"hafiz-kilo"')
     expect(existsSync(join(cwd, 'kilo.jsonc'))).toBe(false)
     // the TUI entry goes next to the server config, keeping an existing tui.json's settings
     expect(JSON.parse(readFileSync(join(cwd, '.kilo/tui.jsonc'), 'utf8')).plugin).toEqual([
-      '@hafiz/kilo-plugin',
+      'hafiz-kilo',
     ])
     await run(['install', 'kilo', '--project'], io)
     expect(readFileSync(file, 'utf8')).toBe(after)
@@ -474,22 +474,36 @@ describe('hafiz install kilo', () => {
     expect(back).toContain('// trailing note')
   })
 
+  it('treats a local-clone path ending in packages/kilo-plugin as installed (no duplicate, doctor ok)', async () => {
+    const cwd = repo()
+    const { io, out, clear } = harness(cwd)
+    await run(['init', 'Shop'], io)
+    const file = join(cwd, 'kilo.jsonc')
+    writeFileSync(file, '{ "plugin": ["/home/me/src/Hafiz/packages/kilo-plugin/"] }\n')
+    writeFileSync(join(cwd, 'tui.jsonc'), '{ "plugin": [["../Hafiz/packages/kilo-plugin", {}]] }\n')
+    expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
+    expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual([
+      '/home/me/src/Hafiz/packages/kilo-plugin/',
+    ])
+    expect(out.join('\n')).toContain('already installed (server plugin)')
+    expect(out.join('\n')).toContain('already installed (TUI panel)')
+    clear()
+    await run(['doctor'], io)
+    expect(out.join('\n')).toMatch(/ok\s+kilo\s+plugin listed in .*kilo\.jsonc/)
+  })
+
   it('a bare install edits the global config; --project edits the project one', async () => {
     const cwd = repo()
     const { io } = harness(cwd)
     const global = join(io.env.HOME as string, '.config/kilo/kilo.jsonc')
     expect(await run(['install', 'kilo'], io)).toBe(0)
-    expect(JSON.parse(readFileSync(global, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
+    expect(JSON.parse(readFileSync(global, 'utf8')).plugin).toEqual(['hafiz-kilo'])
     expect(existsSync(join(cwd, 'kilo.jsonc'))).toBe(false)
     expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
-    expect(JSON.parse(readFileSync(join(cwd, 'kilo.jsonc'), 'utf8')).plugin).toEqual([
-      '@hafiz/kilo-plugin',
-    ])
+    expect(JSON.parse(readFileSync(join(cwd, 'kilo.jsonc'), 'utf8')).plugin).toEqual(['hafiz-kilo'])
     expect(await run(['uninstall', 'kilo'], io)).toBe(0)
     expect(JSON.parse(readFileSync(global, 'utf8')).plugin).toEqual([])
-    expect(JSON.parse(readFileSync(join(cwd, 'kilo.jsonc'), 'utf8')).plugin).toEqual([
-      '@hafiz/kilo-plugin',
-    ])
+    expect(JSON.parse(readFileSync(join(cwd, 'kilo.jsonc'), 'utf8')).plugin).toEqual(['hafiz-kilo'])
   })
 
   it('--global edits ~/.config/kilo/kilo.jsonc, and doctor sees it', async () => {
@@ -501,11 +515,11 @@ describe('hafiz install kilo', () => {
     writeFileSync(tui, '{ "theme": "kilo", "plugin": ["x-tui"] }\n')
     expect(await run(['install', 'kilo', '--global'], io)).toBe(0)
     const file = join(io.env.HOME as string, '.config/kilo/kilo.jsonc')
-    expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
+    expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual(['hafiz-kilo'])
     expect(existsSync(join(cwd, 'kilo.jsonc'))).toBe(false)
     expect(JSON.parse(readFileSync(tui, 'utf8'))).toEqual({
       theme: 'kilo',
-      plugin: ['x-tui', '@hafiz/kilo-plugin'],
+      plugin: ['x-tui', 'hafiz-kilo'],
     })
     expect(existsSync(join(io.env.HOME as string, '.config/kilo/tui.jsonc'))).toBe(false)
     clear()

@@ -1,6 +1,7 @@
 {
   "name": "@hafiz/core",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Hafiz core: domain model, schemas, commands/queries, view engine, sessions",

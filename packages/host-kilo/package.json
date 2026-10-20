@@ -1,6 +1,7 @@
 {
   "name": "@hafiz/host-kilo",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Kilo Code plugin: config/event hooks and RequestShaper",
