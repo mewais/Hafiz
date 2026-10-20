@@ -19,6 +19,8 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@hafiz/core": "workspace:*"
+    "@hafiz/core": "workspace:*",
+    "simple-git": "^4.0.2",
+    "yaml": "^2.9.1"
   }
 }

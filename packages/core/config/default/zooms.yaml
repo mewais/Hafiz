@@ -1,0 +1,23 @@
+# Ordered from most to least detail; degradation moves one step toward NONE.
+# Selectors: block.header | block.line | status.line | <doc>.* | <doc>.<section>
+#            decisions.active[-N:] | decisions.standing | progress[-N:] | threads.open | threads.parked.titles
+zooms:
+  FULL:
+    - block.header
+    - design.*
+    - plan.*
+    - "decisions.active[-5:]"
+    - "progress[-10:]"
+    - threads.open
+    - threads.parked.titles
+  DESIGN:
+    - block.header
+    - design.*
+    - "decisions.active[-3:]"
+  INTERFACE: [block.header, design.interface, status.line]
+  DIGEST: [block.header, digest.*, design.interface]
+  LINE: [block.line]
+  NONE: []
+# Rendered regardless of zoom; never degraded; measured against its own cap.
+floor:
+  - { match: { relation: [root, focus, ancestor] }, sections: [decisions.standing], cap: 600 }

@@ -473,7 +473,7 @@ prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ```
 packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
-config/default/ roles.yaml views.yaml zooms.yaml kinds.yaml schemas/ policies.yaml compliance.yaml nudge.yaml tail.yaml rules/
+packages/core/config/default/ roles.yaml views.yaml zooms.yaml kinds.yaml schemas/ policies.yaml compliance.yaml nudge.yaml tail.yaml rules/
 docs/ ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
 ```
 

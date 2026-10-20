@@ -10,13 +10,28 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./state": {
+      "types": "./dist/store/state.d.ts",
+      "import": "./dist/store/state.js"
+    },
+    "./conformance": {
+      "types": "./dist/store/conformance.d.ts",
+      "import": "./dist/store/conformance.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "config"
   ],
   "scripts": {
     "build": "tsc -b"
   },
-  "dependencies": {}
+  "dependencies": {
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.7"
+  }
 }
