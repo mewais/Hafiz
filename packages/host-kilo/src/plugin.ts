@@ -1,6 +1,7 @@
 // The Kilo plugin. In a repo without `.hafiz/project.yaml` it returns no hooks at all (zero cost;
-// the decision is cached per directory). Otherwise it installs config, observes sessions, captures
-// subagent reports and shapes requests through the selected RequestShaper.
+// the decision is cached per directory). Otherwise it installs config, registers the Hafiz tools
+// (plugin-native, resolved per calling session), observes sessions, captures subagent reports and
+// shapes requests through the selected RequestShaper.
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -21,6 +22,7 @@ import { ConversationShaper } from './shaper/core.js'
 import { TransformHooksShaper } from './shaper/hooks.js'
 import { EmbeddedProxy, SESSION_HEADER } from './shaper/proxy.js'
 import type { ShaperSetting } from './shaper/types.js'
+import { nativeTools } from './tools.js'
 
 export interface HafizPluginDeps {
   env?: NodeJS.ProcessEnv
@@ -136,6 +138,10 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
       if (text) await sessions.captureReport(childId, text)
     }
 
+    const toolsMode = ((options as { tools?: unknown }).tools ?? config.hafiz.host.kilo.tools) as
+      | 'native'
+      | 'mcp'
+
     const out: Hooks = {
       async config(cfg) {
         const proxyBase = proxy ? await proxy.start() : undefined
@@ -144,6 +150,7 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
           repoRoot: project.repoRoot,
           storeDir: project.storeDir,
           hafiz,
+          tools: toolsMode,
           env: Object.fromEntries(
             ['HAFIZ_STORE_ROOT', 'XDG_RUNTIME_DIR', 'HAFIZ_BIN']
               .filter((k) => env[k])
@@ -220,6 +227,7 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
       },
     }
     const counted = new Set<string>()
+    if (toolsMode === 'native') out.tool = nativeTools({ config, sessions })
 
     if (proxy)
       out['chat.headers'] = async (i, o) => {

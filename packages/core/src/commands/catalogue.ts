@@ -1,7 +1,10 @@
-// The MCP tool catalogue: one tool per Core command/query, filtered by the role's allowlist.
-// The descriptions are what agents read, so they carry the protocol hints.
-import { type Config, isAllowed } from '@hafiz/core'
+// The tool catalogue every gateway exposes: one tool per Core command/query, filtered by the
+// role's allowlist. The MCP gateway and the Kilo plugin's native tools are both generated from
+// it, so names, descriptions and argument schemas cannot drift. The descriptions are what agents
+// read, so they carry the protocol hints.
 import { z } from 'zod'
+import type { Config } from '../config/schema.js'
+import { isAllowed } from './authz.js'
 
 export interface ToolSpec {
   /** Core command or query, e.g. `block.set_status`. */

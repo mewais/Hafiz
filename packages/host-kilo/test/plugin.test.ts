@@ -72,7 +72,7 @@ function normalise(v: unknown, r: { cwd: string; env: NodeJS.ProcessEnv }): unkn
 }
 
 describe('plugin: config hook', () => {
-  it('installs servers, agents, permissions, commands and compaction in a Hafiz repo', async () => {
+  it('installs agents, permissions, commands and compaction in a Hafiz repo', async () => {
     const r = await repo(true)
     const hooks = await plugin(r)
     const cfg: KiloConfig = {}
@@ -80,18 +80,32 @@ describe('plugin: config hook', () => {
     const n = normalise(cfg, r) as KiloConfig
     // rules text is long and has its own tests; keep the snapshot about structure
     for (const a of Object.values(n.agent ?? {}))
-      if (a) a.prompt = `<${String(a.prompt).length} chars>`
+      if (a?.prompt) a.prompt = `<${String(a.prompt).length} chars>`
     expect(n).toMatchSnapshot()
+    // native tools (default): no MCP servers, tools come from the plugin `tool` hook
+    expect(cfg.mcp ?? {}).toEqual({})
+    expect(Object.keys(hooks.tool ?? {})).toContain('hafiz_progress_append')
+    expect(cfg.agent?.worker?.prompt).toContain('hafiz_block_request_done')
+    // last match wins in Kilo permission maps: the role's allows must come after the deny
+    const keys = Object.keys(cfg.agent?.worker?.permission as object)
+    expect(keys.indexOf('hafiz_*')).toBeLessThan(keys.indexOf('hafiz_progress_append'))
+  })
+
+  it('host.kilo.tools: mcp registers one MCP server per role instead of native tools', async () => {
+    const r = await repo(true)
+    const hooks = await plugin(r, { tools: 'mcp' })
+    const cfg: KiloConfig = {}
+    await hooks.config?.(cfg)
+    expect(hooks.tool).toBeUndefined()
     expect(Object.keys(cfg.mcp ?? {})).toEqual([
       'hafiz-manager',
       'hafiz-designer',
       'hafiz-planner',
       'hafiz-worker',
     ])
-    expect(cfg.agent?.worker?.prompt).toContain('worker')
-    // last match wins in Kilo permission maps: the role's allow must come after the deny
     const keys = Object.keys(cfg.agent?.worker?.permission as object)
     expect(keys.indexOf('hafiz-*')).toBeLessThan(keys.indexOf('hafiz-worker_*'))
+    expect(cfg.permission).toMatchObject({ 'hafiz-*': 'deny', 'hafiz-manager_*': 'allow' })
   })
 
   it('re-points providers that name a base URL at the embedded proxy', async () => {
@@ -109,7 +123,11 @@ describe('plugin: config hook', () => {
     expect(cfg.provider?.builtin?.options).toEqual({ apiKey: 'k' })
     // user settings win, ours fill the rest
     expect(cfg.agent?.worker).toMatchObject({ model: 'mock/m', mode: 'subagent' })
-    expect(cfg.agent?.worker?.permission).toMatchObject({ bash: 'deny', 'hafiz-worker_*': 'allow' })
+    expect(cfg.agent?.worker?.permission).toMatchObject({
+      bash: 'deny',
+      'hafiz_*': 'deny',
+      hafiz_progress_append: 'allow',
+    })
   })
 
   it('does nothing at all without a Hafiz tree', async () => {
@@ -176,12 +194,6 @@ describe('plugin: sessions, report capture, shaping', () => {
     expect(w).toMatchObject({ role: 'worker', host: 'kilo', parentSessionId: 'ses_m' })
     expect(w?.focus.blocks).toEqual([block])
     expect((await read.getSession('ses_m'))?.role).toBe('manager')
-    // build/plan/title agents are not managed
-    await hooks['chat.message']?.(
-      { sessionID: 'ses_b', agent: 'build' },
-      { message: {}, parts: [] },
-    )
-    expect(await read.getSession('ses_b')).toBeNull()
   })
 
   it('captures the task result as a capped report and counts the spawn', async () => {

@@ -151,7 +151,9 @@ only for the optional proxy).
 
 | Job | Mechanism |
 |---|---|
-| Install | one plugin module (works in CLI and VS Code); `config` hook injects: `mcp.hafiz-<role>` servers, `agent.<role>` definitions (prompt = role rules, `permission` map allowing only `hafiz-<role>_*` and denying other `hafiz-*_*`, `permission.task` to control who may delegate to whom), slash commands, `permission.edit/read` deny for the store path, `instructions` entry pointing at the Hafiz rules file |
+| Install | one plugin module (works in CLI and VS Code); `config` hook injects: `agent.<role>` definitions (prompt = role rules, `permission` map `hafiz_*: deny` + `allow` for exactly the role's tools, `permission.task` to control who may delegate to whom), per-agent tool permissions for non-Hafiz agents (default roles, below), slash commands, `permission.edit/read` deny for the store path |
+| Tools | **plugin-native** (`tool` hook, stable): `hafiz_<command>` generated from the shared catalogue (`@hafiz/core` `TOOL_SPECS`, same as the MCP gateway); each call carries the Kilo `sessionID`/`agent` and is dispatched with that session's token. `host.kilo.tools: mcp` falls back to `hafiz-<role>` MCP servers |
+| Default roles | `host.kilo.default_role` (default `manager`): primary agents that are not role agents (`build`, `plan`, custom) are managed as that role — its tools (global permission), a session, the role rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`): non-role subagents (`general`, `explore`, custom) get that role's tools but are managed only when spawned with `hafiz:block=<id>`; otherwise passthrough and tool calls are refused. `none` disables either |
 | Observe | `event` hook: `session.created/idle/compacted`, `tool.execute.after`, `file.edited` → counters |
 | Act: inject | `experimental.chat.system.transform` → envelope at the end of the system prompt, replaced in place on epoch change (prefix-stable, no stale copies) |
 | Act: tail | `experimental.chat.messages.transform` → stub tool results older than `tool_result_max_age_turns`, never user turns, never the newest turn; complements `compaction.prune` |
@@ -196,6 +198,18 @@ against a mock LLM; corrections to the above in bold):**
 - **MCP servers are per Kilo instance, not per session**: one `hafiz-worker` process serves all
   worker sessions, so MCP calls cannot carry the Kilo session id. `file.edited` carries no
   session id either (counters use `tool.execute.after` on edit/write/patch tools).
+- **Plugin tools (M4b, verified)**: `Hooks.tool` is `{ [id]: { description, args, execute } }`;
+  `args` is a Zod v4 raw shape — Kilo checks each value for `_zod` and builds `z.object(args)` /
+  JSON Schema itself, so the plugin's own zod copy works. `execute(args, ctx)` gets
+  `ctx.sessionID`, `ctx.messageID`, `ctx.agent`; a throw becomes a tool error the model sees.
+  Plugin tools are global; the permission key is the tool id, so `hafiz_*: deny` + per-tool
+  `allow` hides them per agent. Kilo copies a caller's denies into a spawned subagent only for
+  MCP-server-prefixed patterns and a fixed set of built-in tools, so unprefixed `hafiz_*` denies
+  are **not** inherited: verified with real Kilo that `build` (managed as manager) sees exactly
+  the manager tools, a `worker` it spawns sees exactly the worker tools, and the worker's
+  `hafiz_progress_append` lands in the audit/log under the worker's own Kilo session id with the
+  spawned block as focus. Kilo's native agents: primaries `build`, `plan`, `ask`, `debug`,
+  `orchestrator` (deprecated); subagents `general`, `explore`; hidden `title`, `compaction`.
 - `session.compacted` exists; `compaction` is global config (`auto`, `prune`, `tail_turns`, …).
 
 ---

@@ -382,8 +382,9 @@ roles:
                       thread.*, progress.append, focus.set, proposal.*],
               rules: rules/manager.md }
   designer: { view: designer, focus_policy: all_active,
-              tools: [context.*, block.read, tree.list, doc.write:design, doc.patch:design,
-                      edge.*, decision.record, thread.*], rules: rules/designer.md }
+              tools: [context.*, block.read, tree.list, block.create, doc.write:design,
+                      doc.patch:design, edge.*, decision.record, thread.*],
+              rules: rules/designer.md }
   planner:  { view: default, focus_policy: all_active,
               tools: [context.*, block.read, tree.list, block.create, doc.write:plan,
                       doc.patch:plan, thread.*], rules: rules/planner.md }
@@ -460,7 +461,8 @@ state in the backend. Appends never conflict; replaces use CAS; commands are jou
 ### 11.1 MCP (`hafiz mcp --role <r>`)
 
 One server process per role per host agent; exposes that role's tools only (**role = server
-instance**, universal across hosts). Tool descriptions carry protocol hints. Elicitation is used for
+instance**, universal across hosts). The tool catalogue (names, descriptions, zod schemas) lives in
+core (`TOOL_SPECS`) and is shared with host-native tool registrations such as Kilo's (§12.1). Tool descriptions carry protocol hints. Elicitation is used for
 `confirm_done: ask` where supported; otherwise `needs_confirmation`. Resources: `hafiz://block/<id>`;
 prompts: one per role. Session: token from env → session; project from roots/cwd.
 
@@ -479,7 +481,9 @@ prompts: one per role. Session: token from env → session; project from roots/c
 
 | Job | Mechanism |
 |---|---|
-| Install (`config` hook, stable) | registers `hafiz-<role>` MCP servers; `agent.<role>` definitions (prompt = rules, `permission` allowing only `hafiz-<role>_*`, `permission.task` for who may delegate); slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions |
+| Install (`config` hook, stable) | `agent.<role>` definitions (prompt = role rules + `rules/common.md`, `permission` `hafiz_*: deny` + allow for exactly the role's tools, `permission.task` for who may delegate); default-role tool permissions for non-Hafiz agents; slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions |
+| Tools (`tool` hook, stable) | **plugin-native** `hafiz_<command>` tools generated from the shared catalogue (`TOOL_SPECS` in core, also used by the MCP gateway; execution shared via `runTool`). Each call resolves the calling Kilo session → Hafiz session (`session.open` with the Kilo id; role from the agent, parent from `parentID`, spawned block from `hafiz:block=<id>`) and dispatches with that session's token, so attribution and focus are per session. `host.kilo.tools: mcp` keeps the per-role MCP servers instead |
+| Default roles | `host.kilo.default_role` (default `manager`) manages non-role primary agents (`build`, `plan`, custom) as that role: tools, session, and the role's rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`) does the same for non-role subagents (`general`, `explore`) **only** when spawned with a `hafiz:block=` marker; otherwise they are unmanaged. `none` disables either |
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |

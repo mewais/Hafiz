@@ -10,6 +10,7 @@ export * from './shaper/core.js'
 export * from './shaper/hooks.js'
 export * from './shaper/proxy.js'
 export * from './shaper/types.js'
+export * from './tools.js'
 export * from './wire/anthropic.js'
 export * from './wire/openai.js'
 

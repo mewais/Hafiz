@@ -87,8 +87,36 @@ export interface KiloConfig {
   [k: string]: unknown
 }
 
+/** `ToolContext` of `@kilocode/plugin`'s `tool()` (only the fields the adapter reads). */
+export interface KiloToolContext {
+  sessionID: string
+  messageID: string
+  agent: string
+  directory?: string
+  worktree?: string
+  abort?: AbortSignal
+  [k: string]: unknown
+}
+
+export type KiloToolResult =
+  | string
+  | { title?: string; output: string; metadata?: Record<string, unknown> }
+
+/**
+ * A plugin tool: `args` is a Zod (v4) raw shape. Kilo builds `z.object(args)` for validation and
+ * JSON Schema; it accepts any object whose values carry `_zod`, so our own zod copy works.
+ * Permission key = the tool's id (the key in `Hooks.tool`).
+ */
+export interface KiloToolDefinition {
+  description: string
+  args: Record<string, unknown>
+  // biome-ignore lint/suspicious/noExplicitAny: args are validated by Kilo against `args`
+  execute(args: any, context: KiloToolContext): Promise<KiloToolResult>
+}
+
 export interface Hooks {
   dispose?: () => Promise<void>
+  tool?: Record<string, KiloToolDefinition>
   config?: (cfg: KiloConfig) => Promise<void>
   event?: (input: { event: KiloEvent }) => Promise<void>
   'chat.message'?: (

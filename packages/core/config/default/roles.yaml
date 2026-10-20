@@ -1,4 +1,5 @@
-# A role is data: view, focus policy, command allowlist, rules file installed as the agent prompt.
+# A role is data: view, focus policy, command allowlist, rules file installed as the agent prompt
+# (after the role's file, rules/common.md is appended for every agent role).
 roles:
   manager:
     view: default
@@ -9,8 +10,8 @@ roles:
   designer:
     view: designer
     focus_policy: all_active
-    tools: [context.*, block.read, tree.list, doc.write:design, doc.patch:design,
-            edge.*, decision.record, thread.*]
+    tools: [context.*, block.read, tree.list, block.create, doc.write:design, doc.patch:design,
+            edge.*, decision.record, thread.*]   # block.create: external stubs, sub-components
     rules: rules/designer.md
   planner:
     view: default

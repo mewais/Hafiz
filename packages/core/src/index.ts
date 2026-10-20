@@ -1,4 +1,5 @@
 export * from './commands/authz.js'
+export * from './commands/catalogue.js'
 export * from './commands/core.js'
 export * from './config/load.js'
 export * from './config/schema.js'

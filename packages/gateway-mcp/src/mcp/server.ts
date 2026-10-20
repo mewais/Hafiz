@@ -1,13 +1,20 @@
 // A role-scoped MCP server in front of one daemon session. Role = server instance: only the
 // tools the role's allowlist permits are registered, so a worker never sees `block_set_status:done`.
 import { randomBytes } from 'node:crypto'
-import { type Config, loadConfig, type ResolvedProject, resolveProject } from '@hafiz/core'
+import {
+  type Config,
+  loadConfig,
+  type ResolvedProject,
+  resolveProject,
+  rulesFor,
+  toolName,
+  toolsForRole,
+} from '@hafiz/core'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { type DaemonClient, type EnsureDaemonOptions, ensureDaemon } from '../daemon/client.js'
-import { RpcError } from '../daemon/rpc.js'
-import { type RoleTool, toCoreArgs, toolName, toolsForRole } from './tools.js'
+import { type DaemonCall, runTool } from '../tools/run.js'
 
 export interface McpServerOptions {
   role: string
@@ -27,14 +34,6 @@ const text = (t: string, isError = false): CallToolResult => ({
   ...(isError ? { isError: true } : {}),
 })
 
-function isNeedsConfirmation(r: unknown): r is { needsConfirmation: true; message: string } {
-  return (
-    typeof r === 'object' &&
-    r !== null &&
-    (r as { needsConfirmation?: unknown }).needsConfirmation === true
-  )
-}
-
 export function createMcpServer(opts: McpServerOptions): HafizMcp {
   const config = opts.config ?? loadConfig()
   const { client, role } = opts
@@ -48,59 +47,20 @@ export function createMcpServer(opts: McpServerOptions): HafizMcp {
     },
   )
 
-  /** Run one tool against the daemon and return the payload to show the agent. */
-  async function invoke(rt: RoleTool, args: Record<string, unknown>): Promise<string> {
-    const { command } = rt.spec
-    const a = toCoreArgs(args)
-    switch (command) {
-      case 'context.for': {
-        const v = await client.contextFor(a)
-        const meta = `[view ${v.hash} · ${v.tokens}/${v.budget} tokens · ${v.changed ? 'changed' : 'unchanged'}]`
-        return [v.text, v.floorText, ...v.notices.map((n) => `${n.level}: ${n.text}`), meta]
-          .filter(Boolean)
-          .join('\n\n')
-      }
-      case 'context.explain':
-        return JSON.stringify(await client.contextExplain(a.block as string, a), null, 1)
-      case 'context.delta':
-        return JSON.stringify(await client.contextDelta())
-      case 'block.read':
-        return client.blockRead(a.id as string, a.zoom as string | undefined)
-      case 'tree.list':
-        return (await client.treeList())
-          .map((b) => `${'  '.repeat(b.depth)}[${b.status}] ${b.id} — ${b.title} (${b.kind})`)
-          .join('\n')
-      case 'session.status':
-        return JSON.stringify(await client.sessionStatus())
-      case 'proposal.list':
-        return JSON.stringify(await client.proposalList(a.status as never))
-      default:
-        return dispatch(command, a)
-    }
-  }
-
-  async function dispatch(command: string, a: Record<string, unknown>): Promise<string> {
-    let out = await client.dispatch(command, a)
-    if (isNeedsConfirmation(out.result)) {
-      const { message } = out.result
-      if (!server.server.getClientCapabilities()?.elicitation) return message
-      const r = await server.server.elicitInput({
-        message,
-        requestedSchema: {
-          type: 'object',
-          properties: {
-            confirm: { type: 'boolean', title: 'Confirm', description: 'Yes, go ahead' },
-          },
-          required: ['confirm'],
+  const call: DaemonCall = (method, params) => client.call(method, params)
+  const confirm = async (message: string) => {
+    if (!server.server.getClientCapabilities()?.elicitation) return undefined
+    const r = await server.server.elicitInput({
+      message,
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          confirm: { type: 'boolean', title: 'Confirm', description: 'Yes, go ahead' },
         },
-      })
-      if (r.action !== 'accept' || r.content?.confirm !== true)
-        return 'The user did not confirm; nothing was changed.'
-      out = await client.dispatch(command, { ...a, confirmed: true })
-    }
-    const lines = [JSON.stringify(out.result ?? null)]
-    for (const n of out.notices) lines.push(`${n.level}: ${n.text}`)
-    return lines.join('\n')
+        required: ['confirm'],
+      },
+    })
+    return r.action === 'accept' && r.content?.confirm === true
   }
 
   for (const rt of roleTools) {
@@ -113,19 +73,8 @@ export function createMcpServer(opts: McpServerOptions): HafizMcp {
         annotations: { readOnlyHint: spec.readOnly === true },
       },
       async (args: Record<string, unknown>): Promise<CallToolResult> => {
-        let body: string
-        try {
-          body = await invoke(rt, args)
-        } catch (e) {
-          if (e instanceof RpcError)
-            return text(`${e.message}${e.data ? `\n${JSON.stringify(e.data)}` : ''}`, true)
-          throw e
-        }
-        // Instrumentation and queued events ride along; neither may fail the call.
-        await client.countersAdd({ tool_calls_hafiz: 1 }).catch(() => undefined)
-        const queued = await client.noticesDrain().catch(() => [])
-        const extra = queued.map((n) => `[${n.event}] ${n.text}`)
-        return text([body, ...extra].join('\n'))
+        const r = await runTool(call, rt, args, { confirm })
+        return text(r.text, r.isError)
       },
     )
   }
@@ -161,8 +110,8 @@ export function createMcpServer(opts: McpServerOptions): HafizMcp {
       },
     )
 
-  for (const [name, def] of Object.entries(config.roles.roles)) {
-    const rules = config.rules[def.rules] ?? ''
+  for (const name of Object.keys(config.roles.roles)) {
+    const rules = rulesFor(config, name)
     server.registerPrompt(
       `hafiz_${name}`,
       { title: `Hafiz ${name} rules`, description: `Operating rules for the ${name} role.` },

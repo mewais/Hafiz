@@ -134,6 +134,7 @@ const TOOLS: Record<string, string[]> = {
     'hafiz_context_delta',
     'hafiz_block_read',
     'hafiz_tree_list',
+    'hafiz_block_create',
     'hafiz_edge_add',
     'hafiz_edge_remove',
     'hafiz_doc_write',

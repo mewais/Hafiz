@@ -71,8 +71,14 @@ export const hafizFile = z.object({
         .object({
           // proxy = embedded-proxy, hooks = experimental transform hooks, auto = hooks if present
           shaper: z.enum(['proxy', 'hooks', 'auto']).default('auto'),
-          // Role for Kilo agents that are not Hafiz roles (build, plan, …); unset = unmanaged.
-          default_role: z.string().optional(),
+          // native = Hafiz tools registered through the plugin `tool` hook (they see the
+          // calling Kilo session); mcp = one `hafiz-<role>` MCP server per role (legacy).
+          tools: z.enum(['native', 'mcp']).default('native'),
+          // Role for Kilo primary agents that are not Hafiz roles (build, plan, …); none = off.
+          default_role: z.string().default('manager'),
+          // Role for non-Hafiz subagents (general, explore, …) spawned with a
+          // `hafiz:block=<id>` marker; without the marker they stay unmanaged. none = off.
+          default_subagent_role: z.string().default('worker'),
         })
         .prefault({}),
     })

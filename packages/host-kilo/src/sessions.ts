@@ -6,6 +6,7 @@ import {
   type Config,
   estimatorTokenizer,
   type ResolvedProject,
+  rulesFor,
   type Session,
   type Tokenizer,
 } from '@hafiz/core'
@@ -71,10 +72,34 @@ export class SessionRegistry implements SessionSource {
     this.roles = new Set(Object.keys(opts.config.roles.roles).filter((r) => r !== 'user'))
   }
 
-  /** Hafiz role for a Kilo agent name, or undefined when the agent is not managed. */
-  roleFor(agent: string | undefined): string | undefined {
+  /** True when the Kilo agent is one of Hafiz's own role agents (its prompt is the rules). */
+  isRoleAgent(agent: string | undefined): boolean {
+    return !!agent && this.roles.has(agent)
+  }
+
+  /**
+   * Hafiz role for a Kilo session, or undefined when it is not managed. Role agents are their
+   * role. Other primary agents (build, plan, custom) get `host.kilo.default_role`; other
+   * subagents (general, explore, …) get `host.kilo.default_subagent_role`, but only when spawned
+   * on a block (`hafiz:block=<id>` in the task prompt). `none` switches either off.
+   */
+  roleFor(
+    agent: string | undefined,
+    where: { subagent?: boolean; block?: string | undefined } = {},
+  ): string | undefined {
     if (agent && this.roles.has(agent)) return agent
-    return this.opts.config.hafiz.host.kilo.default_role
+    const kilo = this.opts.config.hafiz.host.kilo
+    const r = where.subagent
+      ? where.block
+        ? kilo.default_subagent_role
+        : undefined
+      : kilo.default_role
+    if (!r || r === 'none') return undefined
+    if (!this.opts.config.roles.roles[r]) {
+      this.opts.log(`hafiz: host.kilo default role '${r}' is not a configured role; ignoring`)
+      return undefined
+    }
+    return r
   }
 
   private daemon(): Promise<DaemonClient> {
@@ -119,9 +144,9 @@ export class SessionRegistry implements SessionSource {
     if (hints.agent && !k.agent) k.agent = hints.agent
     if (k.token && !k.ended) return Promise.resolve(true)
     if (k.opening) return k.opening
-    const role = this.roleFor(k.agent)
-    if (!role) return Promise.resolve(false)
     const block = k.block ?? (hints.prompt ? blockFromPrompt(hints.prompt) : undefined)
+    const role = this.roleFor(k.agent, { subagent: !!k.parentId, block })
+    if (!role) return Promise.resolve(false)
     k.opening = (async () => {
       try {
         const c = await this.daemon()
@@ -147,7 +172,8 @@ export class SessionRegistry implements SessionSource {
     return k.opening
   }
 
-  private async call<T>(id: string, method: string, params: Record<string, unknown> = {}) {
+  /** One daemon call as session `id` (its token is attached). */
+  async call<T>(id: string, method: string, params: Record<string, unknown> = {}): Promise<T> {
     const k = this.known.get(id)
     if (!k?.token) throw new Error(`session ${id} is not open`)
     return (await this.daemon()).call<T>(method, { token: k.token, ...params })
@@ -210,7 +236,11 @@ export class SessionRegistry implements SessionSource {
       'context.for',
       model ? { model } : {},
     )
-    return { envelope: v.text, floor: v.floorText }
+    // Agents managed under a default role run Kilo's own prompt; give them the role's rules
+    // ahead of the envelope (constant text, so the cached prefix stays stable).
+    const k = this.known.get(id)
+    const rules = k?.role && !this.isRoleAgent(k.agent) ? rulesFor(this.opts.config, k.role) : ''
+    return { envelope: rules ? `${rules}\n\n${v.text}` : v.text, floor: v.floorText }
   }
 
   async delta(id: string): Promise<string> {
