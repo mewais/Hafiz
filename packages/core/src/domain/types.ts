@@ -39,6 +39,11 @@ export interface Project {
   schemaSetVersion: string
   /** Increments on major writes only. Internal invalidation signal, never a wire attribute. */
   epoch: number
+  /**
+   * `pending`: tracked in a repo that already had code; the manager is told to have the
+   * designer describe it. Cleared when the root design is first written.
+   */
+  onboarding?: 'pending'
   createdAt: string
 }
 
@@ -216,6 +221,8 @@ export interface Session {
   /** Capability token minted by the adapter at spawn. */
   token: string
   parentSessionId?: SessionId
+  /** The working tree (git top level) the session runs in; HEAD at `done` is read here. */
+  worktree?: string
   focus: Focus
   counters: Record<string, number>
   lastViewHash?: string

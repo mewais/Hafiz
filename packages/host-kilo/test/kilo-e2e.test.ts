@@ -3,15 +3,15 @@
 // so it runs only with HAFIZ_KILO_E2E=1 and HAFIZ_KILO_BIN=<path to the kilo binary>
 // (`npm i @kilocode/cli` puts it at node_modules/@kilocode/cli-linux-x64/bin/kilo).
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { type Io, run } from '@hafiz/cli'
-import { loadConfig } from '@hafiz/core'
-import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
+import { loadConfig, resolveProject } from '@hafiz/core'
+import { DaemonClient, type DaemonHandle, readLock, startDaemon } from '@hafiz/gateway-mcp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { toolNamesForRole } from '../src/index.js'
+import { TRACK_TOOL, toolNamesForRole } from '../src/index.js'
 import { type MockLlm, type RecordedRequest, type ScriptedReply, startMockLlm } from './mock-llm.js'
 
 const BIN = process.env.HAFIZ_KILO_BIN
@@ -68,6 +68,7 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     shaper: string,
     prompt: string,
     agent = 'manager',
+    cwd = repo,
   ): Promise<{ code: number; output: string }> {
     const config = {
       provider: {
@@ -93,9 +94,9 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     return new Promise((res, rej) => {
       const args = ['run', '--print-logs', '--log-level', 'WARN', '--agent', agent, prompt]
       const p = spawn(BIN as string, args, {
-        cwd: repo,
+        cwd,
         // Kilo takes its directory from $PWD, not the process cwd
-        env: { ...env, PWD: repo, KILO_CONFIG_CONTENT: JSON.stringify(config) },
+        env: { ...env, PWD: cwd, KILO_CONFIG_CONTENT: JSON.stringify(config) },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       let output = ''
@@ -239,5 +240,52 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     expect(ws?.focus.blocks).toEqual([block])
     const parent = await read.getSession(ws?.parentSessionId as string)
     expect(parent).toMatchObject({ role: 'manager', agent: 'build' })
+  }, 120000)
+
+  // ── untracked repo: hafiz_track_project switches the running session to managed mode ──
+
+  it('in an untracked repo the agent tracks it, and its next request is managed', async () => {
+    const fresh = tmp('hafiz-kilo-untracked-')
+    execFileSync('git', ['init', '-q'], { cwd: fresh })
+    const marker = 'track this multi-step build'
+    responder = (req) => {
+      if (!req.raw.includes(marker) || !toolsOf(req).length) return { text: 'Title' }
+      if (toolResults(req) === 0)
+        return {
+          toolCalls: [
+            {
+              name: TRACK_TOOL,
+              arguments: { name: 'Fresh', reason: 'Multi-step build.' },
+            },
+          ],
+        }
+      return { text: 'Tracking this repo with Hafiz as `Fresh`.' }
+    }
+    const r = await kilo('auto', marker, 'build', fresh)
+    try {
+      if (r.code !== 0) console.error(r.output)
+      expect(r.code).toBe(0)
+      const reqs = mock.requests.filter((q) => q.raw.includes(marker) && toolsOf(q).length)
+      const first = reqs.find((q) => toolResults(q) === 0)
+      const next = reqs.find((q) => toolResults(q) > 0)
+      // before: only the track tool, no envelope
+      expect(first && hafizTools(first)).toEqual([TRACK_TOOL])
+      expect(systemOf(first as RecordedRequest)).not.toContain('<hafiz hash=')
+      // the very next request of the same turn: envelope, rules and the manager's tools
+      const config = loadConfig()
+      expect(next && hafizTools(next).sort()).toEqual(toolNamesForRole(config, 'manager').sort())
+      expect(systemOf(next as RecordedRequest)).toMatch(
+        /<hafiz hash="[0-9a-f]{12}" role="manager">/,
+      )
+      expect(systemOf(next as RecordedRequest)).toContain('# Hafiz rules — manager')
+      expect(next?.raw).toContain('Hafiz now tracks this repo as')
+      expect(existsSync(join(fresh, '.git', 'hafiz', 'project.yaml'))).toBe(true)
+    } finally {
+      // the plugin started a real daemon for the new project; stop it
+      try {
+        const lock = readLock(resolveProject(fresh, env).storeDir)
+        if (lock) process.kill(lock.pid)
+      } catch {}
+    }
   }, 120000)
 })

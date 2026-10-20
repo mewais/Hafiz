@@ -334,7 +334,9 @@ export function buildView(
       })
   }
   const noticeLines = notices.map((n) => `> ${n.level}: ${n.text}`).join('\n')
-  const inner = [noticeLines, body].filter(Boolean).join('\n\n')
+  const inner = [onboardingDirective(snap, config, opts.role), noticeLines, body]
+    .filter(Boolean)
+    .join('\n\n')
   const hash = shortHash(`${inner}\n\u0000\n${floorBody}`)
   const text = `<hafiz hash="${hash}" role="${opts.role}">\n${inner}\n</hafiz>`
   const floorText = floorBody ? `<hafiz-floor>\n${floorBody}\n</hafiz-floor>` : ''
@@ -353,6 +355,14 @@ export function buildView(
 }
 
 // ───────────────────────────── explain ─────────────────────────────
+
+/** `hafiz.yaml onboarding.directive` while a brownfield project's onboarding is pending. */
+export function onboardingDirective(snap: Snapshot, config: Config, role: string): string {
+  const o = config.hafiz.onboarding
+  const p = snap.project
+  if (p?.onboarding !== 'pending' || !o.directive || !o.roles.includes(role)) return ''
+  return o.directive.trim().replace(/\{root\}/g, p.rootBlockId)
+}
 
 function fmtAttrs(a: Attrs): string {
   return Object.entries(a)

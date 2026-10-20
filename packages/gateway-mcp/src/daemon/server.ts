@@ -58,7 +58,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         config,
         backend,
         env,
-        repoDir: project.repoRoot,
+        // Fallback only: sessions name their own working tree at open (worktrees share a daemon).
+        repoDir: project.worktree,
         relay,
         ...(opts.llm ? { llm: opts.llm } : {}),
       }),

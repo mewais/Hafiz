@@ -35,7 +35,7 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
         },
         "task": "deny",
       },
-      "prompt": "<5059 chars>",
+      "prompt": "<5684 chars>",
     },
     "explore": {
       "permission": {
@@ -108,7 +108,7 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
         },
         "task": "allow",
       },
-      "prompt": "<5214 chars>",
+      "prompt": "<5564 chars>",
     },
     "planner": {
       "description": "Hafiz planner: breaks designed blocks into plans and child blocks",

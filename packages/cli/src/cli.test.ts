@@ -41,7 +41,7 @@ describe('cli', () => {
     const { io, out, err } = harness(cwd, storeRoot)
 
     expect(await run(['init', 'Shop'], io)).toBe(0)
-    const pointerFile = join(cwd, '.hafiz/project.yaml')
+    const pointerFile = join(cwd, '.git/hafiz/project.yaml')
     expect(findPointerFile(join(cwd, 'sub/dir'))).toBe(pointerFile)
     const { pointer, storeDir } = resolveProject(cwd, io.env)
     expect(pointer.fingerprint).toBe(originFingerprint(cwd))
@@ -127,7 +127,7 @@ describe('cli', () => {
     const storeRoot = tmp('hafiz-stores-')
     const { io, err } = harness(cwd, storeRoot)
     await init(io, 'Shop', { storeRoot })
-    const pointerFile = join(cwd, '.hafiz/project.yaml')
+    const pointerFile = join(cwd, '.git/hafiz/project.yaml')
     const before = readFileSync(pointerFile, 'utf8')
     const id = /id: (\S+)/.exec(before)?.[1] as string
     execFileSync('rm', ['-rf', join(storeRoot, id)])

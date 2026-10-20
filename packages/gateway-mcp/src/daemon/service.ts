@@ -121,6 +121,7 @@ const schemas = {
     agent: optStr,
     parentSessionId: optStr,
     spawnedBlock: optStr,
+    worktree: optStr,
   }),
   dispatch: z.object({
     ...token,
@@ -481,6 +482,7 @@ export class DaemonService {
     agent?: string
     parentSessionId?: string
     spawnedBlock?: string
+    worktree?: string
   }) {
     const prior = await this.core.backend.read.getSession(a.id)
     if (prior && prior.role !== a.role)

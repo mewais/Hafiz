@@ -15,6 +15,8 @@ npm i -g hafiz            # the CLI, daemon and MCP gateway (one file, no depend
 hafiz install kilo        # add the plugin to this repo's Kilo config (or --global)
 ```
 
+That is all: tracking starts automatically (below).
+
 `hafiz install kilo` edits `kilo.jsonc` (or `.kilo/kilo.jsonc`) in place, keeping your comments,
 and adds `@hafiz/kilo-plugin` to its `plugin` array; it adds the same package to `tui.jsonc` next
 to it for the TUI panel. It is idempotent; `hafiz uninstall kilo` removes both. Kilo loads the
@@ -22,21 +24,41 @@ plugin on its next start.
 
 ## Start a project
 
+Nothing to do. In a git repo Hafiz does not track yet, Kilo's primary agents get one extra tool,
+`hafiz_track_project`, and nothing else from Hafiz (no daemon, no view, a one-line nudge at
+most). When a task turns multi-step or will spawn subagents, the agent calls it on its own (never
+for one-off questions or small edits) and tells you in one line: "Tracking this repo with Hafiz
+as `<name>`". The same Kilo session continues managed from its next step: the project view, the
+manager's rules and the Hafiz tools, no restart. Until Kilo's next start, shaping runs through
+the transform hooks rather than the embedded proxy, the TUI panel stays hidden, Kilo's own
+auto-compaction stays as it was, and with `host.kilo.tools: mcp` the Hafiz tools wait too.
+
+If the repo already has code (commits and at least `onboarding.min_source_files` tracked source
+files, default 5), the project starts with onboarding pending: the manager first has the designer
+describe the codebase as it is in the root design, importing what current work touches and
+stubbing what it only calls. An empty repo starts fresh and the manager designs with you.
+
+To start one by hand:
+
 ```sh
 cd my-repo
-hafiz init "My Project"   # creates the store and the repo pointer .hafiz/project.yaml
+hafiz init "My Project"   # creates the store and the pointer .git/hafiz/project.yaml
 hafiz doctor              # checks the wiring; run it whenever something looks off
 ```
 
 `init` needs a git repository. Add `--backend sqlite` to keep the store in one SQLite file
-instead of a git repository. Commit `.hafiz/project.yaml`: it is only a pointer (project id and
-fingerprint), so teammates and fresh clones find, or are told to create, their own store.
+instead of a git repository. The pointer lives in git's common dir
+(`$(git rev-parse --git-common-dir)/hafiz/project.yaml`), so the main checkout and all its
+`git worktree`s share one project, one store and one daemon; each session still records the HEAD
+of its own worktree. The pointer is not committed: a separate clone is a separate project
+(linking clones by remote is not supported yet). Repos set up by older versions have
+`.hafiz/project.yaml` in the working tree; it still works, and `hafiz migrate-pointer` moves it.
 
 ## Using it in Kilo
 
 - The plugin adds four agents: **manager**, **designer**, **planner**, **worker**. Plain Kilo
   agents (`build`, `plan`, ...) act as the manager by default (`host.kilo.default_role`), so you
-  can just start talking; the manager offers to track the work once it is multi-step.
+  can just start talking; the agent starts tracking on its own once the work is multi-step.
 - The manager delegates one block per subagent. Every task prompt carries `hafiz:block=<id>`;
   without it a subagent is unmanaged. A worker's final message ends with a `hafiz-report` block
   that Hafiz captures into the block's progress log.
@@ -100,7 +122,7 @@ llm:
 |---|---|
 | Store (blocks, docs, logs, git history) | `~/.hafiz/projects/<project-id>/` (`HAFIZ_STORE_ROOT` moves it) |
 | SQLite store | `<store>/hafiz.sqlite` when `storage.backend: sqlite` |
-| Repo pointer | `<repo>/.hafiz/project.yaml` |
+| Repo pointer | `.git/hafiz/project.yaml` (git's common dir: shared by worktrees; legacy `<repo>/.hafiz/project.yaml`) |
 | Config layers | built-in defaults, `~/.hafiz/config/`, `<store>/config/` (later wins) |
 | Daemon socket | `$XDG_RUNTIME_DIR/hafiz/<project-id>.sock` (mode 0600) |
 

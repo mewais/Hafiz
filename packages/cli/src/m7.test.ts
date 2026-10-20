@@ -61,10 +61,10 @@ const design = (purpose: string, extra: Record<string, unknown> = {}) => ({
 
 /** Open the project's store directly, as a tool (not the daemon) would, to seed data. */
 async function seed<T>(io: Io, fn: (core: Core, root: string) => Promise<T>, repoDir?: string) {
-  const { storeDir, repoRoot } = resolveProject(io.cwd, io.env)
+  const { storeDir, worktree } = resolveProject(io.cwd, io.env)
   const backend = new FsBackend({ dir: storeDir, minorBatchSeconds: 0 })
   await backend.open()
-  const core = new Core({ config: loadConfig(), backend, repoDir: repoDir ?? repoRoot })
+  const core = new Core({ config: loadConfig(), backend, repoDir: repoDir ?? worktree })
   try {
     return await fn(core, (await backend.read.getProject())?.rootBlockId as string)
   } finally {

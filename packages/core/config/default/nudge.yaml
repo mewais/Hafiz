@@ -1,5 +1,6 @@
-# Only for projects with no tree. One line, once per session.
+# Only for untracked git repos (Kilo: shown with the hafiz_track_project tool). One line, once per
+# session, when the session starts to look multi-step.
 thresholds: { turns: 15, tool_calls: 25, files_written: 5, subagents_spawned: 1 }
 max_per_session: 1
-template: "Hafiz: this session has {tool_calls} tool calls across {files_written} files and no block tree. If this is multi-step work, offer to track it (create_block)."
+template: "Hafiz: this session has {tool_calls} tool calls across {files_written} files and no block tree. If this is multi-step work, call hafiz_track_project now (no need to ask)."
 auto_init: false

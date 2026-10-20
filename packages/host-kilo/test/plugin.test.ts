@@ -132,25 +132,15 @@ describe('plugin: config hook', () => {
     })
   })
 
-  it('does nothing at all without a Hafiz tree', async () => {
-    const r = await repo(false)
-    const hooks = await plugin(r)
-    // only the in-memory nudge hooks; nothing that touches the config, tools, proxy or daemon
-    expect(Object.keys(hooks).sort()).toEqual([
-      'chat.message',
-      'event',
-      'experimental.chat.system.transform',
-      'tool.execute.after',
-    ])
-    expect(hooks.config).toBeUndefined()
-    expect(hooks.tool).toBeUndefined()
-    const cfg: KiloConfig = { provider: { a: { options: { baseURL: 'http://x' } } } }
-    await hooks.config?.(cfg)
-    expect(cfg).toEqual({ provider: { a: { options: { baseURL: 'http://x' } } } })
+  it('does nothing at all outside git', async () => {
+    const cwd = tmp('hafiz-nogit-')
+    const env = { ...process.env, HAFIZ_STORE_ROOT: tmp('hafiz-stores-') }
+    const hooks = await plugin({ cwd, env })
+    expect(hooks).toEqual({})
   })
 })
 
-describe('plugin: nudge without a project', () => {
+describe('plugin: nudge in an untracked repo', () => {
   it('counts in memory, says one line once at the threshold, and never touches a daemon', async () => {
     const r = await repo(false)
     const refuse = async () => {
@@ -218,7 +208,7 @@ describe('plugin: nudge without a project', () => {
 describe('plugin: host compaction', () => {
   it('is disabled only when a condenser provider is configured', () => {
     const base = loadConfig()
-    const plan = { repoRoot: '/r', storeDir: '/s', hafiz: ['hafiz'] }
+    const plan = { worktree: '/r', storeDir: '/s', hafiz: ['hafiz'] }
     const none: KiloConfig = { compaction: { prune: true } }
     installConfig(none, { ...plan, config: base })
     expect(none.compaction).toEqual({ prune: true })

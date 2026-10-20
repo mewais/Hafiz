@@ -1,7 +1,7 @@
 # Top-level Hafiz settings. Layered: built-in defaults -> ~/.hafiz/config -> <store>/config
 storage:
   backend: fs
-  root: ~/.hafiz/projects          # data location; the repo holds only .hafiz/project.yaml
+  root: ~/.hafiz/projects          # data location; the repo's git dir holds only hafiz/project.yaml
   git:
     enabled: true
     minor_write_batch_seconds: 30
@@ -26,6 +26,17 @@ llm:
   drafters:  { enabled: false, provider: none, model: cheap }
 daemon:
   idle_shutdown_seconds: 900
+onboarding:
+  # Tracking a repo that has commits and at least this many tracked source files (docs, licences
+  # and dotfiles do not count) marks the project `onboarding: pending`: the manager has the
+  # designer describe the existing codebase in the root design before new work.
+  min_source_files: 5
+  directive: >-
+    Onboarding: this repo already had code when Hafiz started tracking it. Before planning new
+    work, spawn the designer once with hafiz:block={root} to write the root design describing the
+    codebase as it is (overview, topology, interface, constraints). Import what you touch, stub
+    what you call: external dependencies get stubs only where current work needs them.
+  roles: [manager]
 host:
   kilo:
     shaper: auto                   # proxy | hooks | auto (hooks when the host exposes them)

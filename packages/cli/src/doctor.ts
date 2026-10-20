@@ -61,7 +61,13 @@ export function checkPointer(project: ResolvedProject, stored: { id: string; fp:
       level: 'fail',
       detail: `${problems.join('; ')}; this repo may point at another project's store`,
     }
-  const here = originFingerprint(project.repoRoot)
+  if (project.legacy)
+    return {
+      name: 'pointer',
+      level: 'warn',
+      detail: `legacy pointer ${project.pointerFile}; run \`hafiz migrate-pointer\` to move it into the git dir (shared by worktrees)`,
+    }
+  const here = originFingerprint(project.worktree)
   if (here !== pointer.fingerprint)
     return {
       name: 'pointer',
@@ -97,12 +103,13 @@ async function checkDaemon(project: ResolvedProject, env: NodeJS.ProcessEnv): Pr
   }
 }
 
+/** Drift of done blocks, measured in `worktree` (the caller's own working tree). */
 export function driftChecks(
-  repoRoot: string,
+  worktree: string,
   blocks: readonly Block[],
   docs: readonly Doc[],
 ): Check {
-  if (git(repoRoot, ['rev-parse', 'HEAD']) === null)
+  if (git(worktree, ['rev-parse', 'HEAD']) === null)
     return { name: 'drift', level: 'skip', detail: 'repo has no commits to compare against' }
   const done = blocks.filter((b) => b.status === 'done')
   const tracked = done.filter((b) => b.doneAt?.commit)
@@ -113,7 +120,7 @@ export function driftChecks(
     const paths = Array.isArray(refs) ? pointerPaths(refs as Ref[]) : []
     if (!paths.length) continue
     const commit = b.doneAt?.commit as string
-    const changed = git(repoRoot, ['diff', '--name-only', `${commit}..HEAD`, '--', ...paths])
+    const changed = git(worktree, ['diff', '--name-only', `${commit}..HEAD`, '--', ...paths])
     if (changed === null) {
       items.push(`${b.id}: done at ${commit.slice(0, 8)}, which is not in this repo's history`)
       continue
@@ -245,7 +252,7 @@ export async function doctor(
           detail: `${docs.length} doc(s) satisfy schema set ${want}`,
         })
 
-      checks.push(driftChecks(project.repoRoot, blocks, docs))
+      checks.push(driftChecks(project.worktree, blocks, docs))
       checks.push(await checkCondenser(core, !!opts.online))
     })
   } catch (e) {

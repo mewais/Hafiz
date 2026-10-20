@@ -157,5 +157,5 @@ export async function installHost(
   say(server, 'server plugin')
   say(tui, 'TUI panel')
   if (server.outcome === 'added' || tui.outcome === 'added')
-    io.out('restart Kilo to load it; `hafiz init <name>` enables it in a repo')
+    io.out('restart Kilo to load it; tracking then starts on its own in multi-step work')
 }

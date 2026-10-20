@@ -2,6 +2,12 @@
 // plugin tools by default; role MCP servers with `host.kilo.tools: mcp`), slash commands, store
 // deny rules and compaction settings, and (proxy shaper) re-point provider base URLs. Pure apart
 // from the `wrap` callback; user-provided entries win over ours.
+//
+// In an untracked git repo (`untracked: true`) the same agents and permissions are installed up
+// front, because Kilo reads both once at startup: tracking mid-session (hafiz_track_project) can
+// then switch a session to managed mode without a restart. Until then the plugin hides every
+// Hafiz tool but the track tool per request (plugin.ts). MCP servers and the compaction change
+// are left out until a later start finds the project.
 import { agentRoleNames, type Config, rulesFor } from '@hafiz/core'
 import type { KiloConfig } from './kilo.js'
 import { toolNamesForRole } from './tools.js'
@@ -10,7 +16,9 @@ export type KiloToolsMode = 'native' | 'mcp'
 
 export interface InstallPlan {
   config: Config
-  repoRoot: string
+  /** The working tree Kilo runs in (MCP servers resolve the project from it). */
+  worktree: string
+  /** The store to keep agents out of (untracked: the whole store root). */
   storeDir: string
   /** argv prefix that runs the `hafiz` CLI (e.g. [node, /path/bin.js]). */
   hafiz: string[]
@@ -20,6 +28,8 @@ export interface InstallPlan {
   tools?: KiloToolsMode
   /** Proxy: returns the base URL to use instead of `baseURL` for provider `id`. */
   wrap?: (id: string, baseURL: string) => string
+  /** Untracked git repo: also allow `trackTool` to primary agents; no MCP servers, no compaction. */
+  untracked?: { trackTool: string }
 }
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
@@ -109,14 +119,14 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
 
   // MCP mode only: one server per role. Kilo names their tools `hafiz-<role>_hafiz_<command>`.
   // Native mode registers the tools through the plugin `tool` hook instead (tools.ts).
-  if (mode === 'mcp') {
+  if (mode === 'mcp' && !plan.untracked) {
     cfg.mcp ??= {}
     for (const role of roles) {
       const name = `hafiz-${role}`
       if (cfg.mcp[name]) continue
       cfg.mcp[name] = {
         type: 'local',
-        command: [...plan.hafiz, 'mcp', '--role', role, '--project', plan.repoRoot],
+        command: [...plan.hafiz, 'mcp', '--role', role, '--project', plan.worktree],
         environment: {
           HAFIZ_HOST: 'kilo',
           HAFIZ_AGENT: role,
@@ -130,6 +140,11 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
   }
 
   // Role agents: prompt = rules, tools = exactly the role's allowlist.
+  // Untracked: primary agents (the manager agent, and others under the default role) may start
+  // tracking; subagents never (their `hafiz_*` deny covers it).
+  const track: PermMap = plan.untracked ? { [plan.untracked.trackTool]: 'allow' } : {}
+  const noTrack: PermMap = plan.untracked ? { [plan.untracked.trackTool]: 'deny' } : {}
+
   cfg.agent ??= {}
   const nonRoleSubagents = new Set<string>(KILO_BUILTIN_SUBAGENTS)
   for (const [name, a] of Object.entries(cfg.agent))
@@ -143,6 +158,7 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
     const theirs = cfg.agent[role] ?? {}
     const perm = layer(asMap(theirs.permission), {
       ...rolePermission(config, role, mode),
+      ...(role === 'manager' ? track : noTrack),
       task: role === 'manager' ? 'allow' : 'deny',
     })
     cfg.agent[role] = {
@@ -156,7 +172,10 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
   // become managed only when spawned with hafiz:block=<id>; otherwise a call is refused.
   for (const name of nonRoleSubagents) {
     const theirs = cfg.agent[name] ?? {}
-    const ours = subagentRole ? rolePermission(config, subagentRole, mode) : denyAll(mode)
+    const ours = {
+      ...(subagentRole ? rolePermission(config, subagentRole, mode) : denyAll(mode)),
+      ...noTrack,
+    }
     cfg.agent[name] = { ...theirs, permission: layer(asMap(theirs.permission), ours) }
   }
 
@@ -165,14 +184,16 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
   const base = asMap(cfg.permission)
   const global = layer(
     base,
-    defaultRole ? rolePermission(config, defaultRole, mode) : denyAll(mode),
+    defaultRole
+      ? { ...rolePermission(config, defaultRole, mode), ...track }
+      : { ...denyAll(mode), ...noTrack },
   )
   cfg.permission = { ...global, ...storeDenies(plan.storeDir, base) }
 
   // With a condenser configured Hafiz owns the tail and Kilo's own compaction would summarise it
   // away. Without one (llm.condenser.provider none) nothing trims the tail but the host, so its
   // compaction stays as the user set it.
-  if (config.hafiz.llm.condenser.provider !== 'none')
+  if (config.hafiz.llm.condenser.provider !== 'none' && !plan.untracked)
     cfg.compaction = { ...(cfg.compaction ?? {}), auto: false }
 
   // Slash commands.

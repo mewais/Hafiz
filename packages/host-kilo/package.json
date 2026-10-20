@@ -21,7 +21,8 @@
   "dependencies": {
     "@hafiz/cli": "workspace:*",
     "@hafiz/core": "workspace:*",
-    "@hafiz/gateway-mcp": "workspace:*"
+    "@hafiz/gateway-mcp": "workspace:*",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@opentui/core": "0.5.11",

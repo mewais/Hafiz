@@ -315,7 +315,20 @@ export class Core {
     await t.putBlock(updated, block.version)
     Object.assign(block, updated)
     if (type === 'digest') delete block.digestStale // Object.assign cannot remove keys
+    if (type === 'design' && block.parentId === null) await this.finishOnboarding(t, by, block)
     return doc
+  }
+
+  /** The first root design of a brownfield project completes its onboarding. */
+  private async finishOnboarding(t: WriteOps, by: Actor, root: Block): Promise<void> {
+    const project = await t.getProject()
+    if (project?.onboarding !== 'pending') return
+    const { onboarding: _done, ...rest } = project
+    await t.putProject(rest)
+    await this.recordDecision(t, by, root.id, {
+      title: 'Onboarded existing codebase',
+      decision: 'The root design describes the codebase as it was when Hafiz started tracking it.',
+    })
   }
 
   private async recordDecision(
@@ -370,6 +383,8 @@ export class Core {
       originFingerprint: string
       rootDesign?: Record<string, SectionValue>
       id?: string
+      /** The repo already has code: the designer describes it before new work (onboarding). */
+      onboarding?: boolean
     },
   ): Promise<CommandResult<{ project: Project; root: Block }>> {
     return this.run(
@@ -401,6 +416,7 @@ export class Core {
           rootBlockId: root.id,
           schemaSetVersion: this.config.hafiz.schema_version,
           epoch: 0,
+          ...(args.onboarding ? { onboarding: 'pending' as const } : {}),
           createdAt: now,
         }
         await t.putProject(project)
@@ -596,7 +612,10 @@ export class Core {
         delete nb.blockedOn
         if (args.status === 'blocked' && args.blockedOn) nb.blockedOn = args.blockedOn
         if (args.status === 'done') {
-          const commit = this.repoDir ? gitHead(this.repoDir) : undefined
+          // HEAD of the caller's own working tree (a worktree, when it runs in one); the
+          // daemon's startup checkout only when the session did not say where it runs.
+          const dir = (await t.getSession(by.sessionId))?.worktree ?? this.repoDir
+          const commit = dir ? gitHead(dir) : undefined
           nb.doneAt = commit ? { ts: now, commit } : { ts: now }
         }
         if (reopen) {
@@ -934,6 +953,8 @@ export class Core {
     agent?: string
     parentSessionId?: string
     spawnedBlock?: BlockId
+    /** Working tree the session runs in (git top level of its cwd). */
+    worktree?: string
   }): Promise<Session> {
     const existing = await this.backend.read.getSession(args.id)
     const role = this.config.roles.roles[args.role]
@@ -954,6 +975,7 @@ export class Core {
         if (existing) {
           const s: Session = { ...((await t.getSession(args.id)) ?? existing), updatedAt: now }
           delete s.endedAt
+          if (args.worktree) s.worktree = args.worktree
           await t.putSession(s)
           return s
         }
@@ -966,6 +988,7 @@ export class Core {
           ...(args.agent ? { agent: args.agent } : {}),
           token: mintToken(),
           ...(args.parentSessionId ? { parentSessionId: args.parentSessionId } : {}),
+          ...(args.worktree ? { worktree: args.worktree } : {}),
           focus,
           counters: {},
           compliance: initialState(await t.currentSeq()),

@@ -301,7 +301,7 @@ describe('generated permission config', () => {
     permission: { '*': 'allow', bash: 'ask' },
     agent: { reviewer: { mode: 'subagent', prompt: 'review' } },
   }
-  installConfig(cfg, { config, repoRoot: '/r', storeDir: '/s', hafiz: ['hafiz'] })
+  installConfig(cfg, { config, worktree: '/r', storeDir: '/s', hafiz: ['hafiz'] })
   const all = TOOLS()
   function TOOLS() {
     return [...new Set(agentRoles(config).flatMap((r) => toolNamesForRole(config, r)))]

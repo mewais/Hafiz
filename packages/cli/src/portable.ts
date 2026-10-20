@@ -4,6 +4,8 @@ import { dirname, join, resolve } from 'node:path'
 import {
   defaultStoreRoot,
   exportStore,
+  findPointerFile,
+  gitPointerFile,
   importStore,
   opaqueId,
   originFingerprint,
@@ -13,7 +15,7 @@ import {
   systemClock,
 } from '@hafiz/core'
 import { stringify } from 'yaml'
-import { POINTER_PATH, type Pointer } from './resolve.js'
+import type { Pointer } from './resolve.js'
 import { type Io, openAndRun, userActor, withCore, writeStoreBackend } from './shared.js'
 
 export async function exportCmd(io: Io, file: string): Promise<void> {
@@ -32,9 +34,10 @@ export async function importCmd(
   opts: { asNew?: boolean | undefined; backend?: string | undefined },
 ): Promise<void> {
   const snap = parseSnapshot(readFileSync(resolve(io.cwd, file), 'utf8'))
-  const repoRoot = repoRootOf(io.cwd)
-  const pointerFile = join(repoRoot, POINTER_PATH)
-  const existing = existsSync(pointerFile) ? readPointer(pointerFile) : null
+  const worktree = repoRootOf(io.cwd) // refuses outside git
+  const pointerFile = gitPointerFile(io.cwd)
+  const found = findPointerFile(io.cwd)
+  const existing = found ? readPointer(found) : null
 
   // The repo already points at a store: import into it (it must be empty) under the pointer's
   // identity. Otherwise create a store, keeping the snapshot's identity or minting a new one.
@@ -47,7 +50,7 @@ export async function importCmd(
     return io.out(`imported project ${project.name} into ${existing.store}`)
   }
   const fresh = opts.asNew
-    ? { id: opaqueId('prj', 4), fingerprint: originFingerprint(repoRoot) }
+    ? { id: opaqueId('prj', 4), fingerprint: originFingerprint(worktree) }
     : null
   const id = fresh?.id ?? snap.project.id
   const storeDir = join(resolve(io.cwd, defaultStoreRoot(io.env)), id)
@@ -56,7 +59,7 @@ export async function importCmd(
     importStore(core.backend, snap, userActor(), fresh ? { asNew: fresh } : {}),
   )
   const pointer: Pointer = { id, fingerprint: project.originFingerprint, store: storeDir }
-  mkdirSync(join(repoRoot, '.hafiz'), { recursive: true })
+  mkdirSync(dirname(pointerFile), { recursive: true })
   writeFileSync(pointerFile, stringify(pointer))
   io.out(`imported project ${id} (${project.name}) into ${storeDir}`)
 }

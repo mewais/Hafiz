@@ -25,6 +25,8 @@ export interface SessionOpenParams {
   agent?: string
   parentSessionId?: string
   spawnedBlock?: string
+  /** Working tree (git top level) the session runs in; HEAD at `done` is read there. */
+  worktree?: string
 }
 
 export interface SessionStatus {
@@ -244,7 +246,7 @@ export async function ensureDaemon(
     const entry = opts.entry ?? env.HAFIZ_BIN
     if (!entry)
       throw new Error('cannot start the daemon: no hafiz entry script known (set HAFIZ_BIN)')
-    spawn(process.execPath, [entry, 'daemon', '--project', project.repoRoot], {
+    spawn(process.execPath, [entry, 'daemon', '--project', project.worktree], {
       detached: true,
       stdio: 'ignore',
       env,

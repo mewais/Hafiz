@@ -12,7 +12,8 @@ import {
   toolsForRole,
 } from '@hafiz/core'
 import { runTool } from '@hafiz/gateway-mcp'
-import type { KiloToolContext, KiloToolDefinition } from './kilo.js'
+import { z } from 'zod'
+import type { KiloToolContext, KiloToolDefinition, KiloToolResult } from './kilo.js'
 import type { SessionRegistry } from './sessions.js'
 
 /** Roles any Kilo agent can be managed as: the role agents plus the two defaults. */
@@ -49,7 +50,34 @@ export class HafizToolError extends Error {}
 
 export interface NativeToolsOptions {
   config: Config
-  sessions: SessionRegistry
+  /** The registry, or a getter: undefined until an untracked repo starts being tracked. */
+  sessions: SessionRegistry | (() => SessionRegistry | undefined)
+}
+
+/** The one tool an untracked git repo gets (primary agents only; see install.ts). */
+export const TRACK_TOOL = 'hafiz_track_project'
+
+export const TRACK_DESCRIPTION =
+  'Start tracking this git repo with Hafiz: a shared project memory (block tree, designs, plans, ' +
+  'progress) that keeps multi-step work and subagents coordinated across sessions. Call it ' +
+  'yourself, without asking, when the task is multi-step or will spawn subagents; never for ' +
+  'one-off tasks (a question, a small edit). Then tell the user in one line: ' +
+  '"Tracking this repo with Hafiz as `<name>`".'
+
+export function trackTool(
+  execute: (
+    args: { name: string; reason?: string },
+    ctx: KiloToolContext,
+  ) => Promise<KiloToolResult>,
+): KiloToolDefinition {
+  return {
+    description: TRACK_DESCRIPTION,
+    args: {
+      name: z.string().min(1).max(80).describe('Short project name (the product or repo name)'),
+      reason: z.string().max(300).optional().describe('One line: why this work is worth tracking'),
+    },
+    execute,
+  }
 }
 
 /**
@@ -57,7 +85,8 @@ export interface NativeToolsOptions {
  * execute() re-checks the caller's role and the daemon authorizes every call again.
  */
 export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDefinition> {
-  const { config, sessions } = opts
+  const { config } = opts
+  const registry = () => (typeof opts.sessions === 'function' ? opts.sessions() : opts.sessions)
   const tools: Record<string, KiloToolDefinition> = {}
   for (const all of registeredSpecs(config)) {
     const name = toolName(all.spec.command)
@@ -66,6 +95,11 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
       args: all.spec.shape(config, all.qualifiers),
       async execute(args: Record<string, unknown>, ctx: KiloToolContext) {
         const sid = ctx.sessionID
+        const sessions = registry()
+        if (!sessions)
+          throw new HafizToolError(
+            `${name}: Hafiz is not tracking this repo yet; call ${TRACK_TOOL} first.`,
+          )
         const open = await sessions.open(sid, { agent: ctx.agent })
         const role = sessions.get(sid)?.role
         if (!open || !role)

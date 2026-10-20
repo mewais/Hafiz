@@ -95,10 +95,14 @@ export function loadConfig(overrideDirs: string[] = []): Config {
   return configSchema.parse(raw)
 }
 
+/** The user-level override layer, `~/.hafiz/config` (`$HAFIZ_HOME/config`). */
+export function userConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.HAFIZ_HOME || join(homedir(), '.hafiz'), 'config')
+}
+
 /** Override layers for a project: user-level `~/.hafiz/config`, then `<store>/config`. */
 export function configDirs(storeDir: string, env: NodeJS.ProcessEnv = process.env): string[] {
-  const home = env.HAFIZ_HOME || join(homedir(), '.hafiz')
-  return [join(home, 'config'), join(storeDir, 'config')]
+  return [userConfigDir(env), join(storeDir, 'config')]
 }
 
 /** Rules shared by every agent role; prepended to the role's own file. */

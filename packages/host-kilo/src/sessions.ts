@@ -176,6 +176,8 @@ export class SessionRegistry implements SessionSource {
           ...(k.agent ? { agent: k.agent } : {}),
           ...(parent ? { parentSessionId: parent } : {}),
           ...(block ? { spawnedBlock: block } : {}),
+          // this Kilo instance's working tree: worktrees share the daemon, not the checkout
+          worktree: this.opts.project.worktree,
         })
         Object.assign(k, { role, token: s.token, focus: s.focus.blocks, ended: false })
         if (block) k.block = block

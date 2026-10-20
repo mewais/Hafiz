@@ -16,6 +16,7 @@ are tested as early as possible. Companion to [`ARCHITECTURE.md`](ARCHITECTURE.m
 | M5 Compliance, condenser, cost | done: compliance checks, nudge, LLM providers, condenser, drafters, cost table |
 | M6 Harness | built: scripted S/M/L tasks and metrics; baseline numbers need real models (see its README) |
 | M7 Hardening + packaging | done: storage-sqlite, migrate, doctor (incl. drift), export/import, install kilo, two npm packages, README |
+| Auto-start + worktrees | done: pointer in git's common dir (worktrees share a project), `hafiz_track_project` with a mid-session switch to managed mode, brownfield onboarding |
 
 ## Stack (proposed defaults — change before M0 if you disagree)
 

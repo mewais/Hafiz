@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
   type Actor,
@@ -7,10 +7,15 @@ import {
   describeProposal,
   focusFromPolicy,
   isViewerSession,
-  opaqueId,
   renderCostTable,
 } from '@hafiz/core'
-import { type DaemonClient, ensureDaemon, runMcpStdio, startDaemon } from '@hafiz/gateway-mcp'
+import {
+  type DaemonClient,
+  ensureDaemon,
+  initProject,
+  runMcpStdio,
+  startDaemon,
+} from '@hafiz/gateway-mcp'
 import { stringify } from 'yaml'
 import { doctor } from './doctor.js'
 import { installHost } from './install-host.js'
@@ -18,23 +23,13 @@ import { migrate } from './migrate.js'
 import { exportCmd, importCmd } from './portable.js'
 import {
   CliError,
-  defaultStoreRoot,
-  originFingerprint,
+  findLegacyPointerFile,
+  gitPointerFile,
   osUser,
-  POINTER_PATH,
-  type Pointer,
   readPointer,
-  repoRootOf,
   resolveProject,
 } from './resolve.js'
-import {
-  type Io,
-  openAndRun,
-  printNotices,
-  userActor,
-  withCore,
-  writeStoreBackend,
-} from './shared.js'
+import { type Io, printNotices, userActor, withCore } from './shared.js'
 
 export { type Io, userActor } from './shared.js'
 
@@ -43,7 +38,8 @@ const DOC_TYPES: readonly DocType[] = ['design', 'plan', 'digest']
 const USAGE = `usage: hafiz <command> [options]
 
   init <name> [--store-root DIR] [--adopt] [--backend fs|sqlite]
-                                             create a store for the current repo
+                                             track the current repo (pointer in its git dir)
+  migrate-pointer                            move a legacy .hafiz/project.yaml into the git dir
   tree [--json]                              print the block tree
   show <block> [--zoom Z] [--json]           print a block at a zoom level (default FULL)
   context --role R [--focus a,b] [--budget N] [--explain id]
@@ -88,38 +84,30 @@ export async function init(
     backend?: string | undefined
   },
 ): Promise<void> {
-  const repoRoot = repoRootOf(io.cwd)
-  const pointerFile = join(repoRoot, POINTER_PATH)
-  if (existsSync(pointerFile)) {
-    const existing = readPointer(pointerFile)
-    if (existsSync(existing.store))
-      throw new CliError(`already initialised (store ${existing.store})`)
-    if (!opts.adopt)
-      throw new CliError(
-        `this repo points at a store that no longer exists (${existing.store}); ` +
-          'run `hafiz init --adopt <name>` to create a fresh store and re-point the repo',
-      )
-  }
-  const root = resolve(io.cwd, opts.storeRoot ?? defaultStoreRoot(io.env))
-  const id = opaqueId('prj', 4)
-  const storeDir = join(root, id)
-  const fingerprint = originFingerprint(repoRoot)
-  // The store's own config layer selects the backend (hafiz.yaml storage.backend).
-  if (opts.backend) writeStoreBackend(storeDir, opts.backend)
-  await openAndRun(storeDir, io.env, async (core) => {
-    const { notices } = await core.projectInit(userActor(), {
-      name,
-      originFingerprint: fingerprint,
-      id,
-    })
-    printNotices(io, notices)
-  })
-  const pointer: Pointer = { id, fingerprint, store: storeDir }
-  mkdirSync(join(repoRoot, '.hafiz'), { recursive: true })
-  writeFileSync(pointerFile, stringify(pointer))
-  io.out(`initialised project ${id} (${name})`)
-  io.out(`store:   ${storeDir}`)
-  io.out(`pointer: ${pointerFile}`)
+  const r = await initProject({ cwd: io.cwd, name, env: io.env, ...opts, by: userActor() })
+  printNotices(io, r.notices)
+  io.out(`initialised project ${r.id} (${name})`)
+  io.out(`store:   ${r.storeDir}`)
+  io.out(`pointer: ${r.pointerFile}`)
+  if (r.onboarding)
+    io.out('onboarding: pending (existing code; the designer describes it in the root design)')
+}
+
+/** Move a legacy `<repo>/.hafiz/project.yaml` into git's common dir (shared by worktrees). */
+export async function migratePointer(io: Io): Promise<void> {
+  const legacy = findLegacyPointerFile(io.cwd)
+  if (!legacy) throw new CliError('no legacy .hafiz/project.yaml here; nothing to migrate')
+  const target = gitPointerFile(io.cwd)
+  if (existsSync(target))
+    throw new CliError(`${target} already exists; remove ${legacy} by hand if it is stale`)
+  const pointer = readPointer(legacy)
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, stringify(pointer))
+  rmSync(legacy)
+  try {
+    rmdirSync(dirname(legacy)) // only when empty
+  } catch {}
+  io.out(`moved pointer ${legacy} -> ${target}`)
 }
 
 // ───────────────────────────── reads ─────────────────────────────
@@ -224,7 +212,13 @@ async function withDaemon<T>(io: Io, fn: (c: DaemonClient) => Promise<T>): Promi
         ...(io.entry ? { entry: io.entry } : {}),
       })
   try {
-    await client.openSession({ id: 'cli', host: 'cli', role: 'user', agent: osUser() })
+    await client.openSession({
+      id: 'cli',
+      host: 'cli',
+      role: 'user',
+      agent: osUser(),
+      worktree: project.worktree,
+    })
     return await fn(client)
   } finally {
     client.close()
@@ -433,6 +427,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
           adopt: values.adopt,
           backend: values.backend,
         })
+        break
+      case 'migrate-pointer':
+        await migratePointer(io)
         break
       case 'tree':
         await tree(io, values)

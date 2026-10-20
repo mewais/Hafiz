@@ -211,6 +211,15 @@ against a mock LLM; corrections to the above in bold):**
   spawned block as focus. Kilo's native agents: primaries `build`, `plan`, `ask`, `debug`,
   `orchestrator` (deprecated); subagents `general`, `explore`; hidden `title`, `compaction`.
 - `session.compacted` exists; `compaction` is global config (`auto`, `prune`, `tail_turns`, …).
+- **Tools and permissions are fixed per instance** (tracking mid-session, verified with `kilo run`
+  against the mock LLM): plugin tools are read from `Hooks.tool` once when the tool registry state
+  is built, agents and their permission rulesets once from config, and the session's own
+  permission once per turn. What does change per request: the request's tool set is filtered by
+  `user.tools[name] !== false`, where `user` is the turn's user message *object* that
+  `experimental.chat.messages.transform` also receives (resolved before the hook, filtered after
+  it, re-read from the database every step). The untracked plugin registers everything up front
+  and toggles visibility there, so the request right after `hafiz_track_project` already carries
+  the manager's tools, rules and envelope.
 
 **TUI panel and `kilo` LLM provider (verified with the real TUI under tmux and `kilo run`,
 7.8.15).** TUI plugins are a separate module (`export default { id, tui }`, never with `server`)

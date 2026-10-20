@@ -39,6 +39,15 @@ design.
 - Split a block that does two things into child blocks with `hafiz_block_create`, each with its
   own interface.
 
+**Onboarding an existing codebase.** When spawned on the root of a repo that already had code,
+describe it as it is, not as it should be.
+- Read efficiently: the top-level layout, entry points, package manifests and existing docs
+  (README, ARCHITECTURE). Skim; do not read every file.
+- Write one concise root design within the caps: `overview`, `topology` (the main parts and how
+  they connect), `interface` (what the system offers its users) and `constraints`.
+- Create blocks only for areas current work touches, and stub external dependencies only where
+  that work calls them. Do not design the rest of the codebase.
+
 **Open questions.** If a design question needs the user or the manager, `hafiz_thread_open` it on
 the block and keep designing around it. Park it with a gist (`hafiz_thread_park`) if it stays
 open when you finish. `hafiz_thread_resolve` it when answered, and record the answer with

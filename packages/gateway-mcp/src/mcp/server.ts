@@ -129,6 +129,7 @@ export async function attachSession(
   client: DaemonClient,
   role: string,
   env: NodeJS.ProcessEnv = process.env,
+  worktree?: string,
 ): Promise<void> {
   if (env.HAFIZ_TOKEN) {
     client.token = env.HAFIZ_TOKEN // adapter-minted: the session already exists
@@ -141,6 +142,7 @@ export async function attachSession(
     ...(env.HAFIZ_AGENT ? { agent: env.HAFIZ_AGENT } : {}),
     ...(env.HAFIZ_PARENT_SESSION ? { parentSessionId: env.HAFIZ_PARENT_SESSION } : {}),
     ...(env.HAFIZ_BLOCK ? { spawnedBlock: env.HAFIZ_BLOCK } : {}),
+    ...(worktree ? { worktree } : {}),
   })
 }
 
@@ -163,7 +165,7 @@ export async function runMcpStdio(opts: RunMcpOptions): Promise<void> {
     )
   const project = opts.project ?? resolveProject(opts.projectDir ?? opts.cwd, opts.env)
   const client = await ensureDaemon(project, { env: opts.env, ...opts.daemon })
-  await attachSession(client, opts.role, opts.env)
+  await attachSession(client, opts.role, opts.env, project.worktree)
   const { server } = createMcpServer({ role: opts.role, client, config })
   const done = new Promise<void>((resolve) => {
     server.server.onclose = () => resolve()

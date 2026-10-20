@@ -2,7 +2,11 @@
 export {
   CliError,
   defaultStoreRoot,
+  findLegacyPointerFile,
   findPointerFile,
+  GIT_POINTER_PATH,
+  gitCommonDir,
+  gitPointerFile,
   originFingerprint,
   osUser,
   POINTER_PATH,
@@ -11,4 +15,5 @@ export {
   readPointer,
   repoRootOf,
   resolveProject,
+  worktreeOf,
 } from '@hafiz/core'

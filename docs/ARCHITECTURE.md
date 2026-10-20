@@ -480,11 +480,29 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   rollback is `hafiz revert <block> <type> <commit>` (which is itself a new, attributed write).
   A remote can be configured for backup; team sharing (deferred) builds on this.
 - Markdown headings map 1:1 to schema sections; hand edits are detected (dirty tree) and surfaced.
-- **Location**: data in home, pointer in repo. `<repo>/.hafiz/project.yaml` carries the project id
-  and an **origin fingerprint** (remote URL hash + creator). A daemon that finds a pointer with no
-  matching store **refuses to auto-create** and tells the user to `hafiz init --adopt` (new store,
-  new id) or import. No permission prompts arise from the location: agents never touch the files;
-  all writes are MCP tool calls the adapter allowlists.
+- **Location**: data in home, pointer in git. `$(git rev-parse --git-common-dir)/hafiz/project.yaml`
+  (absolute; usually `<repo>/.git/hafiz/project.yaml`) carries the project id, an **origin
+  fingerprint** (sha256 of the origin URL, else the common dir's checkout path, + OS user) and the
+  store path. The common dir is shared by the main checkout and every `git worktree`, so all of
+  them resolve to **one project, one store and one daemon**. Resolution order: git-common-dir
+  pointer → legacy `<repo>/.hafiz/project.yaml` walking up (`hafiz doctor` warns;
+  `hafiz migrate-pointer` moves it into the git dir and deletes it) → none. Outside git,
+  `hafiz init` refuses. A daemon that finds a pointer with no matching store **refuses to
+  auto-create** and tells the user to `hafiz init --adopt` (new store, new id) or import. No
+  permission prompts arise from the location: agents never touch the files; all writes are tool
+  calls the adapter allowlists.
+- **Identity vs. working tree**: project identity comes from the common dir; the working tree
+  comes from the caller. `ResolvedProject.worktree` is the caller's `--show-toplevel`; sessions
+  record it at `session.open` (`Session.worktree`), and `done` stamps `doneAt.commit` with the
+  HEAD of the *calling session's* worktree (the daemon's startup checkout only as a fallback).
+  `hafiz doctor` measures drift in the worktree it runs in. Separate clones of one remote share a
+  fingerprint but are separate projects; linking them is out of scope.
+- **Starting**: `hafiz init` and the Kilo plugin's `hafiz_track_project` run the same
+  `initProject` (gateway-mcp). A repo with commits and at least `onboarding.min_source_files`
+  tracked source files starts with `Project.onboarding: pending`: the roles in
+  `onboarding.roles` (manager) get `onboarding.directive` at the top of their view (spawn the
+  designer once on the root to describe the codebase as it is), and the first root design write
+  clears the flag and records the decision "Onboarded existing codebase".
 
 `storage-sqlite` implements the same interface and passes the same conformance suite: one SQLite
 file (`<store>/hafiz.sqlite`, `node:sqlite`), rows per entity, append-only `logs`/`audit` tables, and a
@@ -514,7 +532,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 
 ### 11.2 CLI (`hafiz …`)
 
-`init [--adopt] [--backend]`, `tree`, `show <block> [--zoom]`, `history <block> [type]`, `revert`, `status`,
+`init [--adopt] [--backend]`, `migrate-pointer`, `tree`, `show <block> [--zoom]`, `history <block> [type]`, `revert`, `status`,
 `review`, `checkpoint`, `direct` (record a standing decision), `focus`, `explain`, `doctor`
 (wiring, drift: files under a done block changed since `done_at.commit`), `migrate`,
 `export/import`, `install <host>`, `daemon`.
@@ -530,6 +548,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 | Install (`config` hook, stable) | `agent.<role>` definitions (prompt = role rules + `rules/common.md`, `permission` `hafiz_*: deny` + allow for exactly the role's tools, `permission.task` for who may delegate); default-role tool permissions for non-Hafiz agents; slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions |
 | Tools (`tool` hook, stable) | **plugin-native** `hafiz_<command>` tools generated from the shared catalogue (`TOOL_SPECS` in core, also used by the MCP gateway; execution shared via `runTool`). Each call resolves the calling Kilo session → Hafiz session (`session.open` with the Kilo id; role from the agent, parent from `parentID`, spawned block from `hafiz:block=<id>`) and dispatches with that session's token, so attribution and focus are per session. `host.kilo.tools: mcp` keeps the per-role MCP servers instead |
 | Default roles | `host.kilo.default_role` (default `manager`) manages non-role primary agents (`build`, `plan`, custom) as that role: tools, session, and the role's rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`) does the same for non-role subagents (`general`, `explore`) **only** when spawned with a `hafiz:block=` marker; otherwise they are unmanaged. `none` disables either |
+| Untracked git repo | near-zero cost: in-memory nudge plus one tool, `hafiz_track_project` (`name`, `reason?`), allowed to primary agents only. Kilo reads agents, permissions and the tool list once at startup, so the plugin installs the role agents and permissions and registers every Hafiz tool up front, and on each request hides all but the track tool by setting `tools[name] = false` on the user message objects `experimental.chat.messages.transform` receives (Kilo filters the request's tools by that field after the hook; the objects are re-read from its database every step, so nothing persists). The tool runs `initProject`, starts the daemon, opens the caller's session and builds the managed hooks; from the next request (same turn) every hook delegates to them and the visibility flips. Outside git: no hooks |
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |

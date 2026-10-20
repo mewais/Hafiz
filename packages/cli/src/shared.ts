@@ -1,9 +1,6 @@
 // Pieces every command module needs: the IO seam and opening the store with its layered config.
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import {
   type Actor,
-  CliError,
   type Config,
   Core,
   configDirs,
@@ -13,8 +10,9 @@ import {
   type ResolvedProject,
   resolveProject,
 } from '@hafiz/core'
-import { createBackend, type DaemonClient, STORAGE_BACKENDS } from '@hafiz/gateway-mcp'
-import { stringify } from 'yaml'
+import { createBackend, type DaemonClient } from '@hafiz/gateway-mcp'
+
+export { writeStoreBackend } from '@hafiz/gateway-mcp'
 
 export interface Io {
   cwd: string
@@ -39,8 +37,9 @@ export async function withCore<T>(
   io: Io,
   fn: (core: Core, storeDir: string) => Promise<T>,
 ): Promise<T> {
-  const { storeDir, repoRoot } = resolveProject(io.cwd, io.env)
-  return openAndRun(storeDir, io.env, fn, repoRoot)
+  // Git operations (HEAD at done) run in the caller's own working tree.
+  const { storeDir, worktree } = resolveProject(io.cwd, io.env)
+  return openAndRun(storeDir, io.env, fn, worktree)
 }
 
 export async function openAndRun<T>(
@@ -61,12 +60,4 @@ export async function openAndRun<T>(
 
 export function printNotices(io: Io, notices: Notice[]) {
   for (const n of notices) io.err(`${n.level}: ${n.text}`)
-}
-
-/** Select the storage backend for a store through its own config layer (`config/hafiz.yaml`). */
-export function writeStoreBackend(storeDir: string, backend: string) {
-  if (!STORAGE_BACKENDS.includes(backend as 'fs'))
-    throw new CliError(`--backend must be one of ${STORAGE_BACKENDS.join(', ')}`)
-  mkdirSync(join(storeDir, 'config'), { recursive: true })
-  writeFileSync(join(storeDir, 'config', 'hafiz.yaml'), stringify({ storage: { backend } }))
 }
