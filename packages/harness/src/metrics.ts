@@ -91,8 +91,8 @@ export async function collectMetrics(read: ReadOps): Promise<RunMetrics> {
     read.readAudit(),
     read.listThreads(),
   ])
-  const sessions = all.filter((s) => s.role !== 'user')
-  const agent = (by: { role: string }) => by.role !== 'user'
+  const sessions = all.filter((s) => s.role !== 'user' && s.role !== 'viewer')
+  const agent = (by: { role: string }) => by.role !== 'user' && by.role !== 'viewer'
   const progress: Array<{ kind: string; by: { sessionId: string; role: string } }> = []
   const steps: Array<{ by: { sessionId: string; role: string } }> = []
   const decisions: Array<{ standing?: string; by: { sessionId: string; role: string } }> = []

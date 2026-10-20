@@ -11,6 +11,7 @@ import { DaemonClient, type DaemonHandle, RpcError, startDaemon } from '@hafiz/g
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   CONDENSER_AGENT,
+  condenserSystemHook,
   createHafizPlugin,
   type Hooks,
   type KiloClient,
@@ -229,6 +230,19 @@ describe('kilo provider through the plugin and the daemon', () => {
     expect(await read.getSession(child)).toBeNull()
     expect(system).toEqual(['kilo system'])
     expect(messages).toHaveLength(1)
+  })
+
+  it("the system transform replaces Kilo's default prompt only while a condenser child runs", async () => {
+    const systems = new Map([['ses_c', 'HAFIZ SYSTEM']])
+    const hook = condenserSystemHook(systems)
+    const own = ['persona', 'env', 'instructions']
+    await hook({ sessionID: 'ses_c' }, { system: own })
+    expect(own).toHaveLength(1)
+    expect(own[0]).toContain('You are a text-processing function inside Hafiz')
+    expect(own[0]).toMatch(/HAFIZ SYSTEM$/)
+    const other = ['persona']
+    await hook({ sessionID: 'ses_other' }, { system: other })
+    expect(other).toEqual(['persona'])
   })
 
   it('drafters run through Kilo too (a gist drafted for a thread parked without one)', async () => {

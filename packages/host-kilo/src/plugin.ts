@@ -19,7 +19,7 @@ import { type DaemonClient, ensureDaemon } from '@hafiz/gateway-mcp'
 import { toolCounters, USER_TURN_COUNTERS } from './counters.js'
 import { installConfig } from './install.js'
 import type { Hooks, KiloEvent, KiloMessageWithParts, Plugin, PluginInput } from './kilo.js'
-import { installCondenserAgent, kiloRelayHandler, usesKiloLlm } from './llm.js'
+import { condenserSystemHook, installCondenserAgent, kiloRelayHandler, usesKiloLlm } from './llm.js'
 import { createNudgeHooks } from './nudge.js'
 import { SessionRegistry } from './sessions.js'
 import { ConversationShaper } from './shaper/core.js'
@@ -142,6 +142,7 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
     // `llm.*.provider: kilo`: the daemon relays condenser/drafter calls to this plugin, which runs
     // them as child sessions of the session they work for (llm.ts).
     const kiloLlm = usesKiloLlm(config.hafiz.llm)
+    const condenserSystems = new Map<string, string>()
     const sessions: SessionRegistry = new SessionRegistry({
       project,
       config,
@@ -155,6 +156,7 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
                 client: input.client,
                 directory: input.directory,
                 ignore: (id) => sessions.ignore(id),
+                systems: condenserSystems,
               }),
             },
           }
@@ -294,8 +296,11 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
         if (k?.agent === i.agent && sessions.isManaged(i.sessionID))
           o.headers[SESSION_HEADER] = i.sessionID
       }
+    if (kiloLlm) out['experimental.chat.system.transform'] = condenserSystemHook(condenserSystems)
     if (hooks) {
+      const shape = out['experimental.chat.system.transform']
       out['experimental.chat.system.transform'] = async (i, o) => {
+        await shape?.(i, o)
         if (!i.sessionID || !sessions.isManaged(i.sessionID)) return
         const r = await hooks.shape({
           sessionId: i.sessionID,

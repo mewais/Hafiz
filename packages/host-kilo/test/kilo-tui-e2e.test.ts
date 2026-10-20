@@ -259,6 +259,11 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     const system = body.messages.filter((m) => m.role === 'system').map((m) => String(m.content))
     expect(system.join('\n')).not.toMatch(/^<hafiz hash=/m)
     expect(system.join('\n')).toContain('You are a text-processing function inside Hafiz')
+    // and none of Kilo's own default prompt (persona, environment block): only Hafiz's text
+    expect(system).toHaveLength(1)
+    expect(system[0]).toMatch(/^You are a text-processing function inside Hafiz/)
+    expect(system[0]).toContain('working memory of a long coding session')
+    expect(system[0]).not.toMatch(/<env>|Today's date|Platform:|You are powered by/)
     expect(body.tools ?? []).toEqual([])
     expect(await daemon.service.core.backend.read.getSession(child)).toBeNull()
     const after = await daemon.service.core.backend.read.getSession(parent?.id as string)

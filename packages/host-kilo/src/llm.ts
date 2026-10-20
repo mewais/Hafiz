@@ -62,6 +62,8 @@ export interface KiloLlmDeps {
   directory: string
   /** Mark a Kilo session as not Hafiz's to manage (called before it is prompted). */
   ignore: (sessionId: string) => void
+  /** Child session → system text, read by `condenserSystemHook` while the prompt runs. */
+  systems?: Map<string, string>
 }
 
 function replyText(m: KiloMessageWithParts): string {
@@ -69,6 +71,19 @@ function replyText(m: KiloMessageWithParts): string {
     .filter((p) => p.type === 'text' && !p.synthetic && !p.ignored && typeof p.text === 'string')
     .map((p) => p.text as string)
     .join('')
+}
+
+/**
+ * `experimental.chat.system.transform` for the hidden agent's child sessions: Kilo prefixes every
+ * agent prompt with its persona, environment block and instructions, none of which a text
+ * function wants, and no agent or `session.prompt` option turns that off. The array is replaced
+ * with the agent prompt and the request's own system text.
+ */
+export function condenserSystemHook(systems: ReadonlyMap<string, string>) {
+  return async (i: { sessionID?: string }, o: { system: string[] }): Promise<void> => {
+    const own = i.sessionID ? systems.get(i.sessionID) : undefined
+    if (own !== undefined) o.system.splice(0, o.system.length, `${AGENT_PROMPT}\n\n${own}`)
+  }
 }
 
 /** One relayed completion: a child session of `req.sessionId`, prompted synchronously. */
@@ -94,17 +109,20 @@ export async function kiloComplete(
   deps.ignore(child)
   const model = kiloModel(settings.model)
   const text = req.json ? `${req.prompt}\n\nReply with the JSON object only.` : req.prompt
-  const res = await session.prompt({
-    path: { id: child },
-    body: {
-      agent: CONDENSER_AGENT,
-      ...(model ? { model } : {}),
-      system: req.system,
-      tools: {},
-      parts: [{ type: 'text', text }],
-    },
-    query,
-  })
+  deps.systems?.set(child, req.system)
+  const res = await session
+    .prompt({
+      path: { id: child },
+      body: {
+        agent: CONDENSER_AGENT,
+        ...(model ? { model } : {}),
+        system: req.system,
+        tools: {},
+        parts: [{ type: 'text', text }],
+      },
+      query,
+    })
+    .finally(() => deps.systems?.delete(child))
   const msg = res?.data
   if (!msg?.info) throw new LLMError(`kilo: prompt failed: ${String(res?.error ?? 'no reply')}`)
   if (msg.info.error)

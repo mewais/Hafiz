@@ -6,6 +6,7 @@ import {
   type DocType,
   describeProposal,
   focusFromPolicy,
+  isViewerSession,
   opaqueId,
   renderCostTable,
 } from '@hafiz/core'
@@ -295,7 +296,7 @@ export async function status(io: Io, opts: { json?: boolean | undefined }): Prom
   const data = await withCore(io, async (core) => {
     const r = core.backend.read
     const project = await r.getProject()
-    const sessions = await r.listSessions()
+    const sessions = (await r.listSessions()).filter((s) => !isViewerSession(core.config.roles, s))
     const pending = await r.listProposals({ status: 'pending' })
     return { project, sessions, pending }
   })
@@ -335,7 +336,9 @@ export async function focus(io: Io, opts: { role?: string | undefined }): Promis
       const f = focusFromPolicy(await core.backend.read.listBlocks(), def.focus_policy)
       return io.out(`${opts.role} (${def.focus_policy}): ${f.blocks.join(', ') || '-'}`)
     }
-    const live = await core.backend.read.listSessions({ active: true })
+    const live = (await core.backend.read.listSessions({ active: true })).filter(
+      (s) => !isViewerSession(core.config.roles, s),
+    )
     if (!live.length) return io.out('no active sessions')
     for (const s of live)
       io.out(

@@ -106,6 +106,21 @@ describe('viewer (the TUI panel)', () => {
     expect((await d.service.core.backend.read.listBlocks()).map((b) => b.title)).not.toContain('X')
   })
 
+  it('the viewer is not an agent: absent from status, checkpoint fan-out and live-session loops', async () => {
+    const d = await boot()
+    const u = await as(d, 'cli', 'user')
+    await as(d, 'mgr', 'manager')
+    const v = await as(d, 'kilo-tui', 'viewer')
+    const ids = (await u.projectStatus()).sessions.map((s) => s.id)
+    expect(ids).toContain('mgr')
+    expect(ids).not.toContain('kilo-tui')
+    expect((await v.projectStatus()).sessions.map((s) => s.id)).not.toContain('kilo-tui')
+    const { requested } = (await u.call('checkpoint.request', { session: '*' })) as {
+      requested: string[]
+    }
+    expect(requested).toEqual(['mgr'])
+  })
+
   it('a role without session.status cannot peek at another session', async () => {
     const d = await boot()
     const u = await as(d, 'cli', 'user')

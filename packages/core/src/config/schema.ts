@@ -190,6 +190,11 @@ export const rolesFile = z.object({
 })
 export type RoleDef = z.infer<typeof rolesFile>['roles'][string]
 
+/** Sessions of read_only roles (the TUI viewer) watch the project; they are not agents. */
+export function isViewerSession(roles: z.infer<typeof rolesFile>, s: { role: string }): boolean {
+  return !!roles.roles[s.role]?.read_only
+}
+
 export const policiesFile = z.object({
   status: z.object({
     transitions: z.record(z.string(), z.array(z.string())),

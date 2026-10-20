@@ -10,6 +10,7 @@ import {
   focusFromPolicy,
   HafizError,
   isAllowed,
+  isViewerSession,
   LLMError,
   type LLMRelay,
   type LLMRequest,
@@ -300,7 +301,7 @@ export class DaemonService {
             epoch: project.epoch,
             rootBlockId: project.rootBlockId,
           },
-          sessions: (await r.listSessions()).map(publicSession),
+          sessions: (await r.listSessions()).filter((x) => !this.isViewer(x)).map(publicSession),
           pendingProposals: (await r.listProposals({ status: 'pending' })).length,
         }
       }
@@ -324,7 +325,7 @@ export class DaemonService {
         // The user (CLI) may name a session; agents may only ask for their own.
         const target = (p.session as string | undefined) ?? session.id
         if (target !== session.id) authorize(core.config, by.role, 'session.checkpoint')
-        const live = target === '*' ? await core.backend.read.listSessions({ active: true }) : []
+        const live = target === '*' ? await this.activeAgents() : []
         const ids =
           target === '*' ? live.filter((x) => x.id !== session.id).map((x) => x.id) : [target]
         const done: string[] = []
@@ -492,6 +493,17 @@ export class DaemonService {
     return (await this.core.backend.read.getSession(s.id)) ?? s
   }
 
+  private isViewer(s: Session): boolean {
+    return isViewerSession(this.core.config.roles, s)
+  }
+
+  /** Live sessions that are agents: the read-only viewer is left out of every agent-facing loop. */
+  private async activeAgents(): Promise<Session[]> {
+    return (await this.core.backend.read.listSessions({ active: true })).filter(
+      (s) => !this.isViewer(s),
+    )
+  }
+
   // ───────────────────────── computed focus ─────────────────────────
 
   /** Refresh one session's computed focus if the policy now yields a different set. */
@@ -507,8 +519,7 @@ export class DaemonService {
 
   /** After a block/proposal write: keep every live all_active session's focus current. */
   private async afterStatusWrite(caller: string): Promise<void> {
-    for (const s of await this.core.backend.read.listSessions({ active: true }))
-      await this.refreshIfStale(s)
+    for (const s of await this.activeAgents()) await this.refreshIfStale(s)
     await this.announceNewProposals(caller)
   }
 
@@ -540,7 +551,7 @@ export class DaemonService {
     const fresh = (await r.listProposals({ status: 'pending' })).filter((p) => !seen.has(p.id))
     if (!fresh.length) return
     for (const p of fresh) seen.add(p.id)
-    for (const s of await r.listSessions({ active: true })) {
+    for (const s of await this.activeAgents()) {
       const patterns = this.core.config.roles.roles[s.role]?.tools ?? []
       if (s.id === caller || !isAllowed(patterns, 'proposal.list')) continue
       for (const p of fresh)
