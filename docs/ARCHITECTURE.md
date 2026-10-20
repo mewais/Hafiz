@@ -2,31 +2,42 @@
 
 Hafiz (حافظ, *the one who memorizes; the guardian*) is a work-state-aware context manager for
 multi-agent coding sessions. It keeps a project's architecture, block designs, plans, status,
-decisions and open threads in a structured store that agents maintain through a small, role-scoped
-tool protocol, and it assembles each agent's context deterministically from that store — no
-ambient LLM summarization.
+decisions and open threads in a structured, versioned store that agents maintain through a small,
+role-scoped tool protocol, and it rebuilds each agent's context on every request from that store —
+deterministically, with LLM help only at budget-triggered checkpoints and only to produce proposals.
 
-This document is the architecture of the host-agnostic core plus the thin host adapters.
-Design discussion and rationale that led here is summarized in [`docs/DESIGN-NOTES.md`](DESIGN-NOTES.md).
+Design rationale is in [`DESIGN-NOTES.md`](DESIGN-NOTES.md); verified host capabilities in
+[`HOST-MATRIX.md`](HOST-MATRIX.md). Target host for v1 is **Kilo Code (current, OpenCode-based)**;
+the core is host-agnostic and an append-only mode for Claude Code / Codex is specified but not built.
 
 ---
 
-## 1. Principles (the things everything else is derived from)
+## 1. Principles
 
 1. **Status is global, focus is per-consumer.** A block is `done` for everyone; *what you are
    looking at* is yours. Context = a view over the tree parameterized by (focus, role, budget).
-2. **Compaction is assembly, not summarization.** The context an agent sees is rebuilt from the
-   store by rules. Anything worth keeping must have been written to the store by an agent.
-3. **Layout changes only at events (epochs).** Between events the context is a stable prefix plus
-   an append-only tail. This keeps prompt caches valid and keeps Hafiz cheap.
-4. **Hafiz is canonical and private.** Designs/plans live *only* in Hafiz, outside the repo.
-   Write access is enforced by the host's per-agent tool allowlists; Hafiz versions every write.
-5. **No tree → zero cost.** A project without a tree gets nothing injected and nothing rewritten.
-6. **Everything structured.** Every document is a schema'd set of sections with size caps.
-   Structure is what makes rendering, degradation and digests mechanical.
-7. **Config over code.** Roles, views, zoom levels, schemas, budgets, nudge thresholds are
-   configuration. Code provides interfaces and defaults; swapping behavior is a config change.
-8. **Nothing is lost, only demoted.** Overflow turns "in context" into "one `read` away".
+2. **Context is rebuilt, not compacted.** Every request's message array is assembled: structured
+   view from the store + a bounded verbatim tail + a bounded "unfiled context" summary. Host
+   compaction is disabled for managed sessions; it never fires because the context never overflows.
+3. **Structure changes rarely; the tail changes constantly.** The view is re-emitted only when its
+   rendered text changes; the tail is append-only between condensations. This keeps prompt caches
+   valid and Hafiz cheap.
+4. **Hafiz is canonical, private, and versioned.** Designs and plans live only in Hafiz, outside the
+   repo, in a git-backed store where every write is attributed to a session and committed.
+5. **No tree → zero cost.** A project without a tree gets nothing injected, nothing rewritten, and
+   no process spawned beyond a cached "no tree" check.
+6. **Everything structured.** Documents are schema'd sections with caps; schemas are selected by
+   block kind. Structure makes rendering, degradation and digests mechanical.
+7. **No LLM per turn.** LLMs run only at explicit, budget-triggered checkpoints (tail condensation)
+   or opt-in explicit events (drafters), and only produce bounded summaries or *proposals* that land
+   in a review queue. Nothing an LLM writes becomes store truth without an agent or user action.
+8. **Non-compliance must be visible.** Agents will miss protocol calls. Hafiz detects it
+   mechanically from counters and captures what it can (worker reports) without asking.
+9. **Config over code.** Roles, views, zooms, schemas, guards, budgets, nudges are configuration.
+10. **Nothing is lost, only demoted.** Overflow turns "in context" into "one `read` away".
+11. **Enforcement is best-effort and says so.** Roles are enforced by the host hiding tools and by
+    Core checking a per-session capability token; violations are attributed and visible, not
+    cryptographically prevented.
 
 ---
 
@@ -34,572 +45,456 @@ Design discussion and rationale that led here is summarized in [`docs/DESIGN-NOT
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  HOST ADAPTERS         claude-code/        kilo/          codex/             │
-│  thin, generated from role/view config; bridge host events → core sessions   │
+│  HOST ADAPTERS         kilo/ (v1)          claude-code/, codex/ (specified)  │
+│  generated from config; bridge host events → core; shape each request       │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│  GATEWAYS              mcp/               proxy/          cli/               │
-│  protocol surfaces; translate wire formats → Core API; no business logic     │
+│  GATEWAYS              mcp/ (per role)     cli/                              │
+│  protocol surfaces; translate wire → Core API; no business logic             │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │  CORE (one daemon per project)                                               │
-│   Domain model ─ Schemas ─ Commands/Queries ─ Authorization                  │
-│   View engine (policy → zoom → render → degrade) ─ Session tracker ─ Events  │
+│   Domain · Schemas · Commands/Queries · Authz · View engine · Tail policy    │
+│   Sessions · Compliance · Condenser (LLM checkpoint) · Review queue · Events │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│  SPI (service provider interfaces)                                           │
-│   StorageBackend · Tokenizer · Renderer · ConfigSource · Clock               │
-│   impls: storage-fs (default) · storage-sqlite · …                           │
+│  SPI                                                                         │
+│   StorageBackend · Tokenizer · Renderer · LLMProvider · ConfigSource · Clock │
+│   impls: storage-fs (git-backed, default) · storage-sqlite · …               │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Dependency rule: arrows point down only. Core knows nothing about MCP, HTTP, Claude Code, Kilo
-or Codex. Gateways know the Core API and one wire protocol each. Adapters know one host each and
-the gateway(s) they wire up.
+Dependency rule: arrows point down only. Core knows nothing about MCP, HTTP or any host. The
+`RequestShaper` (the thing that rewrites a model request) lives in the adapter and calls Core.
 
 ---
 
 ## 3. Core: domain model
 
-All identifiers are stable, short, human-readable slugs with a random suffix (`billing-7f2a`).
+Identifiers are stable human-readable slugs with a random suffix (`billing-7f2a`).
 
 ### 3.1 Entities
 
 | Entity | Fields (abridged) | Mutability |
 |---|---|---|
-| `Project` | id, name, root_block_id, config_overrides, epoch | epoch increments on structural events |
-| `Block` | id, parent_id, title, kind, status, order, version, doc_versions{design,plan,digest} | CAS on `version` |
-| `Edge` | from_block, to_block, kind (`depends_on` default; extensible) | add/remove |
-| `Doc` | block_id, type (`design`\|`plan`\|`digest`\|…), version, sections{name→content} | CAS on `version`; validated against its schema |
-| `ProgressEntry` | block_id, ts, session_id, role, kind (`done`\|`blocked`\|`found`\|`changed`\|`question`\|…), text, refs[] | append-only |
-| `Decision` | id, block_id, ts, title, decision, rationale, supersedes?, by{session,role} | append-only (supersede, never edit) |
-| `Directive` | id, block_id, kind (`never`\|`always`\|`prefer`), text, rationale?, status (`active`\|`retired`), by, ts | append-only; retire, never edit; scoped to the block's subtree |
-| `Thread` | id, block_id, title, gist, status (`open`\|`parked`\|`resolved`), entries[] | append-only entries; status transitions |
-| `Session` | id, project_id, host, role, focus{block_ids[], order?}, counters, last_epoch_seen | ephemeral; per gateway connection |
+| `Project` | id, name, origin_fingerprint, root_block_id, schema_set_version, epoch | epoch on major writes |
+| `Block` | id, parent_id, title, **kind**, status, blocked_on?, order, version, done_at{commit?, ts}? | CAS on `version` |
+| `Edge` | from, to, kind (`depends_on` default; extensible) | add/remove |
+| `Doc` | block_id, type (`design`\|`plan`\|`digest`\|…), version, sections{} | CAS; validated against the schema selected by block kind |
+| `StepEvent` | block_id, step_id, status, session_id, ts | append-only; folded into the rendered plan |
+| `ProgressEntry` | block_id, ts, session_id, role, kind (`done`\|`blocked`\|`found`\|`changed`\|`question`\|`report`), text, refs[] | append-only |
+| `Decision` | id, block_id, ts, title, decision, rationale, **standing?** (`never`\|`always`\|`prefer`), status (`active`\|`superseded`), supersedes?, by | append-only; supersede, never edit |
+| `Thread` | id, block_id, title, gist, status (`open`\|`parked`\|`resolved`), entries[] | append-only entries |
+| `Proposal` | id, kind (`decision`\|`thread`\|`progress`\|`digest`\|`gist`\|`status`), payload, source (`condenser`\|`drafter`\|`compliance`), status (`pending`\|`accepted`\|`rejected`) | the review queue |
+| `Session` | id (= host session id, persisted), project_id, host, role, token, focus{blocks[], order?, computed: bool}, counters, last_view_hash, unfiled_summary | persisted; reconnects re-attach |
+| `AuditEntry` | ts, session_id, role, command, target, version_before/after, commit | append-only, mirrors git log |
 
-`kind` on `Block` is a free string (`component`, `feature`, `research`, `doc`, …). Hafiz attaches no
-semantics to it; schemas and views *may* match on it.
+**Block kinds** are config-defined (`kinds.yaml`): each names the schema set to use for its docs and
+optional view overrides. Defaults: `root` (architecture: overview, topology/data-flow, interface,
+constraints, references), `component` (purpose, scope, interface, constraints, rationale),
+`feature`, `research` (question, findings, conclusion), `doc`, and **`external`** (interface only —
+a stub for code that exists but was never imported, so edges can point at it).
 
-**Directives vs. decisions.** A decision records *what was chosen* and why; a directive is a standing
-*imperative* the user (or manager on the user's behalf) has issued: "never commit generated files",
-"always use the result type". Root directives are project-wide; a block's directives apply to its
-subtree. They are part of the view **floor**: rendered verbatim for the focus and all its ancestors
-at every zoom, never degraded. Each is capped (~40 tokens) and a per-block total cap triggers a
-"consolidate directives" notice rather than silent growth. Host rules files (`CLAUDE.md`,
-`AGENTS.md`) remain the place for static repo conventions; directives are what is learned mid-work
-and travel with the Hafiz store across hosts.
+**Decisions subsume directives.** A decision with `standing` set is a standing instruction ("never
+commit generated files"); it renders in the view **floor** for the focus and all its ancestors at
+every zoom and is never degraded. Decisions without `standing` are records; the *active* ones of
+root and ancestors render at `DESIGN` zoom, capped, newest first. Superseded decisions render
+nowhere. A per-block cap on active standing decisions triggers a "consolidate" notice.
 
 ### 3.2 Status machine
 
 ```
-planned ──▶ active ◀──▶ blocked
-   │          │
-   │          ▼
-   │        done
-   ▼
-dropped  ◀── (any)
+planned ──▶ active ◀──▶ blocked (blocked_on: block | thread | user | external)
+   │          ▲  │
+   │          │  ▼
+   │          └─ done        (done → active = reopen; reason recorded as a decision,
+   ▼                          digest marked stale and required again on re-close)
+dropped  ◀── (any, reason recorded as a decision)
 ```
 
-Transition guards are config (`policies.status`), defaults:
+Guards are config (`policies.status`), composed from registered predicates. Defaults:
 
-- `→ done` requires: a `digest` doc supplied in the same command (or already present); no `open`
-  threads on the block (must be `parked` or `resolved`); every child is `done` or `dropped`;
-  confirmation per `confirm_done: ask | auto`.
-- `→ active` on a block whose parent is `planned` auto-activates the parent (configurable).
-- `→ dropped` requires a reason (stored as a `Decision` with `kind: drop`).
+- `→ done`: a `digest` present and not stale; no `open` threads; children `done`/`dropped`;
+  `confirm_done` policy (default **`auto`** — proceeds and enqueues a `status` proposal for review;
+  `ask` uses elicitation where the host has it, else returns `needs_confirmation`).
+  Records `done_at.commit` (repo HEAD) for later drift detection.
+- A worker may `block.request_done(id, digest)`: writes the digest and enqueues the transition for
+  the manager (or auto-applies under `auto` if the role policy allows).
+- `→ blocked` requires `blocked_on`. `→ active` from `blocked` clears it.
+- `→ active` on a block whose parent is `planned` activates the parent (configurable).
 
-Guards are a list of named predicates; adding a guard is adding a config entry that references a
-registered predicate (code) with parameters.
+### 3.3 Epochs and re-emission
 
-### 3.3 Epochs
-
-- `project.epoch` increments on **major writes**: block create/drop/move, any block status change
-  (`done` included), design/plan content changes, decision recorded, directive recorded/retired,
-  edge change.
-- It does **not** increment on **minor writes**: progress entries, thread entries, and plan step
-  status ticks (`plan.steps[].status`). These are frequent, the consumer who cares learns of them
-  from its own tail (a worker's report, its own tool result), and bumping the epoch for them would
-  rebuild every consumer's prefix and churn prompt caches. The rendered view simply reflects their
-  current state at the next epoch. The minor-path list is config (`policies.epoch.minor_paths`).
-- `session.focus_epoch` increments on focus change for that session only.
-- A rendered view carries `(project.epoch, session.focus_epoch)`. Gateways re-emit the context
-  block only when either changed; otherwise the prefix is byte-identical.
+- `project.epoch` increments on **major writes**: block create/drop/move, status change (`done`
+  and reopen included), design/plan content, decisions, edges, step *definitions*.
+- **Minor writes** do not bump it: progress entries, step events, thread open/entries/park/resolve.
+- The epoch is an **internal invalidation signal**, not a wire attribute. A session's view is
+  re-rendered when the epoch or its focus changed, and **re-emitted only if the rendered text's hash
+  differs from `session.last_view_hash`**. A worker on a distant leaf sees no re-emission for
+  activity that does not change its view. The envelope carries the hash, not the epoch.
+- Minor writes reach the consumers that coordinate on them through the **delta channel** (§6.5),
+  which lives in the tail and never touches the prefix.
 
 ---
 
-## 4. Core: schemas (structured documents)
+## 4. Core: schemas
 
-A **schema set** is a directory of YAML files, one per doc type. It is pluggable: `config.schema_set`
-selects it; a project may pin a set and version. The default set:
+A **schema set** is a directory of YAML files (one per doc type per kind); `kinds.yaml` maps kinds to
+sets. Sections carry `required`, `cap` (tokens), `format` (`prose`\|`list`\|`structured`\|`steps`\|
+`refs`). Example (component design):
 
 ```yaml
-# schemas/design.yaml
 type: design
+kind: component
 sections:
-  - name: purpose      required: true   cap: 150    format: prose
-  - name: scope        required: true   cap: 200    format: list        # in / out
-  - name: interface    required: true   cap: 600    format: structured  # see below
-  - name: constraints  required: false  cap: 200    format: list
-  - name: rationale    required: false  cap: 300    format: prose
-  - name: references   required: false  cap: 100    format: refs        # external pointers only
-caps_unit: tokens
-on_cap_exceeded: reject        # warn | reject
+  - { name: purpose,     required: true,  cap: 150, format: prose }
+  - { name: scope,       required: true,  cap: 200, format: list }
+  - { name: interface,   required: true,  cap: 600, format: structured }   # provides/consumes/contracts
+  - { name: constraints, required: false, cap: 200, format: list }
+  - { name: rationale,   required: false, cap: 300, format: prose }
+  - { name: references,  required: false, cap: 100, format: refs }
 ```
 
-```yaml
-# schemas/plan.yaml
-type: plan
-sections:
-  - name: steps        required: true  cap: 800  format: steps   # [{id,title,status,notes?}]
-  - name: acceptance   required: true  cap: 200  format: list
-  - name: risks        required: false cap: 200  format: list
-```
-
-```yaml
-# schemas/digest.yaml
-type: digest
-sections:
-  - name: outcome          required: true  cap: 200  format: prose
-  - name: interface_delta  required: true  cap: 200  format: list   # "none" allowed
-  - name: pointers         required: true  cap: 150  format: refs   # files, commits, PRs
-  - name: lessons          required: false cap: 150  format: list
-```
-
-`format: structured` sections (e.g. `interface`) have a sub-schema (`provides[]`, `consumes[]`,
-`contracts[]` with name/type/notes). `format: steps` is what makes plan progress mechanical.
-
-Progress entries, decisions and threads are *log* schemas with a fixed small shape (see 3.1) and
-per-entry caps.
-
-**Validation** happens in Core on every write: required sections, formats, caps. Caps are measured
-with the configured `Tokenizer`. Reject messages are designed for agents: they state the cap, the
-measured size, and the remedy ("split into child blocks" / "move detail to progress notes").
+- **Caps** have a soft zone: within `+15%` of the cap a write succeeds with a notice (tokenizer
+  variance across vendors is 10–20%); beyond it, reject with the measured size and the remedy
+  ("split into child blocks" / "move detail to progress"). Per-block cap overrides are allowed and
+  recorded as a decision.
+- **Schema versioning.** The project pins `schema_set_version`. Reads are lenient (unknown sections
+  kept, missing required sections flagged, not failed). `hafiz migrate` upgrades docs explicitly;
+  validation on write uses the pinned version.
+- Logs (`StepEvent`, `ProgressEntry`, `Decision`, `Thread`) have fixed small shapes with per-entry
+  caps.
 
 ---
 
 ## 5. Core: commands, queries, authorization
 
-The Core API is the single internal contract. Every gateway maps onto it 1:1.
-
-### 5.1 Commands (writes)
+### 5.1 Commands
 
 | Command | Semantics |
 |---|---|
-| `project.init(name, root_design?)` | create project + root block |
-| `block.create(parent, title, kind?, order?, design?, plan?)` | may create with initial docs atomically |
-| `block.update(id, {title, kind, order}, expected_version)` | CAS |
-| `block.move(id, new_parent, expected_version)` | CAS; epoch |
-| `block.set_status(id, status, {digest?, reason?, confirmed?}, expected_version)` | runs status guards; may return `needs_confirmation` |
-| `edge.add(from, to, kind?)` / `edge.remove(...)` | epoch |
-| `doc.write(block, type, sections, expected_version)` | full replace; validate; CAS; epoch |
-| `doc.patch(block, type, {section: content}, expected_version)` | section-level; same guarantees |
-| `progress.append(block, entry)` | append-only; no epoch |
-| `decision.record(block, decision)` | append-only; epoch |
-| `directive.record(block, kind, text, rationale?)` / `directive.retire(id)` | append-only; epoch; manager/user only by default |
-| `thread.open/park/resume/resolve(...)` | `park` requires `gist`; `resume` returns gist+entries |
-| `focus.set(session, block_ids, order?)` | session-scoped; focus_epoch |
+| `project.init(name, root_design?)` | create project + root; write pointer; init git store |
+| `block.create(parent, title, kind, design?, plan?)` | atomic (journaled) |
+| `block.update / block.move` | CAS; epoch |
+| `block.set_status(id, status, {digest?, reason?, blocked_on?, confirmed?})` | guards; `done→active` allowed |
+| `block.request_done(id, digest)` | worker path; enqueues or auto-applies |
+| `edge.add / edge.remove` | epoch |
+| `doc.write / doc.patch(block, type, …, expected_version)` | full/section replace; validate; CAS; epoch |
+| `step.set(block, step_id, status)` | append-only event; no epoch; no CAS |
+| `progress.append(block, entry)` | append-only |
+| `decision.record(block, {title, decision, rationale, standing?, supersedes?})` | append-only; epoch |
+| `thread.open / park(gist) / resume / resolve` | minor |
+| `focus.set(session, blocks, order?)` | overrides computed focus |
+| `proposal.accept / reject(id)` | review queue; `accept` performs the proposed command as the accepting session |
 
-Stale `expected_version` → `Conflict{current}` with the current content so the agent can re-read
-and retry. All commands are atomic; multi-entity commands run in one backend transaction.
+Stale `expected_version` → `Conflict{current}`. All commands are journaled transactions; every
+successful command produces an `AuditEntry` and (major writes) a git commit authored as
+`<role>/<agent-name> <session-id@hafiz>`; CLI writes are authored as the user.
 
-### 5.2 Queries (reads)
+### 5.2 Queries
 
 | Query | Semantics |
 |---|---|
-| `context.for(session \| {focus, role}, budget?)` | → `{text, manifest, epoch}`; see §6 |
-| `block.read(id, zoom)` | one block at an explicit zoom |
-| `tree.list(root?, depth?, filter?)` | ids/titles/status; cheap |
-| `thread.list(block?, status?)` | |
-| `session.status(session)` | counters, epochs, nudge state |
-| `project.export()` / `project.import()` | snapshot (sharing is out of scope for v1) |
+| `context.for(session)` | → `{envelope, hash, floor, notices}` (§6) |
+| `context.delta(session)` | minor events on focus + dependencies since last delivery (§6.5) |
+| `context.explain(session, block)` | which rule fired, which degrade steps applied, why |
+| `block.read(id, zoom)` / `tree.list(…)` / `thread.list(…)` / `proposal.list(…)` | |
+| `history(block, type)` | git log/diff of a doc |
+| `session.status(session)` | counters, compliance flags, hash, unfiled size |
 
 ### 5.3 Authorization
 
-A `Role` is a config object (§8). Core receives `(session.role, command)` and checks the role's
-allowlist. Allowlist entries can be command names or command+argument patterns
-(`doc.write:design`, `block.set_status:done`). The host adapter additionally restricts which tools
-exist at all (defense in depth: the host hides the tool, Core refuses it anyway).
+A role (config) carries a command allowlist (`doc.write:design`, `block.set_status:done`, …).
+Each session holds a **capability token** minted by the adapter at spawn (passed via env to the
+MCP shim/CLI); Core maps token → session → role. The host additionally hides tools per role
+(role = MCP server instance, §11.1). Writes outside this path (editing store files by hand under a
+running daemon) are detected by the git working-tree check on the next command and surfaced as a
+notice; they are not prevented.
 
 ---
 
-## 6. Core: the view engine
+## 6. Core: the view engine and the tail
 
-`context.for` is a pipeline of four pluggable stages, each configured, each replaceable:
+`context.for` builds the **structured prefix**; the tail policy and condenser govern the **tail**.
+
+### 6.1 Pipeline
 
 ```
- tree + statuses + focus
-        │
-        ▼
- ┌─────────────┐   relation(block, focus) ∈ {root, focus, ancestor, descendant,
- │ 1. Relate   │   dependency, dependent, sibling, other}; plus status, kind, depth
- └─────────────┘
-        │
-        ▼
- ┌─────────────┐   first-matching rule in the view's `rules` assigns a zoom level
- │ 2. Policy   │   (and optional floor = "never degrade below")
- └─────────────┘
-        │
-        ▼
- ┌─────────────┐   zoom → ordered list of section selectors; Renderer emits text
- │ 3. Render   │   (default: Markdown with stable headings + block ids)
- └─────────────┘
-        │
-        ▼
- ┌─────────────┐   measure with Tokenizer; if over budget apply the view's ordered
- │ 4. Degrade  │   `degrade` steps until it fits; if still over → emit a one-line
- └─────────────┘   "focus too wide" notice (and still return the best-effort view)
-        │
-        ▼
- {text, manifest: [{block, zoom, tokens}], epoch, notices[]}
+Relate ─▶ Policy ─▶ Render ─▶ Degrade ─▶ Floor ─▶ Hash
 ```
 
-### 6.1 Zoom levels (config: `zooms.yaml`)
+- **Relate**: for *each* focus block compute `relation ∈ {root, focus, ancestor, descendant,
+  dependency, dependent, sibling, other}` and `dep_distance` (shortest dependency path; config
+  caps propagation depth, default 2). Aggregate across the focus set by **max zoom wins**.
+- **Policy**: first-matching rule assigns a zoom (+ optional `floor` = never below).
+- **Render**: zoom → ordered section selectors → `Renderer` (Markdown, stable headings, ids).
+- **Degrade**: if over budget, apply the view's ordered steps until it fits; emit "focus too wide"
+  if still over.
+- **Floor**: append standing decisions for focus + ancestors; the floor has **its own cap** and is
+  measured separately — the budget is advisory for the floor, and a floor over its cap is a
+  "consolidate" notice, not a degradation.
+- **Hash**: content hash of the final text; drives re-emission.
+
+### 6.2 Zoom levels (`zooms.yaml`)
 
 ```yaml
 zooms:
-  FULL:      [block.header, design.*, plan.*, decisions[-5:], progress[-10:], threads.open, threads.parked.titles]
-  DESIGN:    [block.header, design.*]
-  INTERFACE: [block.header, design.interface]
+  FULL:      [block.header, design.*, plan.* (with step events folded), decisions.active[-5:],
+              progress[-10:], threads.open, threads.parked.titles]
+  DESIGN:    [block.header, design.*, decisions.active[-3:]]
+  INTERFACE: [block.header, design.interface, status.line]
   DIGEST:    [block.header, digest.*, design.interface]
-  LINE:      [block.line]            # "- [active] billing-7f2a — Billing (2 children)"
+  LINE:      [block.line]
   NONE:      []
-floor:                               # rendered regardless of zoom, never degraded
-  - { match: { relation: [root, focus, ancestor] }, sections: [directives.active] }
+floor:
+  - { match: { relation: [root, focus, ancestor] }, sections: [decisions.standing], cap: 600 }
 ```
 
-`floor` entries are appended to whatever zoom the policy chose; the degrade stage is not allowed to
-touch them. This is where directives live.
-
-Levels are an ordered list (for degradation to know what "one step down" means). Adding a level
-is a config change; a view then references it.
-
-### 6.2 View policy (config: `views.yaml`)
+### 6.3 View policy (`views.yaml`) — default
 
 ```yaml
 views:
   default:
-    budget: { share_of_window: 0.30, min_tokens: 1500, max_tokens: 24000 }
-    tail:   { keep_turns: 12, tool_result_max_age_turns: 6, stub_elided_results: true }
-    rules:                                           # first match wins
-      - { match: { relation: root },                         zoom: DESIGN,    floor: DESIGN }
-      - { match: { relation: focus },                        zoom: FULL }
-      - { match: { relation: ancestor },                     zoom: DESIGN }
-      - { match: { relation: dependency, status: done },     zoom: DIGEST }
-      - { match: { relation: dependency },                   zoom: INTERFACE }
-      - { match: { relation: descendant, status: active },   zoom: INTERFACE }
-      - { match: { status: done },                           zoom: DIGEST }
-      - { match: { status: dropped },                        zoom: NONE }
-      - { match: { relation: sibling },                      zoom: LINE }
+    budget: { share_of_window: 0.30, min_tokens: 3000, max_tokens: 24000 }   # excludes floor
+    rules:
+      - { match: { relation: root },                        zoom: DESIGN, floor: DESIGN }
+      - { match: { relation: focus },                       zoom: FULL }
+      - { match: { relation: ancestor },                    zoom: DESIGN }
+      - { match: { relation: dependency, status: done },    zoom: DIGEST }
+      - { match: { relation: dependency, dep_distance: 1 }, zoom: INTERFACE }
+      - { match: { relation: dependency },                  zoom: LINE }
+      - { match: { relation: descendant, status: active },  zoom: INTERFACE }
+      - { match: { status: done },                          zoom: DIGEST }
+      - { match: { status: dropped },                       zoom: NONE }
       - { default: LINE }
-    degrade:                                         # applied in order until it fits
-      - { match: { status: done, relation: other },          to: LINE }
-      - { match: { relation: sibling },                      to: NONE }
-      - { match: { relation: ancestor },                     to: INTERFACE }
+    degrade:
+      - { match: { status: done, relation: other },         to: LINE }
+      - { match: { relation: sibling },                     to: NONE }
+      - { match: { relation: ancestor },                    to: INTERFACE }
       - { match: { relation: focus }, trim: { progress: 3, decisions: 2 } }
-      - { match: { relation: focus }, to: DESIGN, order: focus_reverse }   # lowest-priority focus first
-      - { match: { status: done },                           to: LINE }
+      - { match: { relation: focus }, to: DESIGN, order: focus_reverse }
   worker:
     extends: default
     budget: { share_of_window: 0.20 }
-    rules_prepend:
-      - { match: { relation: sibling, status: planned },     zoom: NONE }
 ```
 
-`match` keys are the attributes stage 1 computed; adding a new attribute (e.g. `kind`) requires no
-engine change beyond computing it.
+Everything in `match` is an attribute Relate computed; new attributes need no engine change.
+`context.explain` exists because first-match + extends + degrade is not debuggable from YAML alone.
 
-### 6.3 Tail policy
+### 6.4 Computed focus
 
-The tail is not stored by Hafiz; it is the host's transcript. Hafiz only *decides* what the tail
-should look like and hands that decision to whoever can act on it (proxy, or the host's compaction
-via the adapter): keep the last `keep_turns` verbatim; stub tool results older than
-`tool_result_max_age_turns` as `[elided: 4.2k tokens — <tool>]`; never stub user turns.
+Focus is set by the adapter at spawn from the role's `focus_policy` (`worker: spawned_block`,
+`manager: all_active`, `designer: all_active + planned_children`) and persisted on the session;
+`focus.set` overrides it. Agents do not have to remember to set focus.
 
-### 6.4 Output contract
+### 6.5 The tail: ownership, policy, delta, condensation
 
-The rendered context block is wrapped in a stable envelope so gateways can find and replace it:
+Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 
 ```
-<hafiz project="shop-3c1d" epoch="42" focus_epoch="7" role="manager">
-# Architecture (root)
-…
-</hafiz>
+[system: host prompt + <hafiz hash=…> envelope + floor]
+[unfiled context: rolling summary, ≤ tail.unfiled_cap]           ← produced by the condenser
+[verbatim tail: last turns within tail.budget]                    ← user turns never stubbed
+   tool results older than tail.tool_result_max_age_turns → "[elided: 4.2k tokens — Bash]"
+[delta: minor events on focus + deps since last delivery, ≤ cap] ← appended before the newest user turn
+[newest user turn]                                                ← never touched
 ```
 
-The block is deterministic for a given `(store state, focus, role, budget, config)` — same inputs,
-byte-identical output. That property is what makes caching work and makes the engine testable.
+- **Delta channel**: step events, progress, thread changes on the session's focus blocks and their
+  dependencies, since the session last received them. Capped; overflow → "N more, `block.read`".
+  This is how Worker A learns Worker B's `found:` without an epoch.
+- **Condensation** (the only in-loop LLM): triggered when the verbatim tail exceeds `tail.budget`
+  (or by `/hafiz checkpoint`). Input: previous unfiled summary + the slice of turns leaving the
+  tail. Output, from a cheap model via `LLMProvider`: (1) the new unfiled summary — verbatim-ish
+  preservation of user intent, open questions and in-flight reasoning that no store entity
+  covers; the envelope's content is explicitly excluded; (2) **proposals** — candidate decisions,
+  threads to open/park, progress entries, for anything the agents should have recorded and did
+  not. Proposals go to the review queue; nothing is written to the store. Cost is bounded by
+  construction: each slice is condensed once.
+- A counter-based notice fires when a user exchange has run `N` turns with no thread opened on
+  the focus block.
 
 ---
 
-## 7. Core: session tracker, nudge, events
+## 7. Core: sessions, compliance, nudge, drafters, events
 
-- **Sessions** are created by gateways (one per MCP connection / proxy client / hook session) and
-  tagged with host, role, project (resolved from cwd), and an optional host session id so a hook
-  session and its MCP connection can be unified.
-- **Counters** (`turns`, `tool_calls`, `files_written`, `subagents_spawned`, `tokens_in`) are fed
-  by adapters/proxy. Core never observes the host directly.
-- **Nudge** (config: `nudge.yaml`): thresholds, a one-line template, `max_per_session`. Evaluated
-  on every counter update for sessions whose project has no tree (or whose focus is empty while a
-  tree exists, as a separate, softer rule). Result is a notice the gateway/adapter may inject.
-- **Event bus**: Core emits `EpochChanged{project, epoch}`, `FocusChanged{session}`,
-  `Notice{session, text}`, `ConfirmationRequested{session, command}`. Gateways subscribe. This is
-  how the proxy knows to rebuild a prefix and how an adapter knows to steer compaction.
-- **Pending notices queue** per session: hosts offer injection only at fixed moments (prompt
-  submit, session start), so notices accumulate in Core and the next injection drains them.
-- **Structured handback**: worker roles end their final message with a fenced `hafiz-report` block
-  (outcome, progress written, blockers, open threads; capped). Adapters that can shape tool
-  results pass only that block to the parent; others instruct the parent to read only that block.
-  Protocol-level, not an adapter trick.
+- **Sessions** are keyed by the **host session id** and persisted; MCP reconnects and `resume`
+  re-attach to the same session (focus, counters, hash, unfiled summary intact). Subagent sessions
+  record their parent.
+- **Counters** (`turns`, `tool_calls`, `files_written`, `subagents_spawned`, `tokens_in/out`,
+  `cache_read/write`) are fed by the adapter; Core never observes the host.
+- **Compliance checks** (config `compliance.yaml`), evaluated on counter updates and session end:
+  `files_written > 0 ∧ progress == 0`; active focus block silent for `N` turns; session ending with
+  threads it opened still `open`; `request_done` with an empty progress log; cap rejections
+  followed by no retry. Each yields a notice to the session and, where it matters, a proposal.
+- **Report capture**: the adapter hands every subagent's final message to Core, which stores it as
+  a `progress` entry of kind `report` on the worker's block, verbatim up to a cap, with the rest
+  spilled to the store. Mechanical, unconditional, no LLM.
+- **Nudge**: counter thresholds in a tree-less project → one-line notice, once per session.
+- **Drafters** (opt-in, default off): at `request_done` (digest draft from the progress log) and at
+  `thread.park` without a gist (gist draft). Event-triggered, cheap model, output is a proposal or a
+  pre-filled argument the agent must submit, never a direct write.
+- **Review queue**: `hafiz review` (CLI) and `proposal.list` (MCP) show pending proposals;
+  non-blocking by design — `auto` statuses proceed, the queue is for the user's later pass.
+- **Events**: `ViewChanged{session, hash}`, `DeltaAvailable{session}`, `Notice{session}`,
+  `ProposalAdded`, `CondensationDue{session}`. The adapter subscribes.
+- **Cost instrumentation**: per session and project — view re-emits/hour, tokens per rebuild,
+  cache read/write ratio, condensations/hour and their token cost. Reported by `hafiz status`. The
+  "cheaper than summarization" thesis is measured, not asserted.
 
 ---
 
-## 8. Configuration model
+## 8. Configuration
 
-Configuration is layered: built-in defaults → user (`~/.hafiz/config/`) → project
-(`~/.hafiz/projects/<id>/config/`). Each layer is a directory:
-
-```
-config/
-  hafiz.yaml        # backend, schema_set, tokenizer, window sizes per model, confirm_done, …
-  roles.yaml
-  views.yaml
-  zooms.yaml
-  nudge.yaml
-  policies.yaml     # status guards, caps behavior
-  schemas/          # schema set (or a reference to a named built-in set)
-  rules/            # per-role rules snippets (Markdown) that adapters install into hosts
-```
-
-### 8.1 Roles (`roles.yaml`)
+Layered: built-in → user (`~/.hafiz/config/`) → project (store `config/`). Files: `hafiz.yaml`
+(backend, window sizes per model, `confirm_done`, LLM provider for condenser/drafters), `roles.yaml`,
+`views.yaml`, `zooms.yaml`, `kinds.yaml`, `schemas/`, `policies.yaml` (status guards, epoch
+minor paths, caps soft zone), `compliance.yaml`, `nudge.yaml`, `tail.yaml`, `rules/` (per-role
+Markdown the adapter installs as agent prompts).
 
 ```yaml
 roles:
-  manager:
-    view: default
-    tools: [context.for, block.read, tree.list, thread.list, session.status,
-            block.create, block.update, block.move, block.set_status, edge.*,
-            decision.record, directive.*, thread.*, progress.append, focus.set]
-    rules: rules/manager.md
-  designer:
-    view: designer
-    tools: [context.for, block.read, tree.list, doc.write:design, doc.patch:design,
-            edge.*, decision.record, thread.*]
-    rules: rules/designer.md
-  planner:
-    view: default
-    tools: [context.for, block.read, tree.list, block.create, doc.write:plan, doc.patch:plan,
-            thread.*]
-    rules: rules/planner.md
-  worker:
-    view: worker
-    tools: [context.for, block.read, progress.append, thread.open, thread.park, doc.patch:plan.steps]
-    rules: rules/worker.md
+  manager:  { view: default, focus_policy: all_active,
+              tools: [context.*, block.*, tree.list, edge.*, doc.patch:plan, decision.record,
+                      thread.*, progress.append, focus.set, proposal.*],
+              rules: rules/manager.md }
+  designer: { view: designer, focus_policy: all_active,
+              tools: [context.*, block.read, tree.list, doc.write:design, doc.patch:design,
+                      edge.*, decision.record, thread.*], rules: rules/designer.md }
+  planner:  { view: default, focus_policy: all_active,
+              tools: [context.*, block.read, tree.list, block.create, doc.write:plan,
+                      doc.patch:plan, thread.*], rules: rules/planner.md }
+  worker:   { view: worker, focus_policy: spawned_block,
+              tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
+                      doc.write:digest, block.request_done], rules: rules/worker.md }
 ```
 
-A role is purely data: a view name, a tool allowlist, a rules snippet. Adding `reviewer` is a new
-entry. Host adapters consume this to generate per-role agent definitions with the matching tool
-restrictions.
+A role is data: view, focus policy, allowlist, rules. Adding `reviewer` is a config entry.
 
-### 8.2 What is code vs. config
-
-| Concern | Config | Code (extension point) |
+| Concern | Config | Code extension point |
 |---|---|---|
-| Roles, allowlists | ✔ | — |
-| View rules, degradation order, budgets | ✔ | `Relation` attribute providers |
-| Zoom levels → sections | ✔ | — |
-| Doc schemas, caps | ✔ | section `format` validators/renderers |
-| Status guards | ✔ (compose) | guard predicates |
-| Nudge thresholds/template | ✔ | counter providers (adapters) |
-| Rendering style | — | `Renderer` |
-| Storage | select by name | `StorageBackend` |
-| Token counting | select by name | `Tokenizer` |
+| roles, views, zooms, kinds, schemas, guards, compliance, nudge, tail | ✔ | relation attribute providers, section format validators, guard predicates |
+| rendering style | — | `Renderer` |
+| storage / tokens / LLM | select by name | `StorageBackend`, `Tokenizer`, `LLMProvider` |
 
 ---
 
-## 9. SPI: storage and friends
+## 9. SPI: storage
 
 ```ts
 interface StorageBackend {
-  open(projectId): Promise<void>
-  tx<T>(fn: (t: Tx) => Promise<T>): Promise<T>        // serializable per project
-  // entities
-  getBlock(id): Block | null;  putBlock(b, expectedVersion): void;  listBlocks(filter): Block[]
-  getDoc(block, type): Doc | null; putDoc(d, expectedVersion): void
-  appendLog(block, log: 'progress'|'decisions'|'threads/<id>', entry): void
-  readLog(block, log, {last?: number}): Entry[]
-  getEdges(filter): Edge[]; putEdge(e): void; deleteEdge(e): void
-  getProject(): Project; putProject(p): void
-  // ephemeral
-  sessions(): SessionStore                              // may be memory-only
+  open(projectId); tx<T>(fn): Promise<T>            // journaled; atomic across files
+  getBlock/putBlock(cas)/listBlocks; getDoc/putDoc(cas)
+  appendLog(block, log, entry); readLog(block, log, {since?|last?})
+  edges…; project…; sessions(): SessionStore; proposals(): ProposalStore; audit(): AuditLog
+  history(block, type): Commit[]                     // backed by git in storage-fs
 }
-interface Tokenizer { count(text: string, model?: string): number }
-interface Renderer  { render(view: ResolvedView): string }
+interface Tokenizer   { count(text, model?) }        // estimator + stated margin
+interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) }
 ```
 
-**`storage-fs` (default)** — plain files under `~/.hafiz/projects/<id>/`, human-readable:
+**`storage-fs` (default)** — human-readable files, **git-backed**, **journaled**:
 
 ```
-project.yaml
-blocks/<block-id>/
-  block.yaml                 # metadata + versions
-  design.md                  # YAML front matter (version) + "## section" headings per schema
-  plan.md
-  digest.md
-  progress.jsonl
-  decisions.jsonl
-  directives.jsonl
-  threads/<thread-id>.md
-state/                       # sessions, counters — not part of export
+~/.hafiz/projects/<id>/            # a git repository
+  project.yaml
+  blocks/<block-id>/
+    block.yaml  design.md  plan.md  digest.md
+    steps.jsonl  progress.jsonl  decisions.jsonl  threads/<id>.md
+  config/
+  .journal/                        # write-ahead journal: a command's file set is staged here,
+                                   # fsynced, then applied; recovery replays or discards on open
+  state/                           # sessions, counters, proposals, audit — committed, not exported
 ```
 
-**Location: data in home, pointer in repo.** Keeping the data inside the project (`<repo>/.hafiz/`,
-gitignored) would give every git worktree and every clone its own store — fragmentation, which is
-worse than either pure option — and would put the design docs inside every agent's writable tree.
-So:
+- Every major write commits with author `<role>/<agent> <session@hafiz>`; minor writes are batched
+  into a commit every `N` seconds or on the next major write. `history()` is `git log`;
+  rollback is `hafiz revert <block> <type> <commit>` (which is itself a new, attributed write).
+  A remote can be configured for backup; team sharing (deferred) builds on this.
+- Markdown headings map 1:1 to schema sections; hand edits are detected (dirty tree) and surfaced.
+- **Location**: data in home, pointer in repo. `<repo>/.hafiz/project.yaml` carries the project id
+  and an **origin fingerprint** (remote URL hash + creator). A daemon that finds a pointer with no
+  matching store **refuses to auto-create** and tells the user to `hafiz init --adopt` (new store,
+  new id) or import. No permission prompts arise from the location: agents never touch the files;
+  all writes are MCP tool calls the adapter allowlists.
 
-- Data lives in `~/.hafiz/projects/<id>/` (`storage-fs.root` is configurable; in-project storage
-  remains possible, it is just not the default). Outside the workspace, Codex's default sandbox
-  cannot write there; the Claude Code and Kilo adapters install a deny rule for the path.
-- `<repo>/.hafiz/project.yaml` holds only the project id and optional config overrides. It is
-  committed by default so clones and worktrees resolve to the same store; users may gitignore it.
-- Resolution order for a project id: pointer file → hash of the git remote URL → hash of the
-  repo root path. `hafiz init` writes the pointer.
-- **No permission prompts follow from this.** Agents never write to the store directly; every
-  write is an MCP tool call served by the daemon, an ordinary host-spawned process outside the
-  host's filesystem permission model (and outside Codex's sandbox). Hosts prompt per *tool*, not
-  per *path*, and each adapter installs the host's allow-all for Hafiz's tools at setup
-  (Claude Code `permissions.allow: ["mcp__hafiz__*"]`, Codex
-  `mcp_servers.hafiz.default_tools_approval_mode = "auto"`, Kilo `permission: {"hafiz_*": "allow"}`).
-  An in-project store would be the prompt-prone option: files an agent can see in its tree invite
-  direct `Read`/`Edit`, which either prompts or silently bypasses versioning and role enforcement.
-
-Markdown headings map 1:1 to schema sections, so a human can read or hand-edit a design and Hafiz
-re-validates on next load. Atomicity: write-to-temp + rename; a per-project lock file held by the
-daemon. **`storage-sqlite`** is the second backend (same interface; one file; better for large
-trees and for search later). Both ship with a conformance test suite run against the interface.
+`storage-sqlite` implements the same interface (history via a versions table) and passes the same
+conformance suite.
 
 ---
 
-## 10. Concurrency and process model
+## 10. Process model
 
-- **One daemon per project**, started on demand by the first gateway that needs it, holding the
-  project lock. All gateways (MCP shims, proxy, CLI, hook scripts) are thin clients speaking to it
-  over a local socket (Unix socket / named pipe; JSON-RPC). This gives atomicity across hosts
-  (Claude Code and Kilo open on the same project) for free.
-- **Idle shutdown** after a configurable period; state is durable in the backend.
-- Appends never conflict; replaces use CAS; commands are transactions. Parallel workers are the
-  expected case, not the edge case.
+One daemon per project, started on demand by the first client, holding the store lock; MCP shims,
+CLI and the Kilo plugin talk to it over a local socket (JSON-RPC). The socket is created mode
+`0600` in the user's runtime dir; clients present their capability token. Idle shutdown; durable
+state in the backend. Appends never conflict; replaces use CAS; commands are journaled.
 
 ---
 
 ## 11. Gateways
 
-### 11.1 MCP server (`hafiz mcp --role <role> [--project <id>]`)
+### 11.1 MCP (`hafiz mcp --role <r>`)
 
-- One process per host agent connection; `--role` selects the tool subset exposed (from
-  `roles.yaml`). The process is a shim to the daemon. **Role = server instance**: hosts register
-  `hafiz-<role>` servers and restrict agents at server granularity, which every host supports;
-  per-tool restriction is a bonus where available. The role is also declared to Core per session so
-  authorization holds even when a host cannot hide tools per subagent (Codex).
-- Tool names mirror Core commands (`hafiz_block_set_status`, …). Tool descriptions carry the
-  protocol hints ("call before marking done…").
-- `confirm_done: ask` uses **MCP elicitation** when the client supports it; otherwise
-  `block.set_status` returns `needs_confirmation` with instructions to ask the user and retry with
-  `confirmed: true`.
-- MCP **resources**: `hafiz://block/<id>` (DESIGN zoom), `hafiz://context` (current view) — for
-  hosts that surface resources. MCP **prompts**: one per role, carrying the role's rules snippet.
-- Session: connection = session; project resolved from the client's cwd (`roots` if provided,
-  else `--project`).
+One server process per role per host agent; exposes that role's tools only (**role = server
+instance**, universal across hosts). Tool descriptions carry protocol hints. Elicitation is used for
+`confirm_done: ask` where supported; otherwise `needs_confirmation`. Resources: `hafiz://block/<id>`;
+prompts: one per role. Session: token from env → session; project from roots/cwd.
 
-### 11.2 Proxy (`hafiz proxy --listen …`) — phase 2, optional
+### 11.2 CLI (`hafiz …`)
 
-Host-agnostic realization of principle 2 for hosts that cannot rebuild context natively. Per the
-host matrix, all three hosts can inject and re-inject after compaction natively and Kilo can
-rewrite history, so the proxy is not load-bearing; it is the path to Kilo-grade tail control on
-Claude Code and Codex and a fallback if a host's hooks regress.
-
-- **Wire adapters**: Anthropic Messages (Claude Code); OpenAI Responses (Codex — Chat Completions
-  was removed from Codex); OpenAI Chat Completions (Kilo's openai-compatible providers). Each maps
-  to and from a common `Conversation` model (system, messages, tool calls/results, cache hints).
-  Claude Code requires `anthropic-*` headers, `cache_control` and SSE pings forwarded untouched.
-- **Rewriter**: locates (or inserts) the `<hafiz …>` envelope at the stable position (end of system
-  / first user turn, with a cache breakpoint where the wire supports it). On `EpochChanged` or
-  `FocusChanged` → replace envelope with a fresh `context.for`. Apply tail policy (stub old tool
-  results). Otherwise **byte-for-byte passthrough** including streaming.
-- **Session identity**: per listening port or per header (`X-Hafiz-Session`/`X-Hafiz-Role`) set
-  by the adapter's launch config; fallback: project from a configured cwd mapping.
-- **Counters**: the proxy is also the richest counter source (turns, tool calls, tokens).
-- Invariants: never alters tool definitions; never alters the newest user turn; never touches a
-  request for a project with no tree.
-
-### 11.3 CLI (`hafiz …`)
-
-`init`, `tree`, `show <block> [--zoom]`, `status`, `focus`, `export`/`import`, `daemon`,
-`doctor` (host wiring check), `install <host>` (runs the adapter installer).
+`init [--adopt]`, `tree`, `show <block> [--zoom]`, `history <block> [type]`, `revert`, `status`,
+`review`, `checkpoint`, `direct` (record a standing decision), `focus`, `explain`, `doctor`
+(wiring, drift: files under a done block changed since `done_at.commit`), `migrate`,
+`export/import`, `install <host>`, `daemon`.
 
 ---
 
 ## 12. Host adapters
 
-Each adapter does three things, all derived from config: **install** (register MCP servers, write
-per-role agent/mode definitions with tool restrictions, install rules snippets), **observe**
-(bridge host events into session counters), and **act** (inject the context block / steer
-compaction where the host allows). Where the host offers nothing for observe/act, the proxy is
-used for both.
+### 12.1 Kilo (v1) — one TypeScript plugin
 
-The verified per-host capability matrix and the full adapter designs are in
-[`docs/HOST-MATRIX.md`](HOST-MATRIX.md). The conclusions that shape all three adapters:
+| Job | Mechanism |
+|---|---|
+| Install (`config` hook, stable) | registers `hafiz-<role>` MCP servers; `agent.<role>` definitions (prompt = rules, `permission` allowing only `hafiz-<role>_*`, `permission.task` for who may delegate); slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions |
+| Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
+| **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
+| Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |
+| `done` confirmation | `needs_confirmation` (no elicitation on Kilo); default `auto` makes it rare |
 
-| | Claude Code | Codex | Kilo (current) |
-|---|---|---|---|
-| Packaging | plugin (hooks+MCP+agents+skills) + installer step | plugin (hooks+MCP+skills) + installer step | one TS plugin module |
-| Inject view | `SessionStart` (incl. after compaction) + `UserPromptSubmit`, append-only | same | system-prompt transform, replaced in place |
-| Tail control | shape results on entry (`updatedToolOutput`); no retro-stub | none in-band (`output_token_limit`) | full history transform (experimental) |
-| Steer compaction | static CLAUDE.md section only; re-inject after | `compact_prompt`; re-inject after | replace compaction prompt |
-| Role isolation | per-agent server allowlist | advisory within a session; profiles across | per-agent permission globs |
-| `done` confirmation | elicitation | elicitation | `needs_confirmation` fallback |
+### 12.2 Claude Code / Codex — specified, not built
 
-Cross-host decisions (HOST-MATRIX §2): **role = MCP server instance** (`hafiz mcp --role r`);
-**append-only injection with self-describing envelopes** where hosts cannot replace text, the
-highest epoch being authoritative; **re-injection after compaction** as the keystone on Claude Code
-and Codex; **structured handback** blocks from workers; **the proxy is optional (phase 2)** since
-every host offers native injection and post-compaction re-injection, and Kilo offers native rewrite;
-**installer writes user-level settings** that plugins cannot.
+**Append-only mode**: envelope injected at `SessionStart` (all sources incl. after compaction) and
+re-appended on hash change via `UserPromptSubmit`; highest hash wins; host compaction stays on and
+its summary serves as unfiled context; tail trimming limited to shaping results on entry; Codex
+role isolation advisory within a session. Guarantees that do **not** hold in this mode: stable
+prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ---
 
 ## 13. Repository layout
 
 ```
-hafiz/
-  packages/
-    core/               domain, schemas, commands, queries, view engine, sessions, events, daemon
-    storage-fs/         default backend
-    storage-sqlite/     second backend (after core stabilizes)
-    gateway-mcp/
-    gateway-proxy/
-    cli/
-    host-claude-code/   host-kilo/   host-codex/
-  config/default/       roles.yaml views.yaml zooms.yaml nudge.yaml policies.yaml schemas/ rules/
-  docs/                 ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
+packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
+config/default/ roles.yaml views.yaml zooms.yaml kinds.yaml schemas/ policies.yaml compliance.yaml nudge.yaml tail.yaml rules/
+docs/ ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
 ```
 
 ---
 
-## 14. Testing strategy (architecture-level)
+## 14. Testing
 
-- **View engine golden tests**: fixture trees + focus + budget → exact expected text. Determinism
-  is a tested property.
-- **Backend conformance suite** run against every `StorageBackend`.
-- **Proxy wire tests**: recorded host requests in all three wire formats → passthrough is
-  byte-identical when no epoch change; envelope replacement is exact when there is one.
-- **Protocol tests**: status guards, CAS conflicts, cap rejections produce the specified agent-
-  readable errors.
+- View engine golden tests (determinism is a tested property); `context.explain` output in fixtures.
+- Backend conformance suite (fs and sqlite), including crash-mid-command recovery via the journal.
+- **Protocol compliance harness**: scripted multi-agent tasks on Kilo with each role; measures
+  decisions recorded / progress appended / threads parked / reports captured per role, *before*
+  tuning. This number decides how much the condenser and drafters must carry.
+- Shaper tests: recorded Kilo requests → byte-identical prefix when the hash is unchanged; exact
+  replacement when it changed; tail/delta/unfiled placement.
+- Cost tests: re-emits/hour and cache ratio on a simulated 8-worker hour.
 
 ---
 
 ## 15. Open decisions
 
-1. **Implementation language.** Recommendation: TypeScript/Node — first-class MCP SDK, single
-   runtime for daemon + shims + hook scripts, `npx`-installable across all three hosts.
-2. **Daemon transport**: Unix socket JSON-RPC (recommended) vs. localhost HTTP (simpler on
-   Windows). Could support both behind one interface.
-3. **Tokenizer**: model-specific counting vs. a single fast estimator with a safety margin
-   (recommended for v1; caps and budgets are approximate by nature).
+1. Implementation language — TypeScript/Node recommended (Kilo plugins are TS; one runtime for
+   daemon, shims, CLI, plugin).
+2. Daemon transport — Unix socket JSON-RPC (recommended) vs localhost HTTP.
+3. Condenser model routing — Hafiz's own `LLMProvider` config vs reuse of the host's provider.
