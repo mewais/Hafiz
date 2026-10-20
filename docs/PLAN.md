@@ -1,0 +1,138 @@
+# Hafiz — Implementation Plan
+
+Vertical slices, each ending in something runnable and tested. Order is chosen so that the riskiest
+assumptions (deterministic view engine, embedded-proxy shaping on Kilo, protocol compliance rate)
+are tested as early as possible. Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Stack (proposed defaults — change before M0 if you disagree)
+
+| Concern | Choice | Why |
+|---|---|---|
+| Language / runtime | TypeScript, Node ≥ 20, ESM | Kilo plugins are TS; one runtime for daemon, shims, CLI, plugin |
+| Monorepo | pnpm workspaces + `tsc -b` project references | cheap, standard |
+| Tests | vitest; golden files under `__golden__/` | fast, snapshot-friendly |
+| Schemas / validation | zod for API payloads; YAML schema sets parsed into zod at load | runtime validation with good error text for agents |
+| Config | `yaml` package; layered merge with provenance (for `explain`) | |
+| MCP | `@modelcontextprotocol/sdk` (server); same package's client in tests | |
+| Daemon RPC | JSON-RPC 2.0 over Unix socket, newline-delimited; `vscode-jsonrpc` | small, battle-tested |
+| Git | shell out via `simple-git` | git is present wherever agents run; avoids reimplementing |
+| Tokenizer | `gpt-tokenizer` as estimator for all vendors + 15% soft zone | good enough; model-exact counting is an SPI impl later |
+| LLM provider | Anthropic + OpenAI-compatible clients behind `LLMProvider` | condenser/drafters only |
+| Kilo plugin | `@kilocode/plugin`; `engines.opencode` range pinned | |
+| Lint/format | biome | one tool |
+
+## Package graph
+
+```
+core ──────────────┐
+storage-fs ───────►│ (depends on core types)
+storage-sqlite ───►│ (M7)
+gateway-mcp ──────►│
+cli ──────────────►│
+host-kilo ────────►│ (+ gateway-mcp client, + RequestShaper)
+config/default      (data; loaded by core)
+```
+
+## Milestones
+
+### M0 — Scaffold (small)
+- Monorepo, packages stubbed, biome, vitest, CI (lint + typecheck + test), `config/default/` with the
+  YAML from ARCHITECTURE §6/§8 checked in as the first fixtures.
+- **Exit:** `pnpm test` green on an empty suite; CI runs.
+
+### M1 — Core domain + storage-fs
+- Entities, status machine with guard predicates, major/minor write classification, CAS, append logs,
+  step events, decisions with `standing`, threads, proposals, audit entries.
+- Schema sets + `kinds.yaml`: parsing, validation, caps with soft zone, agent-readable errors.
+- Commands/queries from §5 (except `context.*`), authz by role allowlist + session token.
+- `storage-fs`: journal (stage → fsync → apply → recover on open), git init/commit with attributed
+  authors, `history`, dirty-tree detection, pointer file + fingerprint + refuse-to-auto-create.
+- **Backend conformance suite** (runs against any `StorageBackend`), including kill-mid-command tests.
+- CLI: `init`, `tree`, `show`, `history`, `revert`, `migrate` (no-op v1), `doctor` (wiring only).
+- **Exit:** scripted scenario test — init, create a 3-level tree with edges, parallel appends from
+  two "sessions", reopen a done block, revert a design — passes; git log shows attributed commits.
+- **Proves:** the model holds together; atomicity and history work.
+
+### M2 — View engine + tail policy (pure, heavily tested)
+- Relate (focus set, `dep_distance`, max-zoom aggregation), Policy, Render, Degrade, Floor, Hash.
+- `context.for`, `context.explain`, `context.delta`, `block.read(zoom)`.
+- Tail policy as pure functions over a host-neutral `Conversation` model: stubbing rule, delta
+  placement, unfiled slot, "never touch" invariants. Condensation *trigger* logic (no LLM yet).
+- Golden tests: fixture trees × focus sets × roles × budgets → exact text; degrade sequences;
+  explain output; byte-identical hash when nothing relevant changed.
+- **Exit:** goldens for the worked example in DESIGN-NOTES (auth/billing/invoices/payments) and for a
+  60-block synthetic tree under three budgets.
+- **Proves:** determinism, bounded views, that the policy YAML is expressive enough (B1).
+- Can run in parallel with M1 once core types exist.
+
+### M3 — Daemon + MCP gateway
+- Daemon lifecycle (on-demand start, lock, idle exit), socket RPC, session store keyed by host
+  session id, tokens, counters API, event bus, pending-notice queue.
+- `hafiz mcp --role r`: role-filtered tools, descriptions with protocol hints, `needs_confirmation`,
+  elicitation when the client advertises it, resources, prompts.
+- CLI gains `status`, `focus`, `explain`, `review` (list/accept/reject), `direct`.
+- **Exit:** integration test with an MCP client: manager + two worker sessions drive the M1
+  scenario over MCP; `context.for` returns per-role views; a worker calling `set_status:done` is
+  refused and `request_done` enqueues; reconnect re-attaches the session.
+- **Proves:** the protocol works end to end without any host.
+
+### M4 — Kilo adapter, embedded-proxy shaper first
+- Plugin skeleton: `config` hook registers role servers, agents (prompts from `rules/`, permissions),
+  slash commands, store deny rules, `compaction.auto: false`; `event` hook feeds counters; report
+  capture from subagent final text; token minting + computed focus at spawn.
+- `RequestShaper` interface; **`embedded-proxy`** implementation: in-process HTTP server; wire
+  adapters for Anthropic Messages and OpenAI Chat Completions (Responses if a used provider needs
+  it); passthrough streaming; shaping = system envelope + floor, unfiled slot, tail stubbing, delta;
+  byte-identical passthrough tests when hash unchanged.
+- **`transform-hooks`** implementation behind a flag (`chat.system.transform`,
+  `chat.messages.transform`, `session.compacting` as a safety net if compaction is ever re-enabled).
+- Rules files for the four roles (first real versions).
+- **Exit:** manual end-to-end on a toy project in Kilo CLI: manager spawns a designer and two
+  workers; views differ per role; a done block collapses to digest; a standing decision survives
+  everything; `hafiz status` shows re-emits and cache ratio.
+- **Proves:** the whole thesis on a real host; which shaper is viable today.
+
+### M5 — Compliance, nudge, condenser, cost
+- Compliance checks from `compliance.yaml` → notices + proposals; nudge; long-unthreaded-discussion
+  notice.
+- `LLMProvider` + condenser: rolling unfiled summary + proposals; `/hafiz checkpoint`; budget
+  accounting; proposals into the review queue.
+- Cost instrumentation surfaced in `hafiz status`.
+- **Exit:** a scripted 200-turn session on the toy project never triggers host compaction, the
+  unfiled summary stays under its cap, proposals appear for deliberately omitted protocol calls.
+
+### M6 — Compliance harness and tuning
+- Scripted task set (small / medium / large trees; each role) run on Kilo with real models;
+  measures per role: decisions recorded, progress appended, threads parked, reports captured, cap
+  rejections, retries. Baseline first, then tune rules/tool descriptions/notices; re-measure.
+- Drafters (digest at `request_done`, gist at `park`) implemented, opt-in, measured.
+- **Exit:** a published baseline number per role and a tuned number; decision on drafters' default.
+
+### M7 — Hardening and packaging
+- `storage-sqlite` through the conformance suite; `migrate` with a real schema change; `doctor`
+  drift check via `done_at.commit`; export/import; Kilo marketplace entry; install docs.
+- (Optional) Claude Code / Codex append-only adapters per HOST-MATRIX §3.
+
+## Dogfooding
+
+From M3 onward, Hafiz's own development is tracked in Hafiz: this plan becomes the block tree
+(root = Hafiz; children = packages; sub-blocks = milestones' items), with the architecture doc's
+sections as root design. It is the cheapest realistic test of the brownfield story and of the
+medium-scale case.
+
+## Inputs needed before M0
+
+1. Confirm the stack table (or amend).
+2. Which model providers you use in Kilo (determines which wire adapters M4 builds first).
+3. Node version floor on your machines.
+
+## Risks and where they are retired
+
+| Risk | Retired by |
+|---|---|
+| Policy YAML not expressive enough | M2 goldens on a large synthetic tree |
+| Embedded proxy breaks streaming/caching for some provider | M4 passthrough tests + real run |
+| Experimental Kilo hooks change | `RequestShaper` abstraction; proxy is the stable path |
+| Agents ignore the protocol | M5 checks + capture; M6 measured, tuned, drafters if needed |
+| Condenser cost creeps | bounded by construction; M5 scripted session measures it |
+| Store corruption | M1 journal + kill tests; git history as recovery |
