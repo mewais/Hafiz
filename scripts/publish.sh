@@ -2,6 +2,7 @@
 # Release the two publishable packages: hafiz-context-manager (packages/hafiz), then hafiz-kilo
 # (packages/kilo-plugin), which depends on the core's exact version.
 #   scripts/publish.sh          dry run: build, test, `npm pack --dry-run`, `pnpm publish --dry-run`
+#   scripts/publish.sh 0.2.0    first set both package versions (scripts/set-version.mjs); left uncommitted
 #   scripts/publish.sh --yes    really publish (needs `npm login`; add --otp <code> if 2FA asks)
 # Uses `pnpm publish` because it rewrites the plugin's `workspace:^0.1.0` dependency to the real
 # version in the tarball (npm publish would not). Refuses on a dirty tree.
@@ -9,11 +10,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 yes=0
+version=""
 extra=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes) yes=1 ;;
     --dry-run) yes=0 ;;
+    [0-9v]*) version="$1" ;;
     *) extra+=("$1") ;;
   esac
   shift
@@ -25,6 +28,7 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 pnpm install --frozen-lockfile
+if [ -n "$version" ]; then node scripts/set-version.mjs "$version"; fi
 pnpm lint
 pnpm build
 pnpm test
