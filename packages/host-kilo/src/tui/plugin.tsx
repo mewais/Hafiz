@@ -6,13 +6,18 @@
 // Kilo loads this file in its TUI thread (the server plugin runs in a worker), compiled from Solid
 // JSX with `generate: universal` against `@opentui/solid`; Kilo maps `solid-js` and `@opentui/*`
 // imports onto its own runtime instances (scripts/bundle.mjs). In a repo without a Hafiz pointer
-// it registers nothing.
+// it
+// shows its state instead: `off` (not git), `untracked` (a hint), `connecting`, or the full tree.
+// Everything is registered at startup; `TuiPanel` (state.ts) switches on Kilo events, no timers.
+import { basename } from 'node:path'
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
-import { detectTuiProject, type TuiSnapshot, TuiSource } from './data.js'
+import { projectLocator, type TuiSnapshot, TuiSource } from './data.js'
 import type { Colour, TuiApi, TuiPlugin, TuiTheme } from './kilo-tui.js'
 import {
+  connectingLines,
   decisionLines,
   historyLines,
+  inactiveLines,
   type Line,
   nextDetail,
   reviewDetail,
@@ -24,6 +29,7 @@ import {
   type Tone,
   treeKey,
 } from './model.js'
+import { PANEL_EVENTS, TuiPanel } from './state.js'
 import { TuiStore } from './store.js'
 
 const ROUTE = 'hafiz'
@@ -62,6 +68,19 @@ function useStore(store: TuiStore, sessionId?: () => string | undefined) {
   return () => {
     tick()
     return store.snapshot
+  }
+}
+
+/** Re-render when the panel switches state (untracked -> tracked, daemon reached). */
+function usePanel(panel: TuiPanel) {
+  const [tick, setTick] = createSignal(0)
+  onMount(() => {
+    const off = panel.subscribe(() => setTick((n) => n + 1))
+    onCleanup(off)
+  })
+  return () => {
+    tick()
+    return panel
   }
 }
 
@@ -106,7 +125,49 @@ interface PanelState {
 
 function Sidebar(props: {
   api: TuiApi
+  hub: TuiPanel
+  panel: PanelState
+  sessionId: string
+  width: number
+  maxRows: number
+}) {
+  const view = usePanel(props.hub)
+  const inactive = () => {
+    const k = view().kind
+    return k === 'off' || k === 'untracked' ? k : undefined
+  }
+  return (
+    <Show
+      when={view().store}
+      fallback={
+        <Show when={inactive()}>
+          {(k) => (
+            <box flexShrink={0}>
+              <Lines theme={props.api.theme} lines={inactiveLines(k(), props.width)} />
+            </box>
+          )}
+        </Show>
+      }
+    >
+      {(store) => (
+        <TrackedSidebar
+          api={props.api}
+          store={store()}
+          project={view().project?.project.worktree ?? ''}
+          panel={props.panel}
+          sessionId={props.sessionId}
+          width={props.width}
+          maxRows={props.maxRows}
+        />
+      )}
+    </Show>
+  )
+}
+
+function TrackedSidebar(props: {
+  api: TuiApi
   store: TuiStore
+  project: string
   panel: PanelState
   sessionId: string
   width: number
@@ -118,7 +179,7 @@ function Sidebar(props: {
   )
   const lines = createMemo(() => {
     const s = snap()
-    if (!s) return []
+    if (!s) return connectingLines(basename(props.project), props.width)
     return sidebarLines(sidebarData(s, props.store, props.sessionId), {
       width: props.width,
       detail: props.panel.detail(),
@@ -143,7 +204,16 @@ function Sidebar(props: {
   )
 }
 
-function Chip(props: { api: TuiApi; store: TuiStore; sessionId: string }) {
+function Chip(props: { api: TuiApi; hub: TuiPanel; sessionId: string }) {
+  const view = usePanel(props.hub)
+  return (
+    <Show when={view().store}>
+      {(store) => <TrackedChip api={props.api} store={store()} sessionId={props.sessionId} />}
+    </Show>
+  )
+}
+
+function TrackedChip(props: { api: TuiApi; store: TuiStore; sessionId: string }) {
   const snap = useStore(props.store, () => props.sessionId)
   const text = createMemo(() => {
     const s = snap()
@@ -363,21 +433,97 @@ function RouteView(props: {
   )
 }
 
+/** `/hafiz` without a Hafiz project: the same message as the sidebar. */
+function InactiveRoute(props: {
+  api: TuiApi
+  kind: 'off' | 'untracked'
+  params?: Record<string, unknown> | undefined
+}) {
+  const theme = props.api.theme
+  onMount(() => {
+    const back = () => {
+      const ret = props.params?.returnRoute as
+        | { name?: string; params?: Record<string, unknown> }
+        | undefined
+      if (ret?.name) props.api.route.navigate(ret.name, ret.params)
+      else props.api.route.navigate('home')
+    }
+    const off = props.api.keymap.registerLayer({
+      commands: [{ name: 'hafiz.view.back', run: back }],
+      bindings: [{ key: 'escape,q', cmd: 'hafiz.view.back' }],
+    })
+    onCleanup(off)
+  })
+  return (
+    <box
+      flexGrow={1}
+      width="100%"
+      height="100%"
+      backgroundColor={theme.current.background}
+      paddingLeft={2}
+      paddingRight={2}
+      paddingTop={1}
+    >
+      <Lines theme={theme} lines={inactiveLines(props.kind, 200)} />
+      <box flexGrow={1} />
+      <box flexShrink={0} paddingBottom={1}>
+        <text fg={theme.current.textMuted} wrapMode="none">
+          esc back
+        </text>
+      </box>
+    </box>
+  )
+}
+
+function Route(props: {
+  api: TuiApi
+  hub: TuiPanel
+  source: () => TuiSource | undefined
+  params?: Record<string, unknown> | undefined
+}) {
+  const view = usePanel(props.hub)
+  return (
+    <Show
+      when={view().store && props.source()}
+      fallback={
+        <InactiveRoute
+          api={props.api}
+          kind={view().kind === 'off' ? 'off' : 'untracked'}
+          params={props.params}
+        />
+      }
+    >
+      <RouteView
+        api={props.api}
+        store={view().store as TuiStore}
+        source={props.source() as TuiSource}
+        zooms={view().project?.zooms ?? []}
+        params={props.params}
+      />
+    </Show>
+  )
+}
+
 const num = (v: unknown, d: number) => (typeof v === 'number' && v > 0 ? v : d)
 
 const tui: TuiPlugin = async (api, options) => {
   const dir = api.state.path.directory || process.cwd()
-  const found = detectTuiProject(dir, process.env)
-  if (!found) return // not a Hafiz repo: register nothing
-  const source = new TuiSource({ project: found.project })
+  const locate = projectLocator(dir, process.env) // resolves the git dir once
   const currentSession = () => {
     const r = api.route.current
     const id = r.params?.sessionID
     return typeof id === 'string' ? id : undefined
   }
-  const store = new TuiStore(source, {
-    current: currentSession,
-    toast: (t) => api.ui.toast({ ...t, duration: 5000 }),
+  let source: TuiSource | undefined
+  const hub = new TuiPanel({
+    locate,
+    open: ({ project }) => {
+      source = new TuiSource({ project })
+      return new TuiStore(source, {
+        current: currentSession,
+        toast: (t) => api.ui.toast({ ...t, duration: 5000 }),
+      })
+    },
   })
   const [detail, setDetail] = createSignal<SidebarDetail>('active')
   const panel: PanelState = { detail, setDetail, toggled: new Map() }
@@ -390,7 +536,7 @@ const tui: TuiPlugin = async (api, options) => {
       sidebar_content: (_ctx, props) => (
         <Sidebar
           api={api}
-          store={store}
+          hub={hub}
           panel={panel}
           sessionId={props.session_id}
           width={width}
@@ -398,22 +544,14 @@ const tui: TuiPlugin = async (api, options) => {
         />
       ),
       session_prompt_right: (_ctx, props) => (
-        <Chip api={api} store={store} sessionId={props.session_id} />
+        <Chip api={api} hub={hub} sessionId={props.session_id} />
       ),
     },
   })
   api.route.register([
     {
       name: ROUTE,
-      render: (input) => (
-        <RouteView
-          api={api}
-          store={store}
-          source={source}
-          zooms={found.zooms}
-          params={input.params}
-        />
-      ),
+      render: (input) => <Route api={api} hub={hub} source={() => source} params={input.params} />,
     },
   ])
   const open = () => {
@@ -452,15 +590,14 @@ const tui: TuiPlugin = async (api, options) => {
       },
     ],
   })
-  // Kilo events that can change what Hafiz shows: refresh early instead of waiting for the poll.
-  const offs = ['session.idle', 'session.status', 'session.created', 'message.updated'].map(
-    (type) => api.event.on(type, () => store.kick()),
-  )
+  // Kilo's event stream drives every state change: a completed track tool starts the tracked
+  // panel, other events refresh it. There is no timer.
+  const offs = PANEL_EVENTS.map((type) => api.event.on(type, (e) => hub.onEvent(e)))
   api.lifecycle.onDispose(() => {
     offKeys()
     for (const off of offs) off()
-    store.dispose()
-    source.close()
+    hub.dispose()
+    source?.close()
   })
 }
 

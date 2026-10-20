@@ -266,6 +266,20 @@ export function sidebarTree(data: SidebarData, opts: SidebarOptions = {}): Line[
   return out
 }
 
+/** What the sidebar and the `/hafiz` route show without a Hafiz project (nothing is connected). */
+export function inactiveLines(kind: 'off' | 'untracked', width = 40): Line[] {
+  if (kind === 'off') return [{ text: clip('Hafiz · off (not a git repo)', width), tone: 'muted' }]
+  return [
+    { text: clip('Hafiz · untracked', width), tone: 'title' },
+    { text: clip('starts when work turns multi-step', width), tone: 'muted' },
+  ]
+}
+
+/** A tracked project whose daemon has not answered yet. */
+export function connectingLines(project: string, width = 40): Line[] {
+  return [{ text: clip(`Hafiz · ${project} — connecting…`, width), tone: 'muted' }]
+}
+
 /** Everything the sidebar slot shows, as lines. */
 export function sidebarLines(data: SidebarData, opts: SidebarOptions = {}): Line[] {
   const width = opts.width ?? 40

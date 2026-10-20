@@ -3,10 +3,14 @@
 // read_only role the daemon refuses every write for. Everything here is a read: tree.summary,
 // project.status (sessions, focus, counters), proposal.list, notices.peek (never drains),
 // block.read and block.history.
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   configDirs,
   type DecisionBrief,
-  findPointerFile,
+  findLegacyPointerFile,
+  GIT_POINTER_PATH,
+  gitCommonDir,
   type HistoryEntry,
   loadConfig,
   type Proposal,
@@ -41,15 +45,33 @@ export interface TuiProject {
   zooms: string[]
 }
 
-/** The Hafiz project of `dir`, or undefined (no pointer: the TUI plugin registers nothing). */
-export function detectTuiProject(dir: string, env: NodeJS.ProcessEnv): TuiProject | undefined {
-  if (!findPointerFile(dir)) return undefined
-  try {
-    const project = resolveProject(dir, env)
-    const config = loadConfig(configDirs(project.storeDir, env))
-    return { project, zooms: Object.keys(config.zooms.zooms).filter((z) => z !== 'NONE') }
-  } catch {
-    return undefined
+/** What the panel shows for a directory: not git, git without a pointer, or a Hafiz project. */
+export type Located =
+  | { kind: 'off' }
+  | { kind: 'untracked' }
+  | { kind: 'tracked'; project: TuiProject }
+
+/**
+ * Finds the Hafiz pointer of `dir`: `$(git rev-parse --git-common-dir)/hafiz/project.yaml`, else a
+ * legacy `<repo>/.hafiz/project.yaml`. The git dir is resolved once per process; `locate()` is
+ * then only file-system checks, called at startup and when a Hafiz track tool completes.
+ */
+export function projectLocator(dir: string, env: NodeJS.ProcessEnv): () => Located {
+  const common = gitCommonDir(dir)
+  return () => {
+    const pointer = common && join(common, GIT_POINTER_PATH)
+    const found = (pointer && existsSync(pointer)) || findLegacyPointerFile(dir)
+    if (!found) return common ? { kind: 'untracked' } : { kind: 'off' }
+    try {
+      const project = resolveProject(dir, env)
+      const config = loadConfig(configDirs(project.storeDir, env))
+      return {
+        kind: 'tracked',
+        project: { project, zooms: Object.keys(config.zooms.zooms).filter((z) => z !== 'NONE') },
+      }
+    } catch {
+      return { kind: common ? 'untracked' : 'off' } // unusable pointer (e.g. the store is gone)
+    }
   }
 }
 
@@ -63,7 +85,7 @@ export interface TuiSourceOptions {
 const unauthorized = (e: unknown) => e instanceof RpcError && e.code === RPC_CODES.unauthorized
 
 /**
- * One viewer connection. Never starts a daemon: when none runs the panel shows nothing (the
+ * One viewer connection. Never starts a daemon: when none runs the panel shows `connecting…` (the
  * server plugin starts it on the first managed message).
  */
 export class TuiSource {

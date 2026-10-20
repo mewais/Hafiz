@@ -3,9 +3,11 @@
 import type { Proposal } from '@hafiz/core'
 import { describe, expect, it } from 'vitest'
 import {
+  connectingLines,
   decisionLines,
   flatten,
   glyph,
+  inactiveLines,
   indexTree,
   nextDetail,
   reviewDetail,
@@ -189,6 +191,19 @@ describe('sidebar', () => {
     expect(text(sidebarLines(data({ nodes: [] })))).toBe(
       'Hafiz · shop\nmanager · focus 2\nno blocks yet',
     )
+  })
+})
+
+describe('panel without a tracked project', () => {
+  it('off, untracked and connecting states', () => {
+    expect(text(inactiveLines('off'))).toBe('Hafiz · off (not a git repo)')
+    expect(text(inactiveLines('untracked'))).toBe(
+      'Hafiz · untracked\nstarts when work turns multi-step',
+    )
+    expect(inactiveLines('off').map((l) => l.tone)).toEqual(['muted'])
+    expect(inactiveLines('untracked').map((l) => l.tone)).toEqual(['title', 'muted'])
+    expect(text(connectingLines('shop'))).toBe('Hafiz · shop — connecting…')
+    expect(text(connectingLines('a-very-long-project-name-indeed', 24))).toHaveLength(24)
   })
 })
 

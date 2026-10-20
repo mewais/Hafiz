@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
 import { resolveProject } from '@hafiz/core'
-import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
+import { DaemonClient, type DaemonHandle, readLock, startDaemon } from '@hafiz/gateway-mcp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { type MockLlm, type RecordedRequest, type ScriptedReply, startMockLlm } from './mock-llm.js'
 
@@ -135,9 +135,9 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
   }
 
   /** Start the TUI in a detached tmux pane; returns a frame grabber. */
-  function tui(args: string[]) {
+  function tui(args: string[], cwd = repo) {
     const script = join(home, 'run-kilo.sh')
-    const vars = { ...env, PWD: repo, KILO_CONFIG_CONTENT: JSON.stringify(kiloConfig()) }
+    const vars = { ...env, PWD: cwd, KILO_CONFIG_CONTENT: JSON.stringify(kiloConfig()) }
     const exports = Object.entries(vars)
       .filter(([k, v]) => v !== undefined && /^[A-Z_][A-Z0-9_]*$/.test(k))
       .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, `'\\''`)}'`)
@@ -145,7 +145,7 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     const argv = [BIN as string, ...args].map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ')
     writeFileSync(
       script,
-      `#!/bin/sh\n${exports}\ncd '${repo}'\nexec ${argv} 2>>'${home}/kilo.err'\n`,
+      `#!/bin/sh\n${exports}\ncd '${cwd}'\nexec ${argv} 2>>'${home}/kilo.err'\n`,
     )
     const r = spawnSync(
       'tmux',
@@ -202,6 +202,53 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     t.keys('f')
     expect(await t.until((f) => f.includes('[1 tree]'), 10000)).toContain('[1 tree]')
     spawnSync('tmux', ['kill-session', '-t', 'hafiz'], { env })
+  }, 150000)
+
+  it('an untracked repo shows "untracked", then the tracked tree right after hafiz_track_project, no restart', async () => {
+    const fresh = tmp('hafiz-tui-untracked-')
+    execFileSync('git', ['init', '-q'], { cwd: fresh })
+    const marker = 'track this multi-step build'
+    const results = (r: RecordedRequest) =>
+      (r.body as { messages: Array<{ role: string }> }).messages.filter((m) => m.role === 'tool')
+        .length
+    const hasTools = (r: RecordedRequest) =>
+      ((r.body as { tools?: unknown[] }).tools ?? []).length > 0
+    responder = (req) => {
+      if (!req.raw.includes(marker) || !hasTools(req)) return { text: 'Title' }
+      // hold the call so the untracked frame can be captured, and the answer so the tracked one
+      if (results(req) === 0)
+        return {
+          toolCalls: [
+            { name: 'hafiz_track_project', arguments: { name: 'Fresh', reason: 'Multi-step.' } },
+          ],
+          delayMs: 6000,
+        }
+      return { text: 'Tracking this repo with Hafiz as `Fresh`.', delayMs: 20000 }
+    }
+    const t = tui(['--agent', 'build', '--prompt', marker], fresh)
+    try {
+      const f1 = await t.until((f) => f.includes('Hafiz · untracked'))
+      console.log(`── untracked frame ──\n${f1}`)
+      expect(f1).toContain('Hafiz · untracked')
+      expect(f1).toContain('starts when work turns multi-step')
+      expect(f1).not.toContain('connecting')
+      const f2 = await t.until(
+        (f) => f.includes('Hafiz · Fresh') && !f.includes('Hafiz · untracked'),
+        40000,
+      )
+      console.log(`── tracked frame, right after the tool completed ──\n${f2}`)
+      expect(f2).toContain('Hafiz · Fresh')
+      expect(f2).toMatch(/◆ Fresh/)
+      expect(f2).not.toContain('Hafiz · untracked')
+      // the model's follow-up is still held back: the switch came from the tool event
+      expect(f2).not.toContain('Tracking this repo with Hafiz as')
+    } finally {
+      spawnSync('tmux', ['kill-session', '-t', 'hafiz'], { env })
+      try {
+        const lock = readLock(resolveProject(fresh, env).storeDir)
+        if (lock) process.kill(lock.pid)
+      } catch {}
+    }
   }, 150000)
 
   it('condensation through Kilo: a child session of the condensed one, billed to its family', async () => {

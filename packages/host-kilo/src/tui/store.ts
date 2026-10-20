@@ -1,6 +1,7 @@
 // Live data for the panel, framework-free (the Solid components subscribe to it). Reads go
-// through TuiSource; nothing here writes. Polling runs only while something on screen watches
-// (sidebar, status chip, the /hafiz route) and Kilo events trigger an early, debounced refresh.
+// through TuiSource; nothing here writes. No timer polls: a refresh runs when something
+// on screen starts watching (sidebar, status chip, the /hafiz route) and when a Kilo event that
+// can change the data arrives (`kick`, debounced once; nothing is scheduled while idle).
 // A slow or absent daemon never blocks rendering: views draw the last snapshot (or nothing).
 import type { QueuedNotice } from '@hafiz/gateway-mcp/client'
 import type { TuiSnapshot, TuiSource } from './data.js'
@@ -13,7 +14,6 @@ export interface ToastOut {
 }
 
 export interface TuiStoreOptions {
-  pollMs?: number
   /** Debounce for event-triggered refreshes. */
   kickMs?: number
   /** Debounce for toasts: news within this window becomes one toast. */
@@ -33,7 +33,6 @@ export class TuiStore {
   private readonly listeners = new Set<() => void>()
   private readonly watched = new Map<string, number>()
   private watchers = 0
-  private poll: Timer | undefined
   private kickTimer: Timer | undefined
   private inflight: Promise<void> | undefined
   private again = false
@@ -60,11 +59,10 @@ export class TuiStore {
     return (sessionId && this.notices.get(sessionId)) || []
   }
 
-  /** Something on screen shows the data (for `sessionId`, if given); polls while any does. */
+  /** Something on screen shows the data (for `sessionId`, if given); reads once now. */
   watch(sessionId?: string): () => void {
     this.watchers++
     if (sessionId) this.watched.set(sessionId, (this.watched.get(sessionId) ?? 0) + 1)
-    if (this.watchers === 1) this.startPolling()
     void this.refresh()
     let released = false
     return () => {
@@ -76,7 +74,6 @@ export class TuiStore {
         if (n > 0) this.watched.set(sessionId, n)
         else this.watched.delete(sessionId)
       }
-      if (this.watchers === 0) this.stopPolling()
     }
   }
 
@@ -175,25 +172,8 @@ export class TuiStore {
     }, this.opts.toastMs ?? 1500)
   }
 
-  private startPolling(): void {
-    this.stopPolling()
-    const tick = () => {
-      this.poll = setTimeout(async () => {
-        await this.refresh()
-        if (this.watchers > 0 && !this.disposed) tick()
-      }, this.opts.pollMs ?? 2000)
-    }
-    tick()
-  }
-
-  private stopPolling(): void {
-    if (this.poll) clearTimeout(this.poll)
-    this.poll = undefined
-  }
-
   dispose(): void {
     this.disposed = true
-    this.stopPolling()
     for (const t of [this.kickTimer, this.toastTimer]) if (t) clearTimeout(t)
     this.listeners.clear()
   }

@@ -233,8 +233,15 @@ method is refused). Kilo compiles `.tsx` with Solid's universal transform only o
 imports, which Kilo's runtime plugin maps onto its own instances. It registers a
 `sidebar_content` slot (opentui delivers `onMouseDown` to boxes there, so rows fold on click), a
 `session_prompt_right` chip, a `hafiz` route with keymap-layer bindings, the `/hafiz` slash
-command (`<leader>f`), and toasts; it refreshes on Kilo events plus a 2 s poll while something is
-on screen, and registers nothing without a Hafiz pointer. With `llm.*.provider: kilo` the daemon
+command (`<leader>f`), and toasts; it is registered at every TUI start whatever the tracking state
+(`Hafiz · off (not a git repo)`, `Hafiz · untracked`, `connecting…`, or the tree) and has no timer:
+a completed `hafiz_track_project` tool part (`message.part.updated`, `part.type: tool`,
+`state.status: completed`) resolves the pointer once and switches it to tracked, and
+`message.part.updated` (Hafiz tool completed), `message.updated`, `session.idle|status|created`
+refresh it. Tracking started outside Kilo shows at the next TUI start; changes made outside Kilo
+(a proposal accepted from the CLI) show at the next Kilo event. Restart-bound after mid-session
+tracking (Kilo reads config once): the embedded proxy shaper (hooks shape instead), `compaction.auto`,
+and a hidden condenser agent whose provider only the project config selects. With `llm.*.provider: kilo` the daemon
 relays condenser/drafter calls back over the plugin's connection (`llm.serve` /
 `llm.complete`); the plugin creates a child session (`parentID` = the condensed session), prompts
 the hidden `hafiz-condenser` agent (`permission: '*': deny`) synchronously, and the existing

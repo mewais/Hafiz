@@ -30,9 +30,13 @@ Nothing to do. In a git repo Hafiz does not track yet, Kilo's primary agents get
 most). When a task turns multi-step or will spawn subagents, the agent calls it on its own (never
 for one-off questions or small edits) and tells you in one line: "Tracking this repo with Hafiz
 as `<name>`". The same Kilo session continues managed from its next step: the project view, the
-manager's rules and the Hafiz tools, no restart. Until Kilo's next start, shaping runs through
-the transform hooks rather than the embedded proxy, the TUI panel stays hidden, Kilo's own
-auto-compaction stays as it was, and with `host.kilo.tools: mcp` the Hafiz tools wait too.
+manager's rules and the Hafiz tools, no restart. The TUI panel is always there: it
+reads `Hafiz · untracked` until that call completes, then shows the tree at once (driven by Kilo's
+events, no polling; tracking started outside Kilo, e.g. `hafiz init` in a terminal, shows at the
+next TUI start). Only what Kilo reads once at startup waits for its next start: shaping runs
+through the transform hooks rather than the embedded proxy, Kilo's own auto-compaction stays as it
+was, a condenser routed through Kilo is available only if the user-level config asked for it, and
+with `host.kilo.tools: mcp` the Hafiz tools wait too.
 
 If the repo already has code (commits and at least `onboarding.min_source_files` tracked source
 files, default 5), the project starts with onboarding pending: the manager first has the designer
