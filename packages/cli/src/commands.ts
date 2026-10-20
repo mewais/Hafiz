@@ -56,8 +56,8 @@ const USAGE = `usage: hafiz <command> [options]
   doctor [--online] [--json]                 check wiring, store health, schema failures, drift
   export <file>                              write a portable JSON snapshot of the store
   import <file> [--as-new] [--backend B]    load a snapshot into an empty store
-  install kilo [--global|--project]          add the Hafiz plugin to Kilo's config
-  uninstall kilo [--global|--project]        remove it again
+  install kilo [--project]                   add the Hafiz plugin to Kilo's config (global by default)
+  uninstall kilo [--project]                 remove it again (--global is the default)
   daemon [--project DIR]                     run the project daemon in the foreground
   mcp --role R [--project DIR]               serve MCP on stdio for role R
 `
@@ -389,6 +389,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     // `--project` is a DIR option elsewhere; for install/uninstall it is a bare scope flag.
     const hostCmd = argv[0] === 'install' || argv[0] === 'uninstall'
     const args = hostCmd ? argv.filter((x) => x !== '--project') : argv
+    const projectScope = hostCmd && args.length !== argv.length
     const { values, positionals } = parseArgs({
       args,
       allowPositionals: true,
@@ -480,9 +481,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         break
       case 'install':
       case 'uninstall':
-        if (values.global && args.length !== argv.length)
-          throw new CliError('use either --global or --project')
-        await installHost(io, cmd, need(a, '<host>'), { global: !!values.global })
+        if (values.global && projectScope) throw new CliError('use either --global or --project')
+        await installHost(io, cmd, need(a, '<host>'), { global: !projectScope })
         break
       case 'daemon':
         await daemon(io, values)

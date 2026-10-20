@@ -416,7 +416,7 @@ describe('hafiz install kilo', () => {
   it('adds the plugin to a new project config, idempotently, and removes it', async () => {
     const cwd = repo()
     const { io, out, clear } = harness(cwd)
-    expect(await run(['install', 'kilo'], io)).toBe(0)
+    expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
     const file = join(cwd, 'kilo.jsonc')
     const tui = join(cwd, 'tui.jsonc')
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ plugin: ['@hafiz/kilo-plugin'] })
@@ -428,11 +428,11 @@ describe('hafiz install kilo', () => {
     expect(out.join('\n')).toContain('already installed (TUI panel)')
     expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
     expect(JSON.parse(readFileSync(tui, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
-    expect(await run(['uninstall', 'kilo'], io)).toBe(0)
+    expect(await run(['uninstall', 'kilo', '--project'], io)).toBe(0)
     expect(JSON.parse(readFileSync(file, 'utf8')).plugin).toEqual([])
     expect(JSON.parse(readFileSync(tui, 'utf8')).plugin).toEqual([])
     clear()
-    expect(await run(['uninstall', 'kilo'], io)).toBe(0)
+    expect(await run(['uninstall', 'kilo', '--project'], io)).toBe(0)
     expect(out.join('\n')).toContain('not installed')
     expect(await run(['install', 'claude'], io)).toBe(1)
   })
@@ -453,7 +453,7 @@ describe('hafiz install kilo', () => {
 }
 `
     writeFileSync(file, original)
-    expect(await run(['install', 'kilo'], io)).toBe(0)
+    expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
     const after = readFileSync(file, 'utf8')
     expect(after).toContain('// my model')
     expect(after).toContain('/* keep */')
@@ -464,14 +464,32 @@ describe('hafiz install kilo', () => {
     expect(JSON.parse(readFileSync(join(cwd, '.kilo/tui.jsonc'), 'utf8')).plugin).toEqual([
       '@hafiz/kilo-plugin',
     ])
-    await run(['install', 'kilo'], io)
+    await run(['install', 'kilo', '--project'], io)
     expect(readFileSync(file, 'utf8')).toBe(after)
-    expect(await run(['uninstall', 'kilo'], io)).toBe(0)
+    expect(await run(['uninstall', 'kilo', '--project'], io)).toBe(0)
     const back = readFileSync(file, 'utf8')
     expect(back).not.toContain('hafiz')
     expect(back).toContain('"other-plugin"')
     expect(back).toContain('["tuned-plugin", { "a": 1 }]')
     expect(back).toContain('// trailing note')
+  })
+
+  it('a bare install edits the global config; --project edits the project one', async () => {
+    const cwd = repo()
+    const { io } = harness(cwd)
+    const global = join(io.env.HOME as string, '.config/kilo/kilo.jsonc')
+    expect(await run(['install', 'kilo'], io)).toBe(0)
+    expect(JSON.parse(readFileSync(global, 'utf8')).plugin).toEqual(['@hafiz/kilo-plugin'])
+    expect(existsSync(join(cwd, 'kilo.jsonc'))).toBe(false)
+    expect(await run(['install', 'kilo', '--project'], io)).toBe(0)
+    expect(JSON.parse(readFileSync(join(cwd, 'kilo.jsonc'), 'utf8')).plugin).toEqual([
+      '@hafiz/kilo-plugin',
+    ])
+    expect(await run(['uninstall', 'kilo'], io)).toBe(0)
+    expect(JSON.parse(readFileSync(global, 'utf8')).plugin).toEqual([])
+    expect(JSON.parse(readFileSync(join(cwd, 'kilo.jsonc'), 'utf8')).plugin).toEqual([
+      '@hafiz/kilo-plugin',
+    ])
   })
 
   it('--global edits ~/.config/kilo/kilo.jsonc, and doctor sees it', async () => {

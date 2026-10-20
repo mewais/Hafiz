@@ -12,12 +12,13 @@ Requires Node 22.5 or newer.
 
 ```sh
 npm i -g hafiz            # the CLI, daemon and MCP gateway (one file, no dependencies)
-hafiz install kilo        # add the plugin to this repo's Kilo config (or --global)
+hafiz install kilo        # add the plugin to your global Kilo config (or --project for this repo)
 ```
 
 That is all: tracking starts automatically (below).
 
-`hafiz install kilo` edits `kilo.jsonc` (or `.kilo/kilo.jsonc`) in place, keeping your comments,
+`hafiz install kilo` edits `~/.config/kilo/kilo.jsonc` in place (with `--project`, the repo's
+`kilo.jsonc` or `.kilo/kilo.jsonc` instead), keeping your comments,
 and adds `@hafiz/kilo-plugin` to its `plugin` array; it adds the same package to `tui.jsonc` next
 to it for the TUI panel. It is idempotent; `hafiz uninstall kilo` removes both. Kilo loads the
 plugin on its next start.

@@ -1,4 +1,4 @@
-// `hafiz install kilo [--global|--project]` / `hafiz uninstall kilo`: add or remove the Hafiz
+// `hafiz install kilo [--project]` (global by default) / `hafiz uninstall kilo`: add or remove the Hafiz
 // plugin in Kilo's `plugin` array. The config is JSONC; edits are surgical so comments, key order
 // and formatting survive.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
