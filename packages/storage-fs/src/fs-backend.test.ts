@@ -1,8 +1,15 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { conformance, block } from '@hafiz/core/conformance'
-import type { Actor } from '@hafiz/core'
+import { type Actor, Core, loadConfig } from '@hafiz/core'
+import { block, conformance } from '@hafiz/core/conformance'
 import { describe, expect, it } from 'vitest'
 import { FsBackend } from './fs-backend.js'
 
@@ -92,5 +99,26 @@ describe('fs backend specifics', () => {
     writeFileSync(join(dir, 'blocks/root/block.yaml'), 'tampered\n')
     expect(await a.dirty()).toEqual(['blocks/root/block.yaml'])
     await a.close()
+  })
+})
+
+describe('core over fs backend', () => {
+  it('warns when store files were hand edited', async () => {
+    const dir = tmp()
+    const backend = new FsBackend({ dir, minorBatchSeconds: 0 })
+    await backend.open()
+    const core = new Core({ config: loadConfig(), backend })
+    const user: Actor = { sessionId: 'cli', role: 'user', agent: 'me' }
+    const init = await core.projectInit(user, { name: 'Shop', originFingerprint: 'fp' })
+    expect(init.notices).toEqual([])
+    const root = init.result.root.id
+    appendFileSync(join(dir, `blocks/${root}/block.yaml`), '# hand edit\n')
+    const r = await core.blockCreate(user, { parent: root, title: 'Billing' })
+    expect(
+      r.notices.some((n) => n.level === 'warn' && n.text.includes(`blocks/${root}/block.yaml`)),
+    ).toBe(true)
+    const r2 = await core.blockCreate(user, { parent: root, title: 'Other' })
+    expect(r2.notices.some((n) => n.text.includes('edited outside Hafiz'))).toBe(false)
+    await backend.close()
   })
 })

@@ -6,6 +6,7 @@ import { ForbiddenError } from '../domain/errors.js'
  *   `block.create`        exact command, any qualifier
  *   `doc.write:design`    exact command with qualifier
  *   `block.*`             any command in the namespace
+ *   `*`                   everything (the human CLI user)
  */
 export function isAllowed(
   patterns: readonly string[],
@@ -13,6 +14,7 @@ export function isAllowed(
   qualifier?: string,
 ): boolean {
   for (const p of patterns) {
+    if (p === '*') return true
     if (p.endsWith('.*')) {
       if (command.startsWith(p.slice(0, -1))) return true
       continue

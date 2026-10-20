@@ -5,37 +5,37 @@
 // files are staged in a write-ahead journal (fsynced), applied with temp+rename, then committed to
 // git with the acting session as author. Recovery on open replays any journal left behind.
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
-  openSync,
-  fsyncSync,
-  closeSync,
 } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
-import {
-  type AuditEntry,
-  type Block,
-  type Doc,
-  type DocType,
-  type Edge,
-  type HistoryEntry,
-  type Project,
-  type Proposal,
-  type ReadOps,
-  type Session,
-  type StorageBackend,
-  type Thread,
-  type TxMeta,
-  type WriteOps,
+import type {
+  AuditEntry,
+  Block,
+  Doc,
+  DocType,
+  Edge,
+  HistoryEntry,
+  Project,
+  Proposal,
+  ReadOps,
+  Session,
+  StorageBackend,
+  Thread,
+  TxMeta,
+  WriteOps,
 } from '@hafiz/core'
-import { Ops, type State, cloneState, emptyState } from '@hafiz/core/state'
-import { simpleGit, type SimpleGit } from 'simple-git'
-import { type FileMap, docToMarkdown, jsonl, markdownToDoc, paths, yaml } from './files.js'
+import { cloneState, emptyState, Ops, type State } from '@hafiz/core/state'
+import { type SimpleGit, simpleGit } from 'simple-git'
+import { docToMarkdown, type FileMap, jsonl, markdownToDoc, paths, yaml } from './files.js'
 
 export interface FsBackendOptions {
   dir: string

@@ -26,12 +26,12 @@ importers:
       '@hafiz/core':
         specifier: workspace:*
         version: link:../core
-      '@hafiz/gateway-mcp':
-        specifier: workspace:*
-        version: link:../gateway-mcp
       '@hafiz/storage-fs':
         specifier: workspace:*
         version: link:../storage-fs
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/core:
     dependencies:

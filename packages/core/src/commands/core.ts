@@ -3,23 +3,23 @@
 import type { Config } from '../config/schema.js'
 import { type Clock, systemClock } from '../domain/clock.js'
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.js'
-import { opaqueId, slugId, token as mintToken } from '../domain/ids.js'
+import { token as mintToken, opaqueId, slugId } from '../domain/ids.js'
 import { StatusMachine, type TransitionContext } from '../domain/status.js'
 import {
   type Actor,
   type Block,
-  type BlockId,
   type BlockedOn,
+  type BlockId,
   type Decision,
   type DecisionView,
-  deriveDecisionStatus,
   type Doc,
   type DocType,
+  deriveDecisionStatus,
   type Edge,
   type Focus,
-  type Project,
   type ProgressEntry,
   type ProgressKind,
+  type Project,
   type Proposal,
   type SectionValue,
   type Session,
@@ -100,6 +100,12 @@ export class Core {
   ): Promise<CommandResult<T>> {
     if (!opts.skipAuthz) authorize(this.config, by.role, command, qualifier)
     const notices: Notice[] = []
+    const dirty = await this.backend.dirty()
+    if (dirty.length)
+      notices.push({
+        level: 'warn',
+        text: `store files were edited outside Hafiz: ${dirty.join(', ')}; they will be committed with this write`,
+      })
     const meta = { by, command, major, ...(opts.message ? { message: opts.message } : {}) }
     const { result, commit } = await this.backend.tx(meta, async (t) => {
       const r = await fn(t, notices)
@@ -417,7 +423,7 @@ export class Core {
         await t.putBlock(nb, b.version)
         if (args.reason)
           await this.recordDecision(t, by, b.id, {
-            title: `${reopen ? 'Reopened' : args.status === 'dropped' ? 'Dropped' : 'Status → ' + args.status}: ${b.title}`,
+            title: `${reopen ? 'Reopened' : args.status === 'dropped' ? 'Dropped' : `Status → ${args.status}`}: ${b.title}`,
             decision: args.reason,
           })
         if (
@@ -862,9 +868,9 @@ export class Core {
   /** Re-evaluate a computed focus (e.g. a new block became active) without touching explicit ones. */
   async refreshComputedFocus(sessionId: string): Promise<Session | null> {
     const s = await this.backend.read.getSession(sessionId)
-    if (!s || !s.focus.computed) return s
+    if (!s?.focus.computed) return s
     const role = this.config.roles.roles[s.role]
-    if (!role || role.focus_policy !== 'all_active') return s
+    if (role?.focus_policy !== 'all_active') return s
     const { result } = await this.run(
       { sessionId, role: s.role },
       'session.focus_refresh',

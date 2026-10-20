@@ -23,3 +23,8 @@ roles:
     tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
             doc.write:digest, block.request_done]
     rules: rules/worker.md
+  user:
+    view: default
+    focus_policy: none
+    tools: ['*']
+    rules: rules/user.md

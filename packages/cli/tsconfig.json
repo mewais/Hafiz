@@ -1,7 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../core" }, { "path": "../storage-fs" }, { "path": "../gateway-mcp" }]
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../storage-fs"
+    }
+  ]
 }

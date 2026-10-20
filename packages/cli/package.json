@@ -21,6 +21,9 @@
   "dependencies": {
     "@hafiz/core": "workspace:*",
     "@hafiz/storage-fs": "workspace:*",
-    "@hafiz/gateway-mcp": "workspace:*"
+    "yaml": "^2.9.1"
+  },
+  "bin": {
+    "hafiz": "./dist/bin.js"
   }
 }

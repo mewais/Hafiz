@@ -1,1 +1,2 @@
-export const PACKAGE = '@hafiz/cli'
+export * from './commands.js'
+export * from './resolve.js'

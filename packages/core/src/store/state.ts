@@ -13,16 +13,7 @@ import type {
   SessionId,
   Thread,
 } from '../domain/types.js'
-import type {
-  HistoryEntry,
-  LogEntryOf,
-  LogName,
-  ReadOps,
-  Sequenced,
-  StorageBackend,
-  TxMeta,
-  WriteOps,
-} from './backend.js'
+import type { HistoryEntry, LogEntryOf, LogName, Sequenced, TxMeta, WriteOps } from './backend.js'
 
 export interface State {
   project: Project | null
