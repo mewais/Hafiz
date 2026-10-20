@@ -29,3 +29,12 @@ roles:
     focus_policy: none
     tools: ['*']
     rules: rules/user.md
+    agent: false
+  # The Kilo TUI panel: reads only. The daemon refuses every write from a read_only session.
+  viewer:
+    view: default
+    focus_policy: none
+    tools: [tree.list, block.read, session.status, proposal.list]
+    rules: rules/viewer.md
+    agent: false
+    read_only: true

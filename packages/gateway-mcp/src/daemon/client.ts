@@ -6,12 +6,14 @@ import type {
   ContextView,
   DeltaResult,
   Explanation,
+  HistoryEntry,
   Proposal,
   ResolvedProject,
   Session,
+  TreeSummary,
 } from '@hafiz/core'
 import { socketPathFor } from './paths.js'
-import { RpcError, type RpcResponse } from './rpc.js'
+import { RpcError, type RpcRequest, type RpcResponse, toRpcError } from './rpc.js'
 import type { QueuedNotice } from './service.js'
 
 export type SessionRecord = Session
@@ -39,12 +41,18 @@ export interface ProjectStatus {
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
+/** Answers requests the daemon sends this client (`llm.complete` for a registered relay). */
+export type RequestHandler = (method: string, params: Record<string, unknown>) => Promise<unknown>
+
 export class DaemonClient {
   /** Capability token; set by `openSession` or directly (adapter-minted). */
   token: string | undefined
   private nextId = 1
   private readonly pending = new Map<number, Pending>()
   private buf = ''
+  /** Set by `serveLlm`; answers the daemon's own requests on this connection. */
+  private onRequest: RequestHandler | undefined
+  private closeHandlers: Array<() => void> = []
 
   private constructor(private readonly sock: Socket) {
     sock.setEncoding('utf8')
@@ -53,8 +61,16 @@ export class DaemonClient {
       for (const p of this.pending.values()) p.reject(e ?? new Error('daemon connection closed'))
       this.pending.clear()
     }
-    sock.on('close', () => fail())
+    sock.on('close', () => {
+      fail()
+      for (const h of this.closeHandlers.splice(0)) h()
+    })
     sock.on('error', (e) => fail(e))
+  }
+
+  /** Called once when the connection closes (daemon exit, idle shutdown, `close()`). */
+  onClose(h: () => void): void {
+    this.closeHandlers.push(h)
   }
 
   static connect(socketPath: string): Promise<DaemonClient> {
@@ -80,7 +96,9 @@ export class DaemonClient {
   }
 
   private onLine(line: string) {
-    const res = JSON.parse(line) as RpcResponse
+    const msg = JSON.parse(line) as RpcResponse | RpcRequest
+    if ('method' in msg) return void this.answer(msg)
+    const res = msg
     const p = typeof res.id === 'number' ? this.pending.get(res.id) : undefined
     if (!p) return
     this.pending.delete(res.id as number)
@@ -96,6 +114,20 @@ export class DaemonClient {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
       this.sock.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params: withToken })}\n`)
     })
+  }
+
+  private async answer(req: RpcRequest) {
+    const reply = (r: Omit<RpcResponse, 'jsonrpc' | 'id'>) => {
+      if (!this.sock.destroyed)
+        this.sock.write(`${JSON.stringify({ jsonrpc: '2.0', id: req.id, ...r })}\n`)
+    }
+    if (!this.onRequest)
+      return reply({ error: { code: -32601, message: `client does not serve '${req.method}'` } })
+    try {
+      reply({ result: (await this.onRequest(req.method, req.params ?? {})) ?? null })
+    } catch (e) {
+      reply({ error: toRpcError(e) })
+    }
   }
 
   close(): void {
@@ -160,6 +192,29 @@ export class DaemonClient {
   }
   noticesDrain() {
     return this.call<QueuedNotice[]>('notices.drain')
+  }
+  /** Recent notices of a session (default: this one) without draining them. */
+  noticesPeek(session?: string) {
+    return this.call<QueuedNotice[]>('notices.peek', session ? { session } : {})
+  }
+  treeSummary(o: { recentDecisions?: number } = {}) {
+    return this.call<TreeSummary>('tree.summary', { ...o })
+  }
+  blockHistory(id: string, type?: 'design' | 'plan' | 'digest') {
+    return this.call<HistoryEntry[]>('block.history', type ? { id, type } : { id })
+  }
+  /**
+   * Offer to run relayed LLM providers for the daemon (the Kilo plugin runs `kilo`). The daemon
+   * then sends `llm.complete {provider, settings, request}` over this connection; `handler`
+   * answers with an LLMResult. Calls carry `token` (any open session of this connection).
+   */
+  async serveLlm(
+    providers: string[],
+    handler: RequestHandler,
+    params: Record<string, unknown> = {},
+  ): Promise<void> {
+    this.onRequest = handler
+    await this.call('llm.serve', { ...params, providers })
   }
 }
 

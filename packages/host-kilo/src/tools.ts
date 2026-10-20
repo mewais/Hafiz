@@ -3,6 +3,7 @@
 // call is resolved to that session's own Hafiz session (role, parent, spawned block, token) and
 // attributed correctly. Generated from the same catalogue the MCP gateway uses.
 import {
+  agentRoleNames,
   type Config,
   type RoleTool,
   TOOL_SPECS,
@@ -16,7 +17,7 @@ import type { SessionRegistry } from './sessions.js'
 
 /** Roles any Kilo agent can be managed as: the role agents plus the two defaults. */
 export function managedRoles(config: Config): string[] {
-  const roles = Object.keys(config.roles.roles).filter((r) => r !== 'user')
+  const roles = agentRoleNames(config)
   const kilo = config.hafiz.host.kilo
   for (const r of [kilo.default_role, kilo.default_subagent_role])
     if (r && r !== 'none' && config.roles.roles[r] && !roles.includes(r)) roles.push(r)

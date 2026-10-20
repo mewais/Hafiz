@@ -1,12 +1,16 @@
 // Builds the two publishable packages from the tsc output of the workspace:
 //   packages/hafiz        -> dist/hafiz.js        one executable: CLI + daemon + MCP gateway
-//   packages/kilo-plugin  -> dist/index.js        the Kilo plugin (`export default { id, server }`)
+//   packages/kilo-plugin  -> dist/index.js        the Kilo server plugin (`export default { id, server }`)
+//                         -> dist/tui.js          the Kilo TUI plugin (`export default { id, tui }`)
 // Each bundle inlines every @hafiz/* package and the npm dependencies, so a published package has
 // no runtime dependencies. The default configuration (YAML + rules) is copied next to the entry.
 // Usage: node scripts/bundle.mjs [hafiz|kilo-plugin ...]   (run `tsc -b` first)
 import { chmodSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { transformAsync } from '@babel/core'
+import ts from '@babel/preset-typescript'
+import solid from 'babel-preset-solid'
 import { build } from 'esbuild'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -16,6 +20,27 @@ const pkg = (name) => join(root, 'packages', name)
 const cjsShim =
   "import { createRequire as __hafizCreateRequire } from 'node:module';\n" +
   'const require = __hafizCreateRequire(import.meta.url);'
+
+// Kilo's TUI plugins are Solid components rendered by opentui. Kilo transpiles `.tsx` itself
+// only outside node_modules, so a published plugin ships compiled JS: Solid's universal JSX
+// transform against `@opentui/solid` (what Kilo's own runtime transform does), with `solid-js`
+// and `@opentui/*` left as imports; Kilo's runtime plugin maps those onto its own instances.
+const solidTsx = {
+  name: 'solid-tsx',
+  setup(b) {
+    b.onLoad({ filter: /\.tsx$/ }, async (args) => {
+      const { readFile } = await import('node:fs/promises')
+      const out = await transformAsync(await readFile(args.path, 'utf8'), {
+        filename: args.path,
+        configFile: false,
+        babelrc: false,
+        presets: [[solid, { moduleName: '@opentui/solid', generate: 'universal' }], [ts]],
+      })
+      return { contents: out?.code ?? '', loader: 'js' }
+    })
+  },
+}
+const TUI_EXTERNAL = ['solid-js', 'solid-js/*', '@opentui/*']
 
 const targets = {
   hafiz: {
@@ -28,6 +53,14 @@ const targets = {
     entry: join(pkg('host-kilo'), 'src', 'index.ts'),
     outfile: join(pkg('kilo-plugin'), 'dist', 'index.js'),
     banner: cjsShim,
+    also: [
+      {
+        entry: join(pkg('host-kilo'), 'src', 'tui', 'plugin.tsx'),
+        outfile: join(pkg('kilo-plugin'), 'dist', 'tui.js'),
+        external: TUI_EXTERNAL,
+        plugins: [solidTsx],
+      },
+    ],
   },
 }
 
@@ -38,21 +71,24 @@ for (const name of wanted.length ? wanted : Object.keys(targets)) {
   const dist = dirname(t.outfile)
   rmSync(dist, { recursive: true, force: true })
   mkdirSync(dist, { recursive: true })
-  await build({
-    entryPoints: [t.entry],
-    outfile: t.outfile,
-    bundle: true,
-    platform: 'node',
-    // Prefer ES module entries: some dependencies (jsonc-parser) ship a UMD main that bundlers cannot follow.
-    mainFields: ['module', 'main'],
-    format: 'esm',
-    target: 'node22',
-    banner: { js: t.banner },
-    // Not minified: readable in a stack trace, and the published size is not a concern.
-    sourcemap: false,
-    legalComments: 'none',
-    logLevel: 'warning',
-  })
+  for (const e of [t, ...(t.also ?? [])])
+    await build({
+      entryPoints: [e.entry],
+      outfile: e.outfile,
+      bundle: true,
+      platform: 'node',
+      // Prefer ES module entries: some dependencies (jsonc-parser) ship a UMD main that bundlers cannot follow.
+      mainFields: ['module', 'main'],
+      format: 'esm',
+      target: 'node22',
+      banner: { js: t.banner },
+      external: e.external ?? [],
+      plugins: e.plugins ?? [],
+      // Not minified: readable in a stack trace, and the published size is not a concern.
+      sourcemap: false,
+      legalComments: 'none',
+      logLevel: 'warning',
+    })
   cpSync(join(pkg('core'), 'config', 'default'), join(dist, 'config', 'default'), {
     recursive: true,
   })

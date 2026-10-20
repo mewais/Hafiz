@@ -17,6 +17,8 @@ export interface ScriptedReply {
   status?: number
   /** Reported token usage (defaults: input 10, output 5, no cache). */
   usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+  /** Wait this long before answering (ms). */
+  delayMs?: number
 }
 
 export interface RecordedRequest {
@@ -219,7 +221,7 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
-    req.on('end', () => {
+    req.on('end', async () => {
       const raw = Buffer.concat(chunks).toString('utf8')
       let body: unknown = null
       try {
@@ -247,6 +249,7 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
         res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-model', object: 'model' }] }))
       } else if (path.endsWith('/chat/completions') || path.endsWith('/messages')) {
         const reply = next(rec)
+        if (reply.delayMs) await sleep(reply.delayMs)
         if (reply.status) {
           res.writeHead(reply.status, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ error: { message: `mock: scripted ${reply.status}` } }))

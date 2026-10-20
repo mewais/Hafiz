@@ -7,7 +7,14 @@ import { loadConfig, mergeLayers } from './load.js'
 describe('config', () => {
   it('loads and validates the built-in defaults', () => {
     const c = loadConfig()
-    expect(Object.keys(c.roles.roles)).toEqual(['manager', 'designer', 'planner', 'worker', 'user'])
+    expect(Object.keys(c.roles.roles)).toEqual([
+      'manager',
+      'designer',
+      'planner',
+      'worker',
+      'user',
+      'viewer',
+    ])
     expect(c.views.views.default?.rules?.length).toBeGreaterThan(5)
     expect(c.zooms.zooms.FULL).toBeDefined()
     expect(c.kinds.kinds.root?.schemas.design).toBe('root-design')

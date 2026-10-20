@@ -14,9 +14,12 @@ windows:                           # context window per model family; used for b
   default: 200000
 confirm_done: auto                 # auto | ask
 llm:
-  # provider: none | openai-compatible | anthropic | fake (tests).  none = condensation disabled
-  # (the host's own compaction stays on). Real providers need model, api_key_env (the NAME of the
-  # environment variable holding the key) and, for openai-compatible, base_url.
+  # provider: none | kilo | openai-compatible | anthropic | fake (tests).  none = condensation
+  # disabled (the host's own compaction stays on). kilo = run through Kilo itself (the Kilo plugin
+  # only): model is a Kilo `provider/model`, no key needed, and the cost shows in Kilo's usage for
+  # the session. Other real providers need model, api_key_env (the NAME of the environment
+  # variable holding the key) and, for openai-compatible, base_url.
+  #   condenser: { provider: kilo, model: anthropic/claude-haiku-4-5 }
   #   condenser: { provider: openai-compatible, base_url: https://openrouter.ai/api/v1,
   #                api_key_env: OPENROUTER_API_KEY, model: google/gemini-2.5-flash }
   condenser: { provider: none, model: cheap }

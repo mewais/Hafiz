@@ -181,6 +181,10 @@ export const rolesFile = z.object({
       focus_policy: z.enum(['all_active', 'spawned_block', 'none']).default('none'),
       tools: z.array(z.string()),
       rules: z.string(),
+      /** False for roles a person plays (the CLI user, the TUI viewer): hosts register no agent. */
+      agent: z.boolean().default(true),
+      /** The daemon refuses every write for sessions of this role, whatever `tools` says. */
+      read_only: z.boolean().default(false),
     }),
   ),
 })

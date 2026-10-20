@@ -7,6 +7,10 @@ export interface LLMRequest {
   maxTokens: number
   /** Ask for a JSON object where the wire format supports it; callers still parse defensively. */
   json?: boolean
+  /** The Hafiz session the call is made for (relayed providers attribute the cost to it). */
+  sessionId?: string
+  /** What the call is for; relayed providers use it to label the work. */
+  purpose?: 'condense' | 'gist' | 'digest'
 }
 
 export interface LLMUsage {
@@ -26,6 +30,19 @@ export interface LLMProvider {
   readonly name: string
   readonly model: string
   complete(req: LLMRequest, signal?: AbortSignal): Promise<LLMResult>
+}
+
+/**
+ * Where relayed providers (`kilo`) run: a process other than the daemon that registered itself
+ * for the provider (the Kilo plugin). The daemon implements it over the plugin's connection.
+ */
+export interface LLMRelay {
+  complete(
+    provider: string,
+    settings: LLMSettings,
+    req: LLMRequest,
+    signal?: AbortSignal,
+  ): Promise<LLMResult>
 }
 
 export class LLMError extends Error {

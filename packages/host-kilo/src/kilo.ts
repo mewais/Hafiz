@@ -2,13 +2,29 @@
 // so the package needs no runtime dependency on Kilo. Verified against the installed type
 // definitions and the CLI bundle; see docs/HOST-MATRIX.md §3.3.
 
-/** Kilo's in-process SDK client; only the calls the adapter makes. */
+/** Kilo's in-process SDK client (v1, `@kilocode/sdk`); only the calls the adapter makes. */
 export interface KiloClient {
   session?: {
     messages?: (o: {
       path: { id: string }
       query?: { directory?: string }
     }) => Promise<{ data?: KiloMessageWithParts[] } | undefined>
+    create?: (o: {
+      body?: { parentID?: string; title?: string }
+      query?: { directory?: string }
+    }) => Promise<{ data?: KiloSession; error?: unknown } | undefined>
+    /** Synchronous: resolves with the finished assistant message. */
+    prompt?: (o: {
+      path: { id: string }
+      body: {
+        agent?: string
+        model?: { providerID: string; modelID: string }
+        system?: string
+        tools?: Record<string, boolean>
+        parts: Array<{ type: 'text'; text: string }>
+      }
+      query?: { directory?: string }
+    }) => Promise<{ data?: KiloMessageWithParts; error?: unknown } | undefined>
   }
 }
 
@@ -54,6 +70,8 @@ export interface KiloMessageInfo {
     reasoning?: number
     cache?: { read: number; write: number }
   }
+  cost?: number
+  error?: unknown
   [k: string]: unknown
 }
 

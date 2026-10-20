@@ -13,8 +13,8 @@ import {
 import { createBackend } from '../backend.js'
 import { acquireLock } from './lock.js'
 import { ensureRuntimeDir, socketPathFor } from './paths.js'
-import { RPC_CODES, type RpcRequest, type RpcResponse, toRpcError } from './rpc.js'
-import { DaemonService } from './service.js'
+import { RPC_CODES, RpcPeer, type RpcRequest, type RpcResponse, toRpcError } from './rpc.js'
+import { DaemonService, LlmRelayHub } from './service.js'
 
 export interface DaemonOptions {
   /** Any directory inside the repo (or the repo root). */
@@ -51,14 +51,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   try {
     backend = createBackend(config, project.storeDir)
     await backend.open()
+    // Relayed LLM providers (`kilo`) run in the host plugin that registered over its connection.
+    const relay = new LlmRelayHub()
     const service = new DaemonService(
       new Core({
         config,
         backend,
         env,
         repoDir: project.repoRoot,
+        relay,
         ...(opts.llm ? { llm: opts.llm } : {}),
       }),
+      relay,
     )
     await service.init()
 
@@ -133,16 +137,25 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   }
 }
 
-/** Newline-delimited JSON-RPC on one connection. */
+/** Newline-delimited JSON-RPC on one connection (requests both ways; see RpcPeer). */
 function serve(sock: Socket, service: DaemonService): void {
   let buf = ''
-  const send = (r: RpcResponse) => {
-    if (!sock.destroyed) sock.write(`${JSON.stringify(r)}\n`)
+  const write = (line: string) => {
+    if (!sock.destroyed) sock.write(line)
   }
+  const send = (r: RpcResponse) => write(`${JSON.stringify(r)}\n`)
+  const peer = new RpcPeer(write)
+  sock.on('close', () => {
+    peer.close()
+    service.disconnected(peer)
+  })
   const onLine = async (line: string) => {
     let req: RpcRequest
     try {
       req = JSON.parse(line) as RpcRequest
+      // an answer to a request the daemon sent this client
+      if (req && typeof req === 'object' && !('method' in req) && peer.settle(req as RpcResponse))
+        return
     } catch {
       return send({
         jsonrpc: '2.0',
@@ -157,7 +170,7 @@ function serve(sock: Socket, service: DaemonService): void {
         error: { code: RPC_CODES.invalid_request, message: 'invalid request' },
       })
     try {
-      const result = await service.handle(req.method, req.params ?? {})
+      const result = await service.handle(req.method, req.params ?? {}, peer)
       send({ jsonrpc: '2.0', id: req.id, result: result ?? null })
     } catch (e) {
       send({ jsonrpc: '2.0', id: req.id, error: toRpcError(e) })

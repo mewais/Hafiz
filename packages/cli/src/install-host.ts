@@ -80,27 +80,42 @@ export function kiloInstalledIn(io: Pick<Io, 'cwd' | 'env'>): string[] {
   return out
 }
 
-export async function installHost(
-  io: Io,
+/** Where Kilo's TUI reads plugins: `tui.json[c]` next to the server config (Kilo ≥ 7.8). */
+export function kiloTuiCandidates(
+  serverFile: string,
+  io: Pick<Io, 'cwd' | 'env'>,
+  global: boolean,
+) {
+  if (global) {
+    const base = io.env.XDG_CONFIG_HOME || join(io.env.HOME || homedir(), '.config')
+    return ['tui.jsonc', 'tui.json'].map((f) => join(base, 'kilo', f))
+  }
+  const dir = dirname(serverFile)
+  const root = dirname(kiloConfigCandidates(io, false)[0] as string)
+  const own = ['tui.jsonc', 'tui.json'].map((f) => join(dir, f))
+  const others = [root, join(root, '.kilo')]
+    .filter((d) => d !== dir)
+    .flatMap((d) => ['tui.jsonc', 'tui.json'].map((f) => join(d, f)))
+  return [...own, ...others]
+}
+
+type Outcome = 'added' | 'present' | 'removed' | 'absent'
+
+/** Add or remove the Hafiz entry in the `plugin` array of the first fitting candidate file. */
+function editPlugins(
+  candidates: string[],
   action: 'install' | 'uninstall',
-  host: string,
-  opts: { global: boolean },
-): Promise<void> {
-  if (host !== 'kilo')
-    throw new CliError(`unknown host '${host}'; only 'kilo' is supported (HOST-MATRIX.md)`)
-  const candidates = kiloConfigCandidates(io, opts.global)
+): { file: string; outcome: Outcome } {
   const holdsPlugin = (f: string) => existsSync(f) && pluginIndex(f, readFileSync(f, 'utf8')) >= 0
   const file =
-    (action === 'uninstall' ? candidates.find(holdsPlugin) : undefined) ??
+    candidates.find(holdsPlugin) ??
     candidates.find((f) => existsSync(f)) ??
     (candidates[0] as string)
-  const scope = opts.global ? 'global' : 'project'
   const exists = existsSync(file)
   let text = exists ? readFileSync(file, 'utf8') : '{\n}\n'
   const idx = pluginIndex(file, text)
-
   if (action === 'install') {
-    if (idx >= 0) return io.out(`already installed in ${file}`)
+    if (idx >= 0) return { file, outcome: 'present' }
     const plugin = parseConfig(file, text).plugin
     if (plugin !== undefined && !Array.isArray(plugin))
       throw new CliError(`${file}: "plugin" is not an array; add "${KILO_PLUGIN}" by hand`)
@@ -110,13 +125,37 @@ export async function installHost(
     text = formatEdits(text, edits)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, text)
-    io.out(`installed ${KILO_PLUGIN} in ${file} (${scope})`)
-    io.out('restart Kilo to load it; `hafiz init <name>` enables it in a repo')
-    return
+    return { file, outcome: 'added' }
   }
+  if (!exists || idx < 0) return { file, outcome: 'absent' }
+  writeFileSync(file, formatEdits(text, modify(text, ['plugin', idx], undefined, {})))
+  return { file, outcome: 'removed' }
+}
 
-  if (!exists || idx < 0) return io.out(`not installed in ${file}`)
-  text = formatEdits(text, modify(text, ['plugin', idx], undefined, {}))
-  writeFileSync(file, text)
-  io.out(`removed ${KILO_PLUGIN} from ${file} (${scope})`)
+/**
+ * The server plugin goes in Kilo's `kilo.json[c]` `plugin` list, the TUI panel in `tui.json[c]`
+ * (same npm package: Kilo loads its `./tui` export there). Both edits are idempotent.
+ */
+export async function installHost(
+  io: Io,
+  action: 'install' | 'uninstall',
+  host: string,
+  opts: { global: boolean },
+): Promise<void> {
+  if (host !== 'kilo')
+    throw new CliError(`unknown host '${host}'; only 'kilo' is supported (HOST-MATRIX.md)`)
+  const scope = opts.global ? 'global' : 'project'
+  const server = editPlugins(kiloConfigCandidates(io, opts.global), action)
+  const tui = editPlugins(kiloTuiCandidates(server.file, io, opts.global), action)
+  const say = (r: { file: string; outcome: Outcome }, what: string) => {
+    if (r.outcome === 'added') io.out(`installed ${KILO_PLUGIN} (${what}) in ${r.file} (${scope})`)
+    if (r.outcome === 'present') io.out(`already installed (${what}) in ${r.file}`)
+    if (r.outcome === 'removed')
+      io.out(`removed ${KILO_PLUGIN} (${what}) from ${r.file} (${scope})`)
+    if (r.outcome === 'absent') io.out(`not installed (${what}) in ${r.file}`)
+  }
+  say(server, 'server plugin')
+  say(tui, 'TUI panel')
+  if (server.outcome === 'added' || tui.outcome === 'added')
+    io.out('restart Kilo to load it; `hafiz init <name>` enables it in a repo')
 }

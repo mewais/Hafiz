@@ -2,7 +2,7 @@
 // plugin tools by default; role MCP servers with `host.kilo.tools: mcp`), slash commands, store
 // deny rules and compaction settings, and (proxy shaper) re-point provider base URLs. Pure apart
 // from the `wrap` callback; user-provided entries win over ours.
-import { type Config, rulesFor } from '@hafiz/core'
+import { agentRoleNames, type Config, rulesFor } from '@hafiz/core'
 import type { KiloConfig } from './kilo.js'
 import { toolNamesForRole } from './tools.js'
 
@@ -29,9 +29,9 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   worker: 'Hafiz worker: implements one block; spawn with hafiz:block=<id> in the prompt',
 }
 
-/** Roles that get a Kilo agent (the `user` role is the human's CLI). */
+/** Roles that get a Kilo agent (not the roles a person plays: `user`, `viewer`). */
 export function agentRoles(config: Config): string[] {
-  return Object.keys(config.roles.roles).filter((r) => r !== 'user')
+  return agentRoleNames(config)
 }
 
 const shellQuote = (s: string) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)

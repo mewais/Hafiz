@@ -16,8 +16,9 @@ hafiz install kilo        # add the plugin to this repo's Kilo config (or --glob
 ```
 
 `hafiz install kilo` edits `kilo.jsonc` (or `.kilo/kilo.jsonc`) in place, keeping your comments,
-and adds `@hafiz/kilo-plugin` to its `plugin` array. It is idempotent; `hafiz uninstall kilo`
-removes it. Kilo loads the plugin on its next start.
+and adds `@hafiz/kilo-plugin` to its `plugin` array; it adds the same package to `tui.jsonc` next
+to it for the TUI panel. It is idempotent; `hafiz uninstall kilo` removes both. Kilo loads the
+plugin on its next start.
 
 ## Start a project
 
@@ -48,11 +49,39 @@ fingerprint), so teammates and fresh clones find, or are told to create, their o
 - Look around: `hafiz tree`, `hafiz show <block>`, `hafiz context --role worker --focus <block>`,
   `hafiz explain <block>`, `hafiz history <block> design`, `hafiz revert <block> design <commit>`.
 
+## The Kilo TUI panel
+
+In the Kilo TUI the session sidebar gets a **Hafiz** section: the project, this session's role
+and focus, the block tree (◆ root, ✓ done, ▶ active, ◐ active with children, ○ planned,
+⧗ blocked, ✗ dropped; `3/5` plan steps; `●` on this session's focus blocks), open threads,
+pending review items, the latest notices and the session's Hafiz cost. Paths to focus and active
+blocks are open, finished and planned subtrees are folded to `▸ Billing (4)`; click a row to open
+or close it. The prompt shows a chip such as `◆ Payments · 2 pending`, and new review items and
+compliance notices pop up as toasts.
+
+`/hafiz` (or `ctrl+x f`) opens a full-screen view with three tabs: **Tree** (↑↓ move, ⏎/→ open,
+← close, `z` cycles the zoom of the selected block, `h` its doc history), **Review** (pending
+proposals with what they would run) and **Decisions** (standing rules and recent decisions per
+block). Esc goes back. The panel is strictly read-only: it opens a `viewer` session the daemon
+refuses all writes for. Accept or reject with `hafiz review --accept <id>`; everything else goes
+through agents or the CLI.
+
 ## Condenser model
 
 Without a condenser Kilo keeps its own compaction. To let Hafiz condense the conversation tail
 with a cheap model, put this in `~/.hafiz/config/hafiz.yaml` (all projects) or
-`<store>/config/hafiz.yaml` (one project):
+`<store>/config/hafiz.yaml` (one project). The recommended setting runs it through Kilo itself,
+so it needs no extra key and its cost shows up in Kilo's usage for the session it condensed:
+
+```yaml
+llm:
+  condenser:
+    provider: kilo
+    model: anthropic/claude-haiku-4-5    # any Kilo provider/model
+  drafters: { enabled: true, provider: kilo, model: anthropic/claude-haiku-4-5 }  # optional
+```
+
+Or call a provider directly:
 
 ```yaml
 llm:
@@ -63,7 +92,7 @@ llm:
     model: google/gemini-2.5-flash
 ```
 
-`hafiz doctor --online` sends a tiny request to check the provider is reachable.
+`hafiz doctor --online` sends a tiny request to check a direct provider is reachable.
 
 ## Where data lives
 

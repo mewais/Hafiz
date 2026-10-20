@@ -3,10 +3,10 @@
 // step statuses, standing levels, zooms) must match the config.
 import { describe, expect, it } from 'vitest'
 import { TOOL_SPECS, toolName, toolsForRole } from '../commands/catalogue.js'
-import { loadConfig, rulesFor } from './load.js'
+import { agentRoleNames, loadConfig, rulesFor } from './load.js'
 
 const config = loadConfig()
-const agentRoles = Object.keys(config.roles.roles).filter((r) => r !== 'user')
+const agentRoles = agentRoleNames(config)
 const mentioned = (text: string) => [...new Set(text.match(/\bhafiz_[a-z_]+\b/g) ?? [])]
 
 describe('rules files', () => {
@@ -38,6 +38,12 @@ describe('rules files', () => {
 
   it('the user role gets only its own file', () => {
     expect(rulesFor(config, 'user')).not.toContain('<hafiz-delta>')
+  })
+
+  it('the viewer is a person, not an agent: own file only, read-only', () => {
+    expect(agentRoles).not.toContain('viewer')
+    expect(rulesFor(config, 'viewer')).not.toContain('<hafiz-delta>')
+    expect(config.roles.roles.viewer).toMatchObject({ agent: false, read_only: true })
   })
 
   it('cite the configured vocabulary', () => {

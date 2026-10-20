@@ -1,6 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
   "references": [{ "path": "../core" }, { "path": "../gateway-mcp" }, { "path": "../cli" }]

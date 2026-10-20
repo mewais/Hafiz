@@ -6,16 +6,22 @@ import {
   authorize,
   type ContextOptions,
   type Core,
+  ForbiddenError,
   focusFromPolicy,
   HafizError,
   isAllowed,
+  LLMError,
+  type LLMRelay,
+  type LLMRequest,
+  type LLMResult,
+  type LLMSettings,
   type Notice,
   nudgeText,
   type Session,
   ValidationError,
 } from '@hafiz/core'
 import { z } from 'zod'
-import { RPC_CODES, RpcFailure } from './rpc.js'
+import { RPC_CODES, RpcFailure, type RpcPeer } from './rpc.js'
 
 export interface QueuedNotice extends Notice {
   /** What produced it: `nudge`, `proposal`, … */
@@ -24,6 +30,80 @@ export interface QueuedNotice extends Notice {
 }
 
 const QUEUE_CAP = 50
+/** Notices kept per session for `notices.peek` (delivered or not). */
+const RECENT_CAP = 20
+
+/**
+ * Methods that change the store. Sessions of a `read_only` role (the TUI viewer) may call none
+ * of them, whatever their tool list says.
+ */
+const WRITE_METHODS = new Set([
+  'dispatch',
+  'counters.add',
+  'condense',
+  'checkpoint.request',
+  'llm.serve',
+])
+
+/**
+ * Runs relayed LLM providers (`llm.*.provider: kilo`) in the host plugin that registered for
+ * them with `llm.serve`: the daemon sends `llm.complete` back over that plugin's connection. A
+ * request for session S goes to the connection S was last served on, so the plugin that owns the
+ * Kilo session runs the call (and Kilo bills it to that session's family).
+ */
+export class LlmRelayHub implements LLMRelay {
+  private readonly relays = new Map<RpcPeer, Set<string>>()
+  private readonly owners = new Map<string, RpcPeer>()
+
+  register(peer: RpcPeer, providers: string[]): void {
+    this.relays.set(peer, new Set(providers))
+  }
+
+  /** Session `id` is served on `peer`. */
+  own(id: string, peer: RpcPeer): void {
+    if (this.owners.get(id) !== peer) this.owners.set(id, peer)
+  }
+
+  drop(peer: RpcPeer): void {
+    this.relays.delete(peer)
+    for (const [id, p] of this.owners) if (p === peer) this.owners.delete(id)
+  }
+
+  serves(provider: string): boolean {
+    for (const set of this.relays.values()) if (set.has(provider)) return true
+    return false
+  }
+
+  async complete(
+    provider: string,
+    settings: LLMSettings,
+    req: LLMRequest,
+    signal?: AbortSignal,
+  ): Promise<LLMResult> {
+    const ok = (p: RpcPeer | undefined) => !!p && !!this.relays.get(p)?.has(provider)
+    const owner = req.sessionId ? this.owners.get(req.sessionId) : undefined
+    const peer = ok(owner)
+      ? owner
+      : [...this.relays.keys()].find((p) => this.relays.get(p)?.has(provider))
+    if (!peer)
+      throw new LLMError(
+        `llm provider '${provider}' runs inside its host plugin, and none is connected`,
+      )
+    let out: unknown
+    try {
+      out = await peer.request(
+        'llm.complete',
+        { provider, settings: { ...settings }, request: { ...req } },
+        { timeoutMs: (settings.timeout_seconds ?? 180) * 1000, ...(signal ? { signal } : {}) },
+      )
+    } catch (e) {
+      throw new LLMError(`${provider}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    const r = out as Partial<LLMResult> | null
+    if (!r || typeof r.text !== 'string') throw new LLMError(`${provider}: relay returned no text`)
+    return { text: r.text, ...(r.usage ? { usage: r.usage } : {}) }
+  }
+}
 
 const optStr = z.string().optional()
 const token = { token: z.string().min(1) }
@@ -61,6 +141,18 @@ const schemas = {
     status: z.enum(['pending', 'accepted', 'rejected']).optional(),
   }),
   'notices.drain': z.object(token),
+  /** Recent notices of a session (own by default), without draining its queue. */
+  'notices.peek': z.object({ ...token, session: optStr }),
+  /** The tree with per-block step progress, threads and decisions, plus standing decisions. */
+  'tree.summary': z.object({ ...token, recentDecisions: z.number().int().min(0).optional() }),
+  /** Doc version history of a block, newest first. */
+  'block.history': z.object({
+    ...token,
+    id: z.string(),
+    type: z.enum(['design', 'plan', 'digest']).optional(),
+  }),
+  /** A host plugin offers to run relayed LLM providers (`kilo`) for the daemon. */
+  'llm.serve': z.object({ ...token, providers: z.array(z.string().min(1)).min(1) }),
   /** Fold the turns leaving a session's tail into its unfiled summary (async, may take seconds). */
   condense: z.object({
     ...token,
@@ -99,24 +191,33 @@ function ctxOf(p: Record<string, unknown>): ContextOptions {
 export class DaemonService {
   private chain: Promise<unknown> = Promise.resolve()
   private readonly queues = new Map<string, QueuedNotice[]>()
+  private readonly recent = new Map<string, QueuedNotice[]>()
   private readonly nudged = new Map<string, number>()
   /** Command whose last cap rejection a session has not yet retried. */
   private readonly rejected = new Map<string, string>()
   /** Proposals already announced (everything pending at startup counts as old news). */
   private seenProposals = new Set<string>()
 
-  constructor(readonly core: Core) {}
+  constructor(
+    readonly core: Core,
+    readonly relay: LlmRelayHub = new LlmRelayHub(),
+  ) {}
+
+  /** A client connection closed: it no longer relays anything. */
+  disconnected(peer: RpcPeer): void {
+    this.relay.drop(peer)
+  }
 
   async init(): Promise<void> {
     for (const p of await this.core.backend.read.listProposals()) this.seenProposals.add(p.id)
   }
 
   /** Entry point for one RPC call; errors surface as RpcFailure/HafizError for the caller to map. */
-  handle(method: string, params: Record<string, unknown>): Promise<unknown> {
+  handle(method: string, params: Record<string, unknown>, peer?: RpcPeer): Promise<unknown> {
     // `condense` waits on an LLM for seconds; it must not stall tool calls. Its store writes are
     // single transactions that re-read the session, so running beside the chain is safe.
-    if (method === 'condense') return this.exec(method, params)
-    const run = this.chain.then(() => this.exec(method, params))
+    if (method === 'condense') return this.exec(method, params, peer)
+    const run = this.chain.then(() => this.exec(method, params, peer))
     this.chain = run.catch(() => undefined)
     return run
   }
@@ -126,7 +227,11 @@ export class DaemonService {
     return this.chain.then(() => undefined)
   }
 
-  private async exec(method: string, raw: Record<string, unknown>): Promise<unknown> {
+  private async exec(
+    method: string,
+    raw: Record<string, unknown>,
+    peer?: RpcPeer,
+  ): Promise<unknown> {
     const schema = schemas[method as DaemonMethod]
     if (!schema)
       throw new RpcFailure({
@@ -145,6 +250,9 @@ export class DaemonService {
     if (method === 'session.open') return this.sessionOpen(p as never)
 
     const session = await this.authenticate(p.token as string)
+    if (WRITE_METHODS.has(method) && this.core.config.roles.roles[session.role]?.read_only)
+      throw new ForbiddenError(session.role, method)
+    if (peer) this.relay.own(session.id, peer)
     const by: Actor = {
       sessionId: session.id,
       role: session.role,
@@ -215,7 +323,7 @@ export class DaemonService {
       case 'checkpoint.request': {
         // The user (CLI) may name a session; agents may only ask for their own.
         const target = (p.session as string | undefined) ?? session.id
-        if (target !== session.id) authorize(core.config, by.role, 'session.status')
+        if (target !== session.id) authorize(core.config, by.role, 'session.checkpoint')
         const live = target === '*' ? await core.backend.read.listSessions({ active: true }) : []
         const ids =
           target === '*' ? live.filter((x) => x.id !== session.id).map((x) => x.id) : [target]
@@ -230,6 +338,23 @@ export class DaemonService {
       }
       case 'notices.drain':
         return this.drainFor(session.id)
+      case 'notices.peek': {
+        const target = (p.session as string | undefined) ?? session.id
+        if (target !== session.id) authorize(core.config, by.role, 'session.status')
+        return [...(this.recent.get(target) ?? [])]
+      }
+      case 'tree.summary':
+        return core.treeSummary(
+          by,
+          typeof p.recentDecisions === 'number' ? { recentDecisions: p.recentDecisions } : {},
+        )
+      case 'block.history':
+        return core.docHistory(by, p.id as string, p.type as never)
+      case 'llm.serve': {
+        if (!peer) throw new ValidationError('llm.serve needs a socket connection')
+        this.relay.register(peer, p.providers as string[])
+        return { serving: p.providers }
+      }
       default:
         throw new RpcFailure({ code: RPC_CODES.method_not_found, message: 'unknown method' })
     }
@@ -397,10 +522,15 @@ export class DaemonService {
   }
 
   enqueue(sessionId: string, n: Notice, event: string): void {
+    const item = { ...n, event, ts: this.core.clock.now() }
     const q = this.queues.get(sessionId) ?? []
-    q.push({ ...n, event, ts: this.core.clock.now() })
+    q.push(item)
     while (q.length > QUEUE_CAP) q.shift()
     this.queues.set(sessionId, q)
+    const r = this.recent.get(sessionId) ?? []
+    r.push(item)
+    while (r.length > RECENT_CAP) r.shift()
+    this.recent.set(sessionId, r)
   }
 
   /** Tell sessions that can review proposals when a new one lands. */

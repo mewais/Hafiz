@@ -27,3 +27,31 @@ describe('published bundle: @hafiz/kilo-plugin', () => {
     expect(Object.keys(mod.default).sort()).toEqual(['id', 'server'])
   })
 })
+
+describe('published bundle: @hafiz/kilo-plugin/tui', () => {
+  const tui = join(root, 'packages/kilo-plugin/dist/tui.js')
+  it('is compiled Solid (universal, @opentui/solid) importing only what Kilo provides', () => {
+    const code = readFileSync(tui, 'utf8')
+    const specifiers = new Set(
+      [...code.matchAll(/^import .*? from "([^"]+)"/gm)].map((m) => m[1] as string),
+    )
+    // Kilo's runtime maps these onto its own solid/opentui instances; everything else is inlined
+    expect([...specifiers].filter((s) => !s.startsWith('node:')).sort()).toEqual([
+      '@opentui/solid',
+      'solid-js',
+    ])
+    expect(code).toMatch(/_\$createElement\("box"\)/) // JSX compiled away, universal renderer
+    expect(code).not.toMatch(/<box[\s>]/)
+    expect(code).toMatch(/export \{\s*plugin_default as default\s*\};?\s*$/) // default only
+    expect(code).toContain('id: "hafiz"')
+  })
+
+  it('package exports: server entry (main, ./server) and the TUI entry (./tui)', () => {
+    const pkg = JSON.parse(readFileSync(join(root, 'packages/kilo-plugin/package.json'), 'utf8'))
+    expect(pkg.main).toBe('./dist/index.js')
+    expect(pkg.exports['./server'].import).toBe('./dist/index.js')
+    expect(pkg.exports['./tui'].import).toBe('./dist/tui.js')
+    // the server bundle stays free of the TUI runtime
+    expect(readFileSync(entry, 'utf8')).not.toContain('@opentui/solid')
+  })
+})

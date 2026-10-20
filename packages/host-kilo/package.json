@@ -19,8 +19,13 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@hafiz/cli": "workspace:*",
     "@hafiz/core": "workspace:*",
-    "@hafiz/gateway-mcp": "workspace:*",
-    "@hafiz/cli": "workspace:*"
+    "@hafiz/gateway-mcp": "workspace:*"
+  },
+  "devDependencies": {
+    "@opentui/core": "0.5.11",
+    "@opentui/solid": "0.5.11",
+    "solid-js": "1.9.12"
   }
 }

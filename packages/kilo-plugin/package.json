@@ -8,6 +8,12 @@
     ".": {
       "import": "./dist/index.js"
     },
+    "./server": {
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "import": "./dist/tui.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

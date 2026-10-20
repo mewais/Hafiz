@@ -441,6 +441,7 @@ describe('mcp resources and prompts', () => {
       'hafiz_manager',
       'hafiz_planner',
       'hafiz_user',
+      'hafiz_viewer',
       'hafiz_worker',
     ])
     const pr = await mgr.mcp.getPrompt({ name: 'hafiz_worker' })

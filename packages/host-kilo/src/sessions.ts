@@ -3,6 +3,7 @@
 // `hafiz:block=<id>` marker in the task prompt. One daemon connection serves every session; each
 // call carries that session's token explicitly.
 import {
+  agentRoleNames,
   type Config,
   estimatorTokenizer,
   type ResolvedProject,
@@ -10,7 +11,8 @@ import {
   type Session,
   type Tokenizer,
 } from '@hafiz/core'
-import type { DaemonClient } from '@hafiz/gateway-mcp'
+import type { DaemonClient, RequestHandler } from '@hafiz/gateway-mcp'
+import { CONDENSER_AGENT } from './llm.js'
 import type { CondenseRequest, SessionSource, UnfiledState } from './shaper/core.js'
 
 /** Convention: a task prompt containing `hafiz:block=<id>` spawns the subagent on that block. */
@@ -50,6 +52,8 @@ interface Known {
   opening?: Promise<boolean> | undefined
   /** Fingerprints of reports already captured (dedupe tool.after vs idle fallback). */
   reports?: Set<string>
+  /** Hafiz's own helper session (the `kilo` LLM provider's child): never managed. */
+  ignored?: boolean
 }
 
 export interface RegistryOptions {
@@ -58,18 +62,21 @@ export interface RegistryOptions {
   connect: () => Promise<DaemonClient>
   log: (line: string) => void
   tokenizer?: Tokenizer
+  /** Relayed LLM providers this plugin runs for the daemon (`kilo`), and how. */
+  llm?: { providers: string[]; handler: RequestHandler }
 }
 
 export class SessionRegistry implements SessionSource {
   private readonly known = new Map<string, Known>()
   private client: Promise<DaemonClient> | undefined
   private closed = false
+  private serving: DaemonClient | undefined
   private readonly tok: Tokenizer
   private readonly roles: Set<string>
 
   constructor(private readonly opts: RegistryOptions) {
     this.tok = opts.tokenizer ?? estimatorTokenizer
-    this.roles = new Set(Object.keys(opts.config.roles.roles).filter((r) => r !== 'user'))
+    this.roles = new Set(agentRoleNames(opts.config))
   }
 
   /** True when the Kilo agent is one of Hafiz's own role agents (its prompt is the rules). */
@@ -87,6 +94,7 @@ export class SessionRegistry implements SessionSource {
     agent: string | undefined,
     where: { subagent?: boolean; block?: string | undefined } = {},
   ): string | undefined {
+    if (agent === CONDENSER_AGENT) return undefined
     if (agent && this.roles.has(agent)) return agent
     const kilo = this.opts.config.hafiz.host.kilo
     const r = where.subagent
@@ -129,6 +137,15 @@ export class SessionRegistry implements SessionSource {
     if (info.agent) k.agent = info.agent
   }
 
+  /** Never manage this Kilo session (a child Hafiz created to run the `kilo` LLM provider). */
+  ignore(id: string): void {
+    this.entry(id).ignored = true
+  }
+
+  isIgnored(id: string): boolean {
+    return !!this.known.get(id)?.ignored
+  }
+
   get(id: string): Readonly<Known> | undefined {
     return this.known.get(id)
   }
@@ -141,6 +158,7 @@ export class SessionRegistry implements SessionSource {
   /** Open (or re-attach) the Hafiz session for a Kilo session. Resolves false if unmanaged. */
   open(id: string, hints: { agent?: string | undefined; prompt?: string | undefined } = {}) {
     const k = this.entry(id)
+    if (k.ignored) return Promise.resolve(false)
     if (hints.agent && !k.agent) k.agent = hints.agent
     if (k.token && !k.ended) return Promise.resolve(true)
     if (k.opening) return k.opening
@@ -161,6 +179,7 @@ export class SessionRegistry implements SessionSource {
         })
         Object.assign(k, { role, token: s.token, focus: s.focus.blocks, ended: false })
         if (block) k.block = block
+        await this.serveLlm(c, s.token)
         return true
       } catch (e) {
         this.opts.log(`hafiz: could not open session ${id} as ${role}: ${String(e)}`)
@@ -172,11 +191,26 @@ export class SessionRegistry implements SessionSource {
     return k.opening
   }
 
+  /** Offer the relayed LLM providers on this connection, once (needs any open session's token). */
+  private async serveLlm(c: DaemonClient, token: string): Promise<void> {
+    const llm = this.opts.llm
+    if (!llm || this.serving === c) return
+    this.serving = c
+    try {
+      await c.serveLlm(llm.providers, llm.handler, { token })
+    } catch (e) {
+      this.serving = undefined
+      this.opts.log(`hafiz: cannot serve llm provider(s) ${llm.providers.join(', ')}: ${String(e)}`)
+    }
+  }
+
   /** One daemon call as session `id` (its token is attached). */
   async call<T>(id: string, method: string, params: Record<string, unknown> = {}): Promise<T> {
     const k = this.known.get(id)
     if (!k?.token) throw new Error(`session ${id} is not open`)
-    return (await this.daemon()).call<T>(method, { token: k.token, ...params })
+    const c = await this.daemon()
+    if (this.opts.llm && this.serving !== c) await this.serveLlm(c, k.token) // after a reconnect
+    return c.call<T>(method, { token: k.token, ...params })
   }
 
   async counters(id: string, delta: Record<string, number>): Promise<void> {

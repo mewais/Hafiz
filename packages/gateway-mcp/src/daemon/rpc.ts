@@ -69,3 +69,62 @@ export class RpcError extends Error {
     return d && typeof d === 'object' ? d.code : undefined
   }
 }
+
+type Waiter = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer?: NodeJS.Timeout }
+
+/**
+ * The reverse direction on one connection: the daemon asks a client (a host plugin that
+ * registered as an LLM relay) to run something and waits for its answer. Ids are strings
+ * (`d1`, `d2`, …) so they never collide with the client's numeric ids.
+ */
+export class RpcPeer {
+  private next = 1
+  private readonly waiting = new Map<string, Waiter>()
+  private closed = false
+
+  constructor(private readonly write: (line: string) => void) {}
+
+  request<T = unknown>(
+    method: string,
+    params: Record<string, unknown>,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<T> {
+    if (this.closed) return Promise.reject(new Error('connection closed'))
+    const id = `d${this.next++}`
+    return new Promise<T>((resolve, reject) => {
+      const w: Waiter = { resolve: resolve as (v: unknown) => void, reject }
+      if (opts.timeoutMs)
+        w.timer = setTimeout(() => {
+          this.waiting.delete(id)
+          reject(new Error(`${method} timed out after ${opts.timeoutMs} ms`))
+        }, opts.timeoutMs)
+      opts.signal?.addEventListener('abort', () => {
+        if (!this.waiting.delete(id)) return
+        clearTimeout(w.timer)
+        reject(new Error(`${method} aborted`))
+      })
+      this.waiting.set(id, w)
+      this.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+    })
+  }
+
+  /** A response line from the client; false when it answers nothing we asked. */
+  settle(res: RpcResponse): boolean {
+    const w = typeof res.id === 'string' ? this.waiting.get(res.id) : undefined
+    if (!w) return false
+    this.waiting.delete(res.id as string)
+    clearTimeout(w.timer)
+    if (res.error) w.reject(new RpcError(res.error.code, res.error.message, res.error.data))
+    else w.resolve(res.result)
+    return true
+  }
+
+  close(): void {
+    this.closed = true
+    for (const w of this.waiting.values()) {
+      clearTimeout(w.timer)
+      w.reject(new Error('connection closed'))
+    }
+    this.waiting.clear()
+  }
+}

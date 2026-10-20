@@ -105,13 +105,24 @@ export function configDirs(storeDir: string, env: NodeJS.ProcessEnv = process.en
 export const COMMON_RULES = 'rules/common.md'
 
 /**
+ * Roles hosts install as agents: every role except the ones a person plays (`agent: false` in
+ * roles.yaml: the CLI `user`, the TUI `viewer`).
+ */
+export function agentRoleNames(config: Config): string[] {
+  return Object.entries(config.roles.roles)
+    .filter(([name, def]) => name !== 'user' && def.agent !== false)
+    .map(([name]) => name)
+}
+
+/**
  * The prompt text for a role: the role's `rules` file followed by `rules/common.md` (if
- * present). The `user` role is the human at the CLI and gets only its own file.
+ * present). Roles a person plays (`user`, `viewer`) get only their own file.
  */
 export function rulesFor(config: Config, role: string): string {
   const def = config.roles.roles[role]
   if (!def) return ''
   const own = (config.rules[def.rules] ?? '').trim()
-  const common = role === 'user' ? '' : (config.rules[COMMON_RULES] ?? '').trim()
+  const person = role === 'user' || def.agent === false
+  const common = person ? '' : (config.rules[COMMON_RULES] ?? '').trim()
   return [own, common].filter(Boolean).join('\n\n')
 }

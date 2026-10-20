@@ -1,6 +1,7 @@
 import {
   LLMError,
   type LLMProvider,
+  type LLMRelay,
   type LLMRequest,
   type LLMResult,
   type LLMSettings,
@@ -14,6 +15,44 @@ export type FetchLike = (
 export interface ProviderEnv {
   env?: NodeJS.ProcessEnv
   fetch?: FetchLike
+  /** Carries relayed providers (`kilo`) to the process that can run them. */
+  relay?: LLMRelay
+}
+
+/** Providers that run in a host process, not in the daemon: requests go through an LLMRelay. */
+export const RELAYED_PROVIDERS = ['kilo'] as const
+
+/**
+ * provider `kilo`: the model runs inside Kilo, through the Kilo plugin (a hidden agent in a child
+ * session of the condensed session), so Kilo bills it to that session's family. `model` is a Kilo
+ * `provider/model`. The daemon has no Kilo client of its own; the plugin registers as the relay.
+ */
+export class RelayedProvider implements LLMProvider {
+  constructor(
+    readonly name: string,
+    private readonly s: LLMSettings,
+    private readonly relay?: LLMRelay,
+  ) {}
+  get model(): string {
+    return this.s.model
+  }
+  async complete(req: LLMRequest, signal?: AbortSignal): Promise<LLMResult> {
+    if (!this.relay)
+      throw new LLMError(`llm provider '${this.name}' runs only inside its host's plugin`)
+    return this.relay.complete(this.name, this.s, req, signal)
+  }
+}
+
+/** The same provider with fixed request metadata (session, purpose) added to every call. */
+export function withRequestMeta(
+  p: LLMProvider,
+  meta: Pick<LLMRequest, 'sessionId' | 'purpose'>,
+): LLMProvider {
+  return {
+    name: p.name,
+    model: p.model,
+    complete: (req, signal) => p.complete({ ...req, ...meta }, signal),
+  }
 }
 
 /** provider `none`: condensation and drafting are off. */
@@ -221,9 +260,11 @@ export function createProvider(s: LLMSettings, io: ProviderEnv = {}): LLMProvide
       return new OpenAiCompatibleProvider(s, io)
     case 'anthropic':
       return new AnthropicProvider(s, io)
+    case 'kilo':
+      return new RelayedProvider('kilo', s, io.relay)
     default:
       throw new LLMError(
-        `unknown llm provider '${s.provider}' (none | fake | openai-compatible | anthropic)`,
+        `unknown llm provider '${s.provider}' (none | fake | openai-compatible | anthropic | kilo)`,
       )
   }
 }

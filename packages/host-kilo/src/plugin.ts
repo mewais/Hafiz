@@ -19,6 +19,7 @@ import { type DaemonClient, ensureDaemon } from '@hafiz/gateway-mcp'
 import { toolCounters, USER_TURN_COUNTERS } from './counters.js'
 import { installConfig } from './install.js'
 import type { Hooks, KiloEvent, KiloMessageWithParts, Plugin, PluginInput } from './kilo.js'
+import { installCondenserAgent, kiloRelayHandler, usesKiloLlm } from './llm.js'
 import { createNudgeHooks } from './nudge.js'
 import { SessionRegistry } from './sessions.js'
 import { ConversationShaper } from './shaper/core.js'
@@ -138,7 +139,27 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
               .unref()
           },
         }))
-    const sessions = new SessionRegistry({ project, config, connect: () => connect(project), log })
+    // `llm.*.provider: kilo`: the daemon relays condenser/drafter calls to this plugin, which runs
+    // them as child sessions of the session they work for (llm.ts).
+    const kiloLlm = usesKiloLlm(config.hafiz.llm)
+    const sessions: SessionRegistry = new SessionRegistry({
+      project,
+      config,
+      connect: () => connect(project),
+      log,
+      ...(kiloLlm
+        ? {
+            llm: {
+              providers: ['kilo'],
+              handler: kiloRelayHandler({
+                client: input.client,
+                directory: input.directory,
+                ignore: (id) => sessions.ignore(id),
+              }),
+            },
+          }
+        : {}),
+    })
     const shaper = new ConversationShaper({ config, source: sessions, log })
     const useHooks = setting !== 'proxy'
     const useProxy = setting !== 'hooks'
@@ -190,6 +211,13 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
           ),
           ...(proxy && proxyBase ? { wrap: (id: string, url: string) => proxy.wrap(id, url) } : {}),
         })
+        if (kiloLlm) {
+          const llm = config.hafiz.llm
+          installCondenserAgent(
+            cfg,
+            llm.condenser.provider === 'kilo' ? llm.condenser.model : llm.drafters.model,
+          )
+        }
       },
 
       async event({ event }: { event: KiloEvent }) {

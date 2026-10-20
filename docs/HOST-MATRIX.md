@@ -212,6 +212,26 @@ against a mock LLM; corrections to the above in bold):**
   `orchestrator` (deprecated); subagents `general`, `explore`; hidden `title`, `compaction`.
 - `session.compacted` exists; `compaction` is global config (`auto`, `prune`, `tail_turns`, …).
 
+**TUI panel and `kilo` LLM provider (verified with the real TUI under tmux and `kilo run`,
+7.8.15).** TUI plugins are a separate module (`export default { id, tui }`, never with `server`)
+that Kilo finds through the package's `exports["./tui"]` when the package is listed in
+`tui.json[c]`; they run in the TUI thread while server plugins run in a worker, so the panel opens
+its own daemon connection as a `read_only` `viewer` session (`tree.summary`, `project.status`,
+`proposal.list`, `notices.peek` — which never drains —, `block.read`, `block.history`; every write
+method is refused). Kilo compiles `.tsx` with Solid's universal transform only outside
+`node_modules`, so `@hafiz/kilo-plugin/tui` ships compiled JS (babel-preset-solid,
+`generate: universal`, `moduleName: @opentui/solid`) with `solid-js` and `@opentui/*` left as
+imports, which Kilo's runtime plugin maps onto its own instances. It registers a
+`sidebar_content` slot (opentui delivers `onMouseDown` to boxes there, so rows fold on click), a
+`session_prompt_right` chip, a `hafiz` route with keymap-layer bindings, the `/hafiz` slash
+command (`<leader>f`), and toasts; it refreshes on Kilo events plus a 2 s poll while something is
+on screen, and registers nothing without a Hafiz pointer. With `llm.*.provider: kilo` the daemon
+relays condenser/drafter calls back over the plugin's connection (`llm.serve` /
+`llm.complete`); the plugin creates a child session (`parentID` = the condensed session), prompts
+the hidden `hafiz-condenser` agent (`permission: '*': deny`) synchronously, and the existing
+parsers read the reply. Hafiz ignores that child entirely; its step cost lands in the parent's
+session family. Kilo still prepends its base persona to the hidden agent's prompt.
+
 ---
 
 ## 4. Where the hosts bend the core

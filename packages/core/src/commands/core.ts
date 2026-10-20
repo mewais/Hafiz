@@ -36,8 +36,8 @@ import {
   type StepStatus,
   type Thread,
 } from '../domain/types.js'
-import { createProvider, NoneProvider, providerEnabled } from '../llm/providers.js'
-import type { LLMProvider, LLMUsage } from '../llm/types.js'
+import { createProvider, NoneProvider, providerEnabled, withRequestMeta } from '../llm/providers.js'
+import type { LLMProvider, LLMRelay, LLMUsage } from '../llm/types.js'
 import { gitHead } from '../project/resolve.js'
 import { type Notice, schemaFor, validateDoc } from '../schema/validate.js'
 import {
@@ -72,6 +72,8 @@ export interface CoreDeps {
   clock?: Clock
   /** Replace the providers built from `hafiz.yaml llm.*` (tests inject fakes). */
   llm?: { condenser?: LLMProvider; drafter?: LLMProvider }
+  /** Runs relayed providers (`llm.*.provider: kilo`) in the host process that registered. */
+  relay?: LLMRelay
   /** Environment for provider API keys (default: process.env). */
   env?: NodeJS.ProcessEnv
   /** The project's repo; `done` records its HEAD so `hafiz doctor` can detect drift. */
@@ -97,6 +99,44 @@ export interface BlockDetail {
   decisions: DecisionView[]
   threads: Thread[]
   edges: { dependsOn: Edge[]; dependents: Edge[] }
+}
+
+/** A decision as the TUI lists it. */
+export interface DecisionBrief {
+  id: string
+  blockId: BlockId
+  title: string
+  decision: string
+  ts: string
+  standing?: Standing
+}
+
+export interface TreeSummaryNode {
+  id: BlockId
+  parentId: BlockId | null
+  title: string
+  kind: string
+  status: Status
+  order: number
+  depth: number
+  blockedOn?: BlockedOn
+  /** Plan steps done (or skipped) of total; absent without a plan. */
+  steps?: { done: number; total: number }
+  docs: Record<DocType, number>
+  /** Open and parked threads. */
+  threads: Array<{ id: string; title: string; status: Thread['status'] }>
+  /** Active decisions on the block. */
+  decisions: number
+  /** The latest active decisions, newest first. */
+  recentDecisions: DecisionBrief[]
+}
+
+export interface TreeSummary {
+  project: { id: string; name: string; epoch: number } | null
+  /** Depth-first tree order. */
+  nodes: TreeSummaryNode[]
+  /** Active standing decisions (what the view floor carries), tree order. */
+  standing: DecisionBrief[]
 }
 
 export interface ContextOptions {
@@ -164,7 +204,7 @@ export class Core {
     this.clock = deps.clock ?? systemClock
     this.status = new StatusMachine(this.config.policies.status)
     this.compliance = new ComplianceEngine(this.config.compliance.checks)
-    const io = { env: deps.env ?? process.env }
+    const io = { env: deps.env ?? process.env, ...(deps.relay ? { relay: deps.relay } : {}) }
     const llm = this.config.hafiz.llm
     this.condenserProvider = deps.llm?.condenser ?? createProvider(llm.condenser, io)
     this.drafterProvider =
@@ -1141,7 +1181,8 @@ export class Core {
     }
     let out: Awaited<ReturnType<Condenser['run']>>
     try {
-      out = await new Condenser(this.condenserProvider, this.tok).run(input)
+      const provider = withRequestMeta(this.condenserProvider, { sessionId, purpose: 'condense' })
+      out = await new Condenser(provider, this.tok).run(input)
     } catch (e) {
       const text = `condensation failed, keeping the previous summary: ${e instanceof Error ? e.message : String(e)}`
       await this.run(
@@ -1243,10 +1284,8 @@ export class Core {
     if (!this.draftersEnabled) return null
     const th = await this.backend.read.getThread(threadId)
     if (!th) return null
-    const draft = await new Drafters(this.drafterProvider).gist(
-      th,
-      this.config.logs.thread.gist_cap,
-    )
+    const provider = withRequestMeta(this.drafterProvider, { sessionId, purpose: 'gist' })
+    const draft = await new Drafters(provider).gist(th, this.config.logs.thread.gist_cap)
     if (!draft) return null
     const gist = draft.value
     const proposal = await this.proposalAdd(
@@ -1275,7 +1314,8 @@ export class Core {
     const b = await this.backend.read.getBlock(blockId)
     if (!b) return null
     const log = (await this.backend.read.readLog(blockId, 'progress')).map((x) => x.entry)
-    const draft = await new Drafters(this.drafterProvider).digest(b, log)
+    const provider = withRequestMeta(this.drafterProvider, { sessionId, purpose: 'digest' })
+    const draft = await new Drafters(provider).digest(b, log)
     if (!draft) return null
     const d = draft.value
     const sections: Record<string, SectionValue> = { outcome: String(d.outcome) }
@@ -1449,6 +1489,72 @@ export class Core {
     }
     walk(null, 0)
     return out
+  }
+
+  /**
+   * The block tree with what a UI draws per row (step progress, blocked-on, thread and decision
+   * counts, the latest active decisions) and the standing decisions of the floor. Read-only, one
+   * snapshot; gated like `tree.list`.
+   */
+  async treeSummary(by: Actor, opts: { recentDecisions?: number } = {}): Promise<TreeSummary> {
+    authorize(this.config, by.role, 'tree.list')
+    const snap = await this.snapshot()
+    const recent = opts.recentDecisions ?? 3
+    const brief = (d: DecisionView): DecisionBrief => ({
+      id: d.id,
+      blockId: d.blockId,
+      title: d.title,
+      decision: d.decision,
+      ts: d.ts,
+      ...(d.standing ? { standing: d.standing } : {}),
+    })
+    const nodes: TreeSummaryNode[] = []
+    const standing: DecisionBrief[] = []
+    for (const id of snap.treeOrder) {
+      const b = snap.blocks.get(id)
+      if (!b) continue
+      const active = b.decisions.filter((d) => d.status === 'active')
+      for (const d of active) if (d.standing) standing.push(brief(d))
+      const steps = b.steps
+      nodes.push({
+        id,
+        parentId: b.block.parentId,
+        title: b.block.title,
+        kind: b.block.kind,
+        status: b.block.status,
+        order: b.block.order,
+        depth: snap.depth.get(id) ?? 0,
+        ...(b.block.blockedOn ? { blockedOn: b.block.blockedOn } : {}),
+        ...(steps.length
+          ? {
+              steps: {
+                done: steps.filter((x) => x.status === 'done' || x.status === 'skipped').length,
+                total: steps.length,
+              },
+            }
+          : {}),
+        docs: b.block.docVersions,
+        threads: b.threads
+          .filter((t) => t.status !== 'resolved')
+          .map((t) => ({ id: t.id, title: t.title, status: t.status })),
+        decisions: active.length,
+        recentDecisions: active.slice(-recent).reverse().map(brief),
+      })
+    }
+    return {
+      project: snap.project
+        ? { id: snap.project.id, name: snap.project.name, epoch: snap.project.epoch }
+        : null,
+      nodes,
+      standing,
+    }
+  }
+
+  /** Version history of a block's docs, newest first; gated like `block.read`. */
+  async docHistory(by: Actor, id: BlockId, type?: DocType) {
+    authorize(this.config, by.role, 'block.read')
+    await this.mustBlock(this.backend.read, id)
+    return this.backend.read.history(id, type)
   }
 
   async blockDetail(by: Actor, id: BlockId): Promise<BlockDetail> {

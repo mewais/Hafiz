@@ -141,6 +141,12 @@ async function checkCondenser(core: Core, online: boolean): Promise<Check> {
   const llm = core.config.hafiz.llm.condenser
   if (llm.provider === 'none')
     return { name: 'condenser', level: 'skip', detail: 'not configured (host compaction stays on)' }
+  if (llm.provider === 'kilo')
+    return {
+      name: 'condenser',
+      level: 'ok',
+      detail: `kilo ${llm.model}: runs inside Kilo through the Kilo plugin (no key needed)`,
+    }
   if (!online)
     return {
       name: 'condenser',
