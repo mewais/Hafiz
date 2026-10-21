@@ -151,8 +151,8 @@ only for the optional proxy).
 
 | Job | Mechanism |
 |---|---|
-| Install | one plugin module (works in CLI and VS Code); `config` hook injects: `agent.<role>` definitions (prompt = role rules, `permission` map `hafiz_*: deny` + `allow` for exactly the role's tools, `permission.task` to control who may delegate to whom), per-agent tool permissions for non-Hafiz agents (default roles, below), slash commands, `permission.edit/read` deny for the store path |
-| Tools | **plugin-native** (`tool` hook, stable): `hafiz_<command>` generated from the shared catalogue (`@hafiz/core` `TOOL_SPECS`, same as the MCP gateway); each call carries the Kilo `sessionID`/`agent` and is dispatched with that session's token. `host.kilo.tools: mcp` falls back to `hafiz-<role>` MCP servers |
+| Install | one plugin module (works in CLI and VS Code); `config` hook injects: `agent.<role>` definitions (prompt = the user's own prompt, if any, then the role rules, always appended; `permission` map `hafiz_*: deny` + `allow` for exactly the role's tools, `permission.task` to control who may delegate to whom), per-agent tool permissions for non-Hafiz agents (default roles, below), slash commands, `permission.edit/read` deny for the store path |
+| Tools | **plugin-native** (`tool` hook, stable): the agent tool catalogue (`@hafiz/core` `TOOL_SPECS`, same as the MCP gateway; `hafiz_block_read`, `hafiz_doc`, `hafiz_thread`, …, each routing to a Core command), registered once with the union of the managed roles' narrowing since plugin tools are global; each call carries the Kilo `sessionID`/`agent` and is routed and dispatched with that session's role and token. `host.kilo.tools: mcp` falls back to `hafiz-<role>` MCP servers |
 | Default roles | `host.kilo.default_role` (default `manager`): primary agents that are not role agents (`build`, `plan`, custom) are managed as that role — its tools (global permission), a session, the role rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`): non-role subagents (`general`, `explore`, custom) get that role's tools but are managed only when spawned with `hafiz:block=<id>`; otherwise passthrough and tool calls are refused. `none` disables either |
 | Observe | `event` hook: `session.created/idle/compacted`, `tool.execute.after`, `file.edited` → counters |
 | Act: inject | `experimental.chat.system.transform` → envelope at the end of the system prompt, replaced in place on epoch change (prefix-stable, no stale copies) |
@@ -210,6 +210,13 @@ against a mock LLM; corrections to the above in bold):**
   `hafiz_progress_append` lands in the audit/log under the worker's own Kilo session id with the
   spawned block as focus. Kilo's native agents: primaries `build`, `plan`, `ask`, `debug`,
   `orchestrator` (deprecated); subagents `general`, `explore`; hidden `title`, `compaction`.
+- **Agent prompts (7.8.x bundle):** the system prompt is Kilo's persona, then the agent's
+  `prompt` **instead of** the model-specific provider prompt (`agent.prompt ?? provider prompt`),
+  then the transform hooks' entries. Hafiz therefore appends its rules to a prompt that exists
+  (role agents; a user's own `prompt` on `build`) and never gives `build` a prompt of its own; the
+  shaper puts the rules ahead of the envelope for managed agents without one. Tool definitions
+  pass through a `tool.definition` hook whose input is only `{toolID}` (no agent or session), so
+  per-role descriptions are not possible for plugin tools.
 - `session.compacted` exists; `compaction` is global config (`auto`, `prune`, `tail_turns`, …).
 - **Tools and permissions are fixed per instance** (tracking mid-session, verified with `kilo run`
   against the mock LLM): plugin tools are read from `Hooks.tool` once when the tool registry state

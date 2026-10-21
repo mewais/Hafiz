@@ -83,6 +83,32 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
   `<block>` may be omitted for `show` and `history` (the root block is used), and anywhere it is
   accepted it can be a block id, a unique id prefix or a case-insensitive exact title.
 
+## Agent tools
+
+Agents reach Hafiz through twelve tools; each role sees only its own, narrowed to what it may do
+(`config/default/roles.yaml`). Their descriptions carry the mechanics; the rules in
+`config/default/rules/` say when to use them.
+
+| Tool | Does | Roles |
+|---|---|---|
+| `hafiz_block_read` | read a block at a zoom; no id: the tree; `explain`: why it shows as it does | all |
+| `hafiz_block_create` | create a block, optionally with its design and plan | manager, designer, planner |
+| `hafiz_block_edit` | rename, change kind or order, move | manager |
+| `hafiz_block_set_status` | planned → active → done, blocked, dropped; a worker's `done` is a request the policy closes or queues | manager, worker (done only) |
+| `hafiz_doc` | patch a design or plan (`replace` for a whole rewrite); an existing doc needs `expected_version` | manager (plan), designer (design), planner (plan) |
+| `hafiz_step_set` | mark a plan step doing / done / skipped | worker |
+| `hafiz_progress_append` | one finding on a block's progress log | manager, designer (found, question), worker |
+| `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
+| `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
+| `hafiz_review` | list, accept or reject proposals in the review queue | manager |
+| `hafiz_focus_set` | centre the context on chosen blocks | manager |
+| `hafiz_track_project` | start tracking an untracked repo | primary agents, untracked repos only |
+
+Dependencies between blocks are not a tool: a design's `interface.consumes` entries name their
+providing block, and every design write keeps the block's `depends_on` edges in step with them.
+The MCP gateway (`hafiz mcp --role <r>`) serves the same tools plus `hafiz_context_for`,
+`hafiz_context_delta` and `hafiz_session_status` for hosts that do not inject the context.
+
 ## The Kilo TUI panel
 
 In the Kilo TUI the session sidebar gets a **Hafiz** section: the project, this session's role
