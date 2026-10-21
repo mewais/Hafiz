@@ -23,7 +23,8 @@ export function focusFromPolicy(
   spawned?: BlockId,
 ): Focus {
   if (policy === 'spawned_block' && spawned) return { blocks: [spawned], computed: true }
-  if (policy === 'all_active') {
+  // Not spawned on a block (used as a primary agent): the active front, as for the manager.
+  if (policy === 'all_active' || policy === 'spawned_block') {
     const active = [...blocks]
       .filter((b) => b.status === 'active' && b.parentId !== null)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))

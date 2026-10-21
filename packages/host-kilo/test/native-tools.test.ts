@@ -5,7 +5,7 @@ import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
-import { type Config, loadConfig, toolName, toolsForRole } from '@hafiz/core'
+import { type Config, estimatorTokenizer, loadConfig, toolsForRole, toolTokens } from '@hafiz/core'
 import { createMcpServer, DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -15,7 +15,7 @@ import {
   installConfig,
   type KiloConfig,
   type KiloToolContext,
-  managedRoles,
+  registeredTools,
   SessionRegistry,
   toolNamesForRole,
 } from '../src/index.js'
@@ -92,25 +92,43 @@ function tool(hooks: Hooks, name: string) {
 }
 
 describe('shared tool catalogue', () => {
-  it('the MCP gateway and the Kilo native tools expose the same tools per role', () => {
+  it('the MCP gateway serving Kilo and the native tools expose the same tools per role', () => {
     const config = loadConfig()
     for (const role of agentRoles(config)) {
-      const mcp = createMcpServer({ role, client: {} as DaemonClient, config }).tools
+      const mcp = createMcpServer({ role, client: {} as DaemonClient, config, host: 'kilo' }).tools
       expect(toolNamesForRole(config, role)).toEqual(mcp)
     }
   })
 
-  it('registers each catalogue tool any managed role can use, with the catalogue description', async () => {
+  it('registers each catalogue tool once, described for every managed role that uses it', async () => {
     const { hooks } = await live()
     const config = loadConfig()
-    const union = new Set(
-      managedRoles(config).flatMap((r) => toolsForRole(config, r).map((t) => t.spec)),
-    )
-    expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(
-      [...union].map((s) => toolName(s.command)).sort(),
-    )
-    const spec = [...union].find((s) => s.command === 'progress.append')
-    expect(tool(hooks, 'hafiz_progress_append').description).toBe(spec?.description(config))
+    const shared = registeredTools(config)
+    expect(Object.keys(hooks.tool ?? {})).toEqual(shared.map((t) => t.spec.name))
+    for (const t of shared)
+      expect(tool(hooks, t.spec.name).description).toBe(t.spec.description(config, t))
+    // the worker's done is a request, the manager's closes: one definition says both
+    const status = tool(hooks, 'hafiz_block_set_status').description
+    expect(status).toMatch(/If your role cannot close blocks, done is a request/)
+    expect(status).toMatch(/confirmed: true/)
+  })
+
+  it('what Kilo sends each role stays within its budget', () => {
+    const config = loadConfig()
+    const shared = new Map(registeredTools(config).map((t) => [t.spec.name, t]))
+    const budget: Record<string, number> = {
+      manager: 1000,
+      designer: 1000,
+      planner: 1000,
+      worker: 500,
+    }
+    for (const [role, max] of Object.entries(budget)) {
+      const total = toolNamesForRole(config, role).reduce((n, name) => {
+        const t = shared.get(name)
+        return n + (t ? toolTokens(config, t, estimatorTokenizer) : 0)
+      }, 0)
+      expect(total, role).toBeLessThanOrEqual(max)
+    }
   })
 })
 
@@ -143,11 +161,18 @@ describe('native tools resolve the calling Kilo session', () => {
       session(hooks, 'ses_w1', 'worker', `hafiz:block=${blocks[0]} payments`, 'ses_m'),
       session(hooks, 'ses_w2', 'worker', `hafiz:block=${blocks[1]} shipping`, 'ses_m'),
     ])
-    const ctxFor = tool(hooks, 'hafiz_context_for')
     const append = tool(hooks, 'hafiz_progress_append')
+    const view = async (sessionID: string) => {
+      const system = ['You are Kilo.']
+      await hooks['experimental.chat.system.transform']?.(
+        { sessionID, model: { id: 'm', providerID: 'p' } },
+        { system },
+      )
+      return system.join('\n')
+    }
     const [v1, v2] = await Promise.all([
-      ctxFor.execute({}, ctx('ses_w1', 'worker')),
-      ctxFor.execute({}, ctx('ses_w2', 'worker')),
+      view('ses_w1'),
+      view('ses_w2'),
       append.execute({ block: blocks[0], kind: 'found', text: 'one' }, ctx('ses_w1', 'worker')),
       append.execute({ block: blocks[1], kind: 'found', text: 'two' }, ctx('ses_w2', 'worker')),
     ])
@@ -211,9 +236,41 @@ describe('native tools resolve the calling Kilo session', () => {
     const config = loadConfig()
     for (const role of agentRoles(config)) {
       expect(toolNamesForRole(config, role).join(' ')).not.toMatch(/report/)
-      expect(toolsForRole(config, role).map((t) => t.spec.command)).not.toContain('system.progress')
+      expect(toolsForRole(config, role).flatMap((t) => t.spec.commands)).not.toContain(
+        'system.progress',
+      )
     }
     expect(Object.keys(hooks.tool ?? {}).join(' ')).not.toMatch(/report_capture/)
+  })
+
+  it('routes done by role: the worker requests it, the manager closes the block', async () => {
+    const { hooks, read, blocks } = await live()
+    const digest = { outcome: 'Built.', interface_delta: ['none'], pointers: [] }
+    await session(hooks, 'ses_m', 'manager', 'go')
+    await session(hooks, 'ses_w', 'worker', `hafiz:block=${blocks[0]}`, 'ses_m')
+    const status = tool(hooks, 'hafiz_block_set_status')
+    // confirm_done: ask (the default) queues the worker's request for review
+    const w = await status.execute(
+      { id: blocks[0], status: 'done', digest },
+      ctx('ses_w', 'worker'),
+    )
+    expect(typeof w === 'string' ? w : w.output).toContain('"queued":true')
+    expect((await read().getBlock(blocks[0]))?.status).toBe('active')
+    // the worker still cannot set any other status
+    await expect(
+      status.execute({ id: blocks[0], status: 'blocked' }, ctx('ses_w', 'worker')),
+    ).rejects.toThrow(/may not call 'block.set_status:blocked'/)
+    // the manager's done is a status change (here: asks for the user's confirmation)
+    const m = await status.execute(
+      { id: blocks[1], status: 'done', digest },
+      ctx('ses_m', 'manager'),
+    )
+    expect(typeof m === 'string' ? m : m.output).toMatch(/requires confirmation/)
+    const audit = (await read().readAudit()).map((a) => `${a.by.sessionId} ${a.command}`)
+    expect(audit).toContain('ses_w block.request_done')
+    expect(audit.filter((a) => a.startsWith('ses_m block.'))).toEqual([
+      'ses_m block.set_status:done',
+    ])
   })
 
   it('daemon errors come back as tool errors the agent can act on', async () => {
@@ -246,13 +303,27 @@ describe('default roles for non-Hafiz agents', () => {
     expect(system[1]).toMatch(/<hafiz hash="[0-9a-f]{12}" role="manager">/)
   })
 
+  it('does not inject the rules again for an agent whose prompt carries them', async () => {
+    const { hooks } = await live()
+    const cfg: KiloConfig = { agent: { build: { prompt: 'House style.' } } }
+    await hooks.config?.(cfg)
+    expect(cfg.agent?.build?.prompt).toContain('# Hafiz rules — manager')
+    await session(hooks, 'ses_b', 'build', 'Add refunds')
+    const system = ['You are Kilo.']
+    await hooks['experimental.chat.system.transform']?.(
+      { sessionID: 'ses_b', model: { id: 'm', providerID: 'p' } },
+      { system },
+    )
+    expect(system[1]).toMatch(/^<hafiz hash=/)
+  })
+
   it('leaves a non-Hafiz subagent without a block marker unmanaged', async () => {
     const { hooks, read } = await live()
     await session(hooks, 'ses_b', 'build', 'look around')
     await session(hooks, 'ses_x', 'explore', 'Find where rounding happens', 'ses_b')
     expect(await read().getSession('ses_x')).toBeNull()
     await expect(
-      tool(hooks, 'hafiz_context_for').execute({}, ctx('ses_x', 'explore')),
+      tool(hooks, 'hafiz_block_read').execute({ id: 'x' }, ctx('ses_x', 'explore')),
     ).rejects.toThrow(/not managed by Hafiz/)
     const system = ['You are explore.']
     await hooks['experimental.chat.system.transform']?.(

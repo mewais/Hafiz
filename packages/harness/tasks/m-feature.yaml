@@ -8,18 +8,19 @@ turns:
       Add order discounts to the shop: percentage coupon codes, a bulk-quantity discount rule,
       applying discounts in the cart total, and showing them in the order summary. This is a
       multi-part feature, so plan it as tracked work: one block for the feature, one child block
-      per part, and a worker subagent implementing each part (hafiz:block=<id> in its task
-      prompt). Keep the work in src/.
+      per part, and a worker subagent implementing each part (spawned on its block). Keep the
+      work in src/.
 expect:
   blocks_created: ">=4"
   manager_decisions: ">=1"
   worker_sessions: "==4"
-  worker_request_done: "==4"
+  worker_done_requests: "==4"
   worker_progress_min: ">=2"
   worker_reports: ">=4"
   subagents_spawned: "==4"
   files_written: ">=4"
   cap_rejections: "==0"
+  spawns_rejected: "==0"
 mock:
   - turn: 1
     roles:
@@ -41,6 +42,7 @@ mock:
               args: &child
                 parent: "{b.feat}"
                 title: Coupon codes
+                design: { purpose: One part of order discounts., scope: ["in: this part only"], interface: { provides: [], consumes: [] } }
                 plan: { steps: [{ id: s1, title: Model coupons }, { id: s2, title: Validate and apply }], acceptance: [tests pass] }
             - tool: hafiz_block_create
               as: bulk
@@ -72,13 +74,14 @@ mock:
               args: &spawn
                 description: Coupon codes
                 subagent_type: worker
-                prompt: "hafiz:block={b.coupons} [[turn:{turn}]] Implement the coupon codes part in src/."
+                block: "{b.coupons}"
+                prompt: "[[turn:{turn}]] Implement the coupon codes part in src/."
             - tool: task
-              args: { <<: *spawn, description: Bulk quantity rule, prompt: "hafiz:block={b.bulk} [[turn:{turn}]] Implement the bulk-quantity rule in src/." }
+              args: { <<: *spawn, description: Bulk quantity rule, block: "{b.bulk}", prompt: "[[turn:{turn}]] Implement the bulk-quantity rule in src/." }
             - tool: task
-              args: { <<: *spawn, description: Cart integration, prompt: "hafiz:block={b.cartint} [[turn:{turn}]] Apply discounts in the cart total in src/." }
+              args: { <<: *spawn, description: Cart integration, block: "{b.cartint}", prompt: "[[turn:{turn}]] Apply discounts in the cart total in src/." }
             - tool: task
-              args: { <<: *spawn, description: Order summary, prompt: "hafiz:block={b.summary} [[turn:{turn}]] Show discounts in order summaries in src/." }
+              args: { <<: *spawn, description: Order summary, block: "{b.summary}", prompt: "[[turn:{turn}]] Show discounts in order summaries in src/." }
         - text: All four parts of the discount feature are implemented and reported.
       worker:
         - calls:
@@ -98,9 +101,10 @@ mock:
             - tool: hafiz_progress_append
               args: { block: "{block}", kind: done, text: "Implemented the part in its own module." }
         - calls:
-            - tool: hafiz_block_request_done
+            - tool: hafiz_block_set_status
               args:
                 id: "{block}"
+                status: done
                 digest:
                   outcome: The part is implemented in a new module under src/.
                   interface_delta: ["none"]

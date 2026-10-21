@@ -131,7 +131,7 @@ describe('untracked git repo', () => {
     expect(readdirSync(r.env.HAFIZ_STORE_ROOT as string)).toEqual([])
     // a Hafiz tool called before tracking refuses
     await expect(
-      hooks.tool?.hafiz_tree_list?.execute({}, ctx('s1')) as Promise<unknown>,
+      hooks.tool?.hafiz_block_read?.execute({}, ctx('s1')) as Promise<unknown>,
     ).rejects.toThrow(/call hafiz_track_project first/)
   })
 
@@ -179,7 +179,7 @@ describe('untracked git repo', () => {
     expect(shown).not.toContain(TRACK_TOOL)
     expect(shown).toEqual(expect.arrayContaining(managerTools))
     // and they work
-    const tree = await hooks.tool?.hafiz_tree_list?.execute({}, ctx('ses_b'))
+    const tree = await hooks.tool?.hafiz_block_read?.execute({}, ctx('ses_b'))
     expect(outputOf(tree as KiloToolResult)).toContain('Shop')
     // calling it again is harmless
     const again = await hooks.tool?.[TRACK_TOOL]?.execute({ name: 'Other' }, ctx('ses_b'))
@@ -214,7 +214,9 @@ describe('untracked git repo', () => {
     const p = await daemon().service.core.backend.read.getProject()
     expect(p?.onboarding).toBe('pending')
     const sys = (await system(hooks, 'ses_b')).join('\n')
-    expect(sys).toContain(`spawn the designer once with hafiz:block=${p?.rootBlockId}`)
+    expect(sys).toContain('Onboarding pending')
+    // the rules (injected: the agent's prompt predates tracking) say what onboarding means
+    expect(sys).toContain('first spawn the designer once on the\nroot block')
   })
 })
 

@@ -1,7 +1,8 @@
+import { loadConfig, toolsForRole } from '@hafiz/core'
 import { describe, expect, it } from 'vitest'
 import type { RecordedRequest } from '../src/mock-llm.js'
 import { scriptResponder, TURN_MARKER } from '../src/mock-script.js'
-import { parseTask } from '../src/tasks.js'
+import { loadTasks, parseTask } from '../src/tasks.js'
 
 const task = parseTask(`
 id: t
@@ -73,5 +74,22 @@ describe('scriptResponder', () => {
     )
     expect(done.text).toContain('hafiz-report')
     expect(respond(req([sys('manager'), user('t')], false)).text).toBe('Session')
+  })
+})
+
+describe('the task set', () => {
+  it('scripts each role with tools that role has', () => {
+    const config = loadConfig()
+    const host = new Set(['task', 'write', 'edit', 'bash', 'read'])
+    for (const t of loadTasks())
+      for (const turn of t.mock)
+        for (const [role, steps] of Object.entries(turn.roles)) {
+          const allowed = new Set(toolsForRole(config, role, 'kilo').map((x) => x.spec.name))
+          for (const s of steps)
+            for (const c of 'calls' in s ? (s.calls ?? []) : [])
+              expect(host.has(c.tool) || allowed.has(c.tool), `${t.id} ${role}: ${c.tool}`).toBe(
+                true,
+              )
+        }
   })
 })

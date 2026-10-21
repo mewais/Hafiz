@@ -34,8 +34,8 @@ const ROWS: Array<[string, string, boolean?]> = [
   ['steps', 'step events'],
   ['threads_opened', 'threads opened'],
   ['threads_parked', 'threads parked'],
-  ['request_done', 'request_done', true],
-  ['request_done_digest', '  with digest'],
+  ['done_requests', 'done requests', true],
+  ['done_with_digest', '  with digest'],
   ['reports', 'reports captured'],
   ['cap_rejections', 'cap rejections'],
   ['retries', 'retries after reject'],
@@ -43,7 +43,10 @@ const ROWS: Array<[string, string, boolean?]> = [
   ['hafiz_calls', 'protocol tool calls'],
   ['tool_calls', 'all tool calls', true],
   ['protocol_ratio', 'protocol / all'],
-  ['files_written', 'files written'],
+  ['files_written', 'files written (git)'],
+  ['files_written_managed', 'files written (managed sessions)'],
+  ['spawns_rejected', 'spawns rejected'],
+  ['tracked', 'project created by an agent'],
   ['view_emits', 'view re-emits'],
   ['tokens_per_view', 'tokens per view'],
   ['cache_read_ratio', 'cache read ratio'],
@@ -112,6 +115,16 @@ function taskTable(rs: RunResult[]): string[] {
   })
   if (exp.length)
     out.push('', mdRow(['expect', 'want', 'got', '']), mdRow(['---', '---', '---', '---']), ...exp)
+  const refused = rs.flatMap((r) => r.rejected.map((d) => ({ run: r.repeat, ...d })))
+  if (refused.length)
+    out.push(
+      '',
+      'rejected spawns:',
+      ...refused.map(
+        (d) =>
+          `- run ${d.run}: ${d.agent ?? '?'} on ${d.block ?? '?'}: ${d.error} (prompt: ${d.prompt.slice(0, 80).replace(/\s+/g, ' ')})`,
+      ),
+    )
   const errs = rs.filter((r) => r.error).map((r) => `run ${r.repeat}: ${r.error}`)
   if (errs.length) out.push('', ...errs.map((e) => `error: ${e}`))
   return out

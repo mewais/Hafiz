@@ -54,6 +54,21 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
       title: 'Payments',
     })
     await u.dispatch('block.set_status', { id: result.id, status: 'active' })
+    // designed and planned, so a worker may be spawned on it (policies.yaml spawn.roles_by_state)
+    await u.dispatch('doc.write', {
+      block: result.id,
+      type: 'design',
+      sections: {
+        purpose: 'Take card payments.',
+        scope: ['charges', 'webhooks'],
+        interface: { provides: [{ name: 'charge' }], consumes: [], contracts: [] },
+      },
+    })
+    await u.dispatch('doc.write', {
+      block: result.id,
+      type: 'plan',
+      sections: { steps: [{ id: 's1', title: 'Webhooks' }], acceptance: ['webhooks verified'] },
+    })
     u.close()
     block = result.id
     mock = await startMockLlm({ fallback: (req) => responder(req) })
@@ -135,7 +150,11 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
   // ── native tools: scripted tool calls through real Kilo reach the daemon ──
 
   type Msg = { role: string; content?: unknown; tool_calls?: unknown[] }
-  type Body = { messages?: Msg[]; tools?: Array<{ function?: { name?: string } }> }
+  type Fn = {
+    name?: string
+    parameters?: { properties?: Record<string, { description?: string }>; required?: string[] }
+  }
+  type Body = { messages?: Msg[]; tools?: Array<{ function?: Fn }> }
   const toolsOf = (r: RecordedRequest) =>
     ((r.body as Body).tools ?? []).map((t) => t.function?.name ?? '').filter(Boolean)
   const hafizTools = (r: RecordedRequest) => toolsOf(r).filter((n) => n.startsWith('hafiz_'))
@@ -173,6 +192,10 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     expect(hafizTools(first as RecordedRequest).sort()).toEqual(
       toolNamesForRole(config, 'manager').sort(),
     )
+    // the role agent's prompt is the rules (installed once, after the separator), no copy from the shaper
+    const sys = systemOf(first as RecordedRequest)
+    expect(sys.split('# Hafiz rules — manager')).toHaveLength(2)
+    expect(sys).toContain('<!-- Hafiz manager rules, appended by the Hafiz plugin')
     const read = daemon.service.core.backend.read
     const audit = (await read.readAudit()).filter((a) => a.command === 'decision.record')
     expect(audit).toHaveLength(1)
@@ -209,8 +232,9 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
               name: 'task',
               arguments: {
                 description: 'Payments work',
-                prompt: `hafiz:block=${block} ${marker}: investigate webhooks`,
+                prompt: `${marker}: investigate webhooks`,
                 subagent_type: 'worker',
+                block,
               },
             },
           ],
@@ -225,7 +249,8 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     const build = reqs.find((q) => roleOf(q) === 'manager')
     const worker = reqs.find((q) => roleOf(q) === 'worker')
     expect(build && hafizTools(build).sort()).toEqual(toolNamesForRole(config, 'manager').sort())
-    expect(systemOf(build as RecordedRequest)).toContain('# Hafiz rules — manager')
+    // build keeps Kilo's own prompt; the shaper adds the manager rules once
+    expect(systemOf(build as RecordedRequest).split('# Hafiz rules — manager')).toHaveLength(2)
     expect(worker && hafizTools(worker).sort()).toEqual(toolNamesForRole(config, 'worker').sort())
     const read = daemon.service.core.backend.read
     const log = await read.readLog(block, 'progress')
@@ -240,6 +265,74 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     expect(ws?.focus.blocks).toEqual([block])
     const parent = await read.getSession(ws?.parentSessionId as string)
     expect(parent).toMatchObject({ role: 'manager', agent: 'build' })
+  }, 120000)
+
+  it('task takes a checked block: bad spawns are refused, the manager reads only the report', async () => {
+    const marker = 'checked spawn'
+    const prose = 'I read every webhook handler and traced each retry path in detail.'
+    const spawn = (b: string) => ({
+      toolCalls: [
+        {
+          name: 'task',
+          arguments: {
+            description: 'Payments work',
+            prompt: `${marker}: look at webhooks`,
+            subagent_type: 'worker',
+            block: b,
+          },
+        },
+      ],
+    })
+    responder = (req) => {
+      if (!req.raw.includes(marker) || !toolsOf(req).length) return { text: 'Title' }
+      if (roleOf(req) === 'worker') {
+        if (toolResults(req) === 0)
+          return {
+            toolCalls: [
+              {
+                name: 'hafiz_progress_append',
+                arguments: { block, kind: 'found', text: 'Retries are not idempotent.' },
+              },
+            ],
+          }
+        return { text: `${prose}\n\n\`\`\`hafiz-report\noutcome: partial — traced\n\`\`\`` }
+      }
+      const n = toolResults(req)
+      if (n === 0) return spawn('none') // a role agent never works off-block
+      if (n === 1) return spawn('blk_nope') // unknown id
+      if (n === 2) return spawn('payments') // by title
+      return { text: 'All good.' }
+    }
+    const r = await kilo('hooks', marker)
+    if (r.code !== 0) console.error(r.output)
+    expect(r.code).toBe(0)
+    const reqs = mock.requests.filter((q) => q.raw.includes(marker) && toolsOf(q).length)
+    const manager = reqs.filter((q) => roleOf(q) === 'manager')
+    // the modified schema reaches the model: task has a required `block`
+    const fn = ((manager[0]?.body as Body | undefined)?.tools ?? []).find(
+      (t) => t.function?.name === 'task',
+    )
+    expect(fn?.function?.parameters?.required).toContain('block')
+    expect(fn?.function?.parameters?.properties?.block?.description).toMatch(/or "none"/)
+    // the two bad calls came back as tool errors; the third spawned the worker
+    const toolText = (q: RecordedRequest | undefined) =>
+      ((q?.body as Body | undefined)?.messages ?? [])
+        .filter((m) => m.role === 'tool')
+        .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+    const last = manager.find((q) => toolResults(q) === 3)
+    const results = toolText(last)
+    expect(results[0]).toMatch(/worker is a Hafiz role agent and always works on a block/)
+    expect(results[1]).toMatch(/no block 'blk_nope'\. Valid block ids:[\s\S]*Payments/)
+    // only the report reaches the manager, plus the mechanical note (no done, no blocked)
+    expect(results[2]).toContain('```hafiz-report\noutcome: partial — traced\n```')
+    expect(results[2]).toContain('ended without a done request or a blocked entry')
+    expect(results[2]).not.toContain(prose)
+    // the worker ran on the block; its full text is in the store
+    const worker = reqs.find((q) => roleOf(q) === 'worker')
+    expect(worker?.raw).toContain(`hafiz:block=${block}`)
+    const log = await daemon.service.core.backend.read.readLog(block, 'progress')
+    const texts = log.map((e) => (e.entry as { kind: string; text: string }).text)
+    expect(texts.some((t) => t.startsWith(prose))).toBe(true)
   }, 120000)
 
   // ── untracked repo: hafiz_track_project switches the running session to managed mode ──

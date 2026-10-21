@@ -56,7 +56,7 @@ import {
   edgeAdd,
   edgeRemove,
 } from './blocks.js'
-import { TOOL_SPECS, type ToolSpec } from './catalogue.js'
+import { COMMAND_SPECS, type CommandSpec } from './catalogue.js'
 import { type DocWriteArgs, docPatch, docWrite } from './docs.js'
 import { AFTER_HOOKS, BEFORE_HOOKS, type DispatchSink, type HookCall, NO_SINK } from './hooks.js'
 import {
@@ -164,8 +164,8 @@ export class Core {
   readonly ctx: CoreContext
   private readonly handlers: ReadonlyMap<string, Handler>
   /** The catalogue entry of each dispatchable command: its before/after hooks. */
-  private readonly hooks: ReadonlyMap<string, ToolSpec> = new Map(
-    TOOL_SPECS.filter((t) => t.kind === 'dispatch').map((t) => [t.command, t]),
+  private readonly hooks: ReadonlyMap<string, CommandSpec> = new Map(
+    COMMAND_SPECS.filter((t) => t.kind === 'dispatch').map((t) => [t.command, t]),
   )
 
   constructor(deps: CoreDeps) {

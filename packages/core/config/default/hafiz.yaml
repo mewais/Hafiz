@@ -31,20 +31,13 @@ onboarding:
   # and dotfiles do not count) marks the project `onboarding: pending`: the manager has the
   # designer describe the existing codebase in the root design before new work.
   min_source_files: 5
-  directive: >-
-    Onboarding: this repo already had code when Hafiz started tracking it. Before planning new
-    work, spawn the designer once with hafiz:block={root} to write the root design describing the
-    codebase as it is: stable architecture facts only (overview, topology, interface, true
-    constraints). Defects are facts, not rules: each goes in progress (kind found) on the block it
-    concerns, and only a full audit becomes a research child block. Existing choices worth keeping
-    may be decisions with rationale "existing design"; findings are never decisions until the user
-    chooses what to do. Task rules and process notes go in the report, not the store.
-    Import what you touch, stub what you call: external dependencies get stubs only where current
-    work needs them.
+  # One line at the top of these roles' views while onboarding is pending; the rules say what to do.
+  directive: "Onboarding pending: this repo had code before Hafiz started tracking it; follow your rules' Onboarding before new work."
   roles: [manager]
 host:
   kilo:
     shaper: auto                   # proxy | hooks | auto (hooks when the host exposes them)
     tools: native                  # native (plugin tool hook, per-session) | mcp (hafiz-<role> servers)
     default_role: manager          # role for non-Hafiz primary agents (build, plan, …); none = unmanaged
-    default_subagent_role: worker  # non-Hafiz subagents spawned with hafiz:block=<id>; none = unmanaged
+    default_subagent_role: worker  # non-Hafiz subagents spawned on a block (task's `block`); none = unmanaged
+    delegation_prompt_cap: 600     # tokens; a longer task prompt is refused (the subagent sees its block)

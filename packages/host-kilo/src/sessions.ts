@@ -1,7 +1,8 @@
 // Kilo session ↔ Hafiz session. The Kilo session id is used as the Hafiz session id; the role
 // comes from the agent name, the parent from `parentID`, the spawned block from a
-// `hafiz:block=<id>` marker in the task prompt. One daemon connection serves every session; each
-// call carries that session's token explicitly.
+// `hafiz:block=<id>` marker in the task prompt (put there by the `task` check from its `block`
+// argument, checks.ts). One daemon connection serves every session; each call carries that
+// session's token explicitly.
 import {
   agentRoleNames,
   type Config,
@@ -15,7 +16,7 @@ import type { DaemonClient, RequestHandler } from '@hafiz/gateway-mcp'
 import { CONDENSER_AGENT } from './llm.js'
 import type { CondenseRequest, SessionSource, UnfiledState } from './shaper/core.js'
 
-/** Convention: a task prompt containing `hafiz:block=<id>` spawns the subagent on that block. */
+/** A task prompt containing `hafiz:block=<id>` spawns the subagent on that block (checks.ts adds it). */
 export const BLOCK_MARKER = /hafiz:block=([A-Za-z0-9_.-]+)/
 
 export function blockFromPrompt(text: string): string | undefined {
@@ -73,22 +74,30 @@ export class SessionRegistry implements SessionSource {
   private serving: DaemonClient | undefined
   private readonly tok: Tokenizer
   private readonly roles: Set<string>
+  /** Agents whose prompt already ends with Hafiz's rules (install.ts); default: the role agents. */
+  private prompted: Set<string>
 
   constructor(private readonly opts: RegistryOptions) {
     this.tok = opts.tokenizer ?? estimatorTokenizer
     this.roles = new Set(agentRoleNames(opts.config))
+    this.prompted = new Set(this.roles)
   }
 
-  /** True when the Kilo agent is one of Hafiz's own role agents (its prompt is the rules). */
+  /** True when the Kilo agent is one of Hafiz's own role agents. */
   isRoleAgent(agent: string | undefined): boolean {
     return !!agent && this.roles.has(agent)
+  }
+
+  /** What `installConfig` reported: these agents' prompts carry the rules already. */
+  setPromptedAgents(agents: readonly string[]): void {
+    this.prompted = new Set([...this.roles, ...agents])
   }
 
   /**
    * Hafiz role for a Kilo session, or undefined when it is not managed. Role agents are their
    * role. Other primary agents (build, plan, custom) get `host.kilo.default_role`; other
    * subagents (general, explore, …) get `host.kilo.default_subagent_role`, but only when spawned
-   * on a block (`hafiz:block=<id>` in the task prompt). `none` switches either off.
+   * on a block (task's `block` argument). `none` switches either off.
    */
   roleFor(
     agent: string | undefined,
@@ -233,19 +242,19 @@ export class SessionRegistry implements SessionSource {
    * Store a subagent's final message as a `report` progress entry on its focus block, capped
    * at `compliance.yaml report_capture.cap_tokens`. A system action (`system.progress`), not an
    * agent tool call: written as the child, whatever its role's allowlist. Duplicate texts for
-   * the same child are ignored.
+   * the same child are not written again. Resolves to the block the text is stored on.
    */
-  async captureReport(childId: string, text: string): Promise<boolean> {
+  async captureReport(childId: string, text: string): Promise<string | undefined> {
     const rc = this.opts.config.compliance.report_capture
     const k = this.known.get(childId)
-    if (!rc.enabled || !k?.token || !text.trim()) return false
+    if (!rc.enabled || !k?.token || !text.trim()) return undefined
     const fp = `${text.length}:${text.slice(0, 64)}:${text.slice(-64)}`
-    k.reports ??= new Set()
-    if (k.reports.has(fp)) return false
     const block = k.block ?? k.focus?.[0]
+    k.reports ??= new Set()
+    if (k.reports.has(fp)) return block
     if (!block) {
       this.opts.log(`hafiz: report from ${childId} not captured: session has no focus block`)
-      return false
+      return undefined
     }
     k.reports.add(fp)
     try {
@@ -254,11 +263,11 @@ export class SessionRegistry implements SessionSource {
         kind: 'report',
         text: capReport(text, rc.cap_tokens, this.tok),
       })
-      return true
+      return block
     } catch (e) {
       this.opts.log(`hafiz: report capture as ${childId} failed: ${String(e)}`)
       k.reports.delete(fp)
-      return false
+      return undefined
     }
   }
 
@@ -270,10 +279,12 @@ export class SessionRegistry implements SessionSource {
       'context.for',
       model ? { model } : {},
     )
-    // Agents managed under a default role run Kilo's own prompt; give them the role's rules
-    // ahead of the envelope (constant text, so the cached prefix stays stable).
+    // An agent managed under a default role whose prompt does not carry the rules (Kilo's own
+    // prompt, e.g. `build` as shipped) gets them ahead of the envelope (constant text, so the
+    // cached prefix stays stable).
     const k = this.known.get(id)
-    const rules = k?.role && !this.isRoleAgent(k.agent) ? rulesFor(this.opts.config, k.role) : ''
+    const own = !!k?.agent && this.prompted.has(k.agent)
+    const rules = k?.role && !own ? rulesFor(this.opts.config, k.role) : ''
     return { envelope: rules ? `${rules}\n\n${v.text}` : v.text, floor: v.floorText }
   }
 

@@ -1,5 +1,5 @@
 import type { Config, DocSchema } from '../config/schema.js'
-import { CapExceededError, ValidationError } from '../domain/errors.js'
+import { CapExceededError, type CapOverage, ValidationError } from '../domain/errors.js'
 import type { DocType, SectionValue } from '../domain/types.js'
 import { countValue, type Tokenizer } from '../tokenizer.js'
 
@@ -85,6 +85,7 @@ export function validateDoc(
     )
 
   const notices: Notice[] = []
+  const over: CapOverage[] = []
   const soft = config.hafiz.tokenizer.soft_zone
   for (const [name, value] of Object.entries(sections)) {
     const def = known.get(name)
@@ -93,13 +94,12 @@ export function validateDoc(
     const cap = opts.capOverrides?.[name] ?? def.cap
     const measured = countValue(tok, value)
     if (measured > cap * (1 + soft)) {
-      const remedy =
-        schema.type === 'design'
-          ? 'Split detail into child blocks or move it to progress notes.'
-          : 'Tighten the text or split the block.'
-      if (config.policies.caps.on_exceeded === 'reject')
-        throw new CapExceededError(name, measured, cap, remedy)
-      notices.push({ level: 'warn', text: `section '${name}' is ${measured} tokens (cap ${cap})` })
+      if (config.policies.caps.on_exceeded === 'reject') over.push({ section: name, measured, cap })
+      else
+        notices.push({
+          level: 'warn',
+          text: `section '${name}' is ${measured} tokens (cap ${cap})`,
+        })
     } else if (measured > cap) {
       notices.push({
         level: 'info',
@@ -107,6 +107,14 @@ export function validateDoc(
       })
     }
   }
+  if (over.length)
+    throw new CapExceededError(
+      over,
+      soft,
+      schema.type === 'design'
+        ? 'Split detail into child blocks or move it to progress notes.'
+        : 'Tighten the text or split the block.',
+    )
   return { sections, notices }
 }
 

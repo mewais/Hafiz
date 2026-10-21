@@ -1,7 +1,13 @@
 // The `config` hook's job: register role agents and per-agent Hafiz tool permissions (native
 // plugin tools by default; role MCP servers with `host.kilo.tools: mcp`), slash commands, store
 // deny rules and compaction settings, and (proxy shaper) re-point provider base URLs. Pure apart
-// from the `wrap` callback; user-provided entries win over ours.
+// from the `wrap` callback; user-provided entries win over ours, except that Hafiz's rules are
+// always appended to a managed agent's own prompt, never replaced by it.
+//
+// Kilo builds an agent's system prompt from its `prompt` *instead of* the model-specific prompt
+// it ships, so a prompt is set only where one exists already (a role agent, or a user's own
+// `prompt` on an agent managed under the default role). Managed agents without one (`build` as
+// shipped, subagents spawned on a block) get the rules ahead of the envelope from the shaper.
 //
 // In an untracked git repo (`untracked: true`) the same agents and permissions are installed up
 // front, because Kilo reads both once at startup: tracking mid-session (hafiz_track_project) can
@@ -36,7 +42,7 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   manager: 'Hafiz manager: runs the block tree, delegates designer/planner/worker subagents',
   designer: 'Hafiz designer: writes and revises block designs',
   planner: 'Hafiz planner: breaks designed blocks into plans and child blocks',
-  worker: 'Hafiz worker: implements one block; spawn with hafiz:block=<id> in the prompt',
+  worker: 'Hafiz worker: implements one planned block',
 }
 
 /** Roles that get a Kilo agent (not the roles a person plays: `user`, `viewer`). */
@@ -65,7 +71,18 @@ function storeDenies(storeDir: string, base: Record<string, unknown> = {}) {
   }
 }
 
-/** Kilo's built-in subagents; they get `default_subagent_role`'s tools (used only with a marker). */
+/** Marks where Hafiz's rules start in an agent prompt. */
+export const RULES_SEPARATOR = (role: string) =>
+  `<!-- Hafiz ${role} rules, appended by the Hafiz plugin: edit rules/*.md in the Hafiz config, not here -->`
+
+/** `prompt` followed by the role's rules: what every managed agent prompt ends with. */
+export function withRules(config: Config, role: string, prompt?: unknown): string {
+  const own = typeof prompt === 'string' ? prompt.trim() : ''
+  const rules = `${RULES_SEPARATOR(role)}\n${rulesFor(config, role)}`
+  return own ? `${own}\n\n${rules}` : rules
+}
+
+/** Kilo's built-in subagents; they get `default_subagent_role`'s tools (used only on a block). */
 export const KILO_BUILTIN_SUBAGENTS = ['general', 'explore'] as const
 
 type PermMap = Record<string, unknown>
@@ -110,7 +127,11 @@ function layer(base: PermMap, ours: PermMap): PermMap {
 const asMap = (perm: unknown): PermMap =>
   typeof perm === 'string' ? { '*': perm } : { ...((perm as PermMap | undefined) ?? {}) }
 
-export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
+/**
+ * Install Hafiz into Kilo's config. Returns the agents whose prompt now ends with Hafiz's rules
+ * (the shaper injects them for any other managed agent).
+ */
+export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
   const { config } = plan
   const mode: KiloToolsMode = plan.tools ?? config.hafiz.host.kilo.tools
   const roles = agentRoles(config)
@@ -139,7 +160,8 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
     }
   }
 
-  // Role agents: prompt = rules, tools = exactly the role's allowlist.
+  // Role agents: prompt = the user's own prompt (if any) + rules, tools = exactly the role's
+  // allowlist.
   // Untracked: primary agents (the manager agent, and others under the default role) may start
   // tracking; subagents never (their `hafiz_*` deny covers it).
   const track: PermMap = plan.untracked ? { [plan.untracked.trackTool]: 'allow' } : {}
@@ -153,7 +175,6 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
     const ours: Record<string, unknown> = {
       description: ROLE_DESCRIPTIONS[role] ?? `Hafiz ${role}`,
       mode: role === 'manager' ? 'primary' : 'subagent',
-      prompt: rulesFor(config, role),
     }
     const theirs = cfg.agent[role] ?? {}
     const perm = layer(asMap(theirs.permission), {
@@ -164,12 +185,24 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
     cfg.agent[role] = {
       ...ours,
       ...theirs,
+      prompt: withRules(config, role, theirs.prompt),
       permission: { ...perm, ...storeDenies(plan.storeDir, perm) },
     }
   }
+  const prompted = [...roles]
+
+  // Primary agents managed under the default role that carry their own prompt: append the rules
+  // (tracked only: in an untracked repo they are not managed until tracking starts).
+  if (defaultRole && !plan.untracked)
+    for (const [name, a] of Object.entries(cfg.agent)) {
+      if (roles.includes(name) || a?.mode === 'subagent' || typeof a?.prompt !== 'string') continue
+      if (a.hidden || a.disable || !a.prompt.trim()) continue
+      cfg.agent[name] = { ...a, prompt: withRules(config, defaultRole, a.prompt) }
+      prompted.push(name)
+    }
 
   // Non-Hafiz subagents (general, explore, custom): the default subagent role's tools. They
-  // become managed only when spawned with hafiz:block=<id>; otherwise a call is refused.
+  // become managed only when spawned on a block (task's `block`); otherwise a call is refused.
   for (const name of nonRoleSubagents) {
     const theirs = cfg.agent[name] ?? {}
     const ours = {
@@ -220,4 +253,5 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): void {
       if (p?.options && typeof url === 'string' && /^https?:\/\//.test(url))
         p.options.baseURL = plan.wrap(id, url)
     }
+  return prompted
 }

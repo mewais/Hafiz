@@ -1,13 +1,15 @@
 // A role-scoped MCP server in front of one daemon session. Role = server instance: only the
-// tools the role's allowlist permits are registered, so a worker never sees `block_set_status:done`.
+// tools the role's allowlist permits are registered, narrowed to what it may do with them (a
+// worker's hafiz_block_set_status offers only `done`, which is a request).
 import { randomBytes } from 'node:crypto'
 import {
   type Config,
+  isAllowed,
   loadConfig,
   type ResolvedProject,
   resolveProject,
   rulesFor,
-  toolName,
+  type ToolHost,
   toolsForRole,
 } from '@hafiz/core'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -21,6 +23,11 @@ export interface McpServerOptions {
   /** A client that already holds this session's token. */
   client: DaemonClient
   config?: Config
+  /**
+   * The host this server serves (default `mcp`). `kilo` (`host.kilo.tools: mcp`) leaves out the
+   * context reads, which Kilo's request shaper injects anyway.
+   */
+  host?: ToolHost
 }
 
 export interface HafizMcp {
@@ -37,13 +44,14 @@ const text = (t: string, isError = false): CallToolResult => ({
 export function createMcpServer(opts: McpServerOptions): HafizMcp {
   const config = opts.config ?? loadConfig()
   const { client, role } = opts
-  const roleTools = toolsForRole(config, role)
-  const can = (command: string) => roleTools.some((t) => t.spec.command === command)
+  const host = opts.host ?? 'mcp'
+  const roleTools = toolsForRole(config, role, host)
+  const can = (command: string) => isAllowed(config.roles.roles[role]?.tools ?? [], command)
 
   const server = new McpServer(
     { name: `hafiz-${role}`, version: '0.0.0' },
     {
-      instructions: `Hafiz is this project's shared memory: a block tree with designs, plans, logs and decisions. You are the ${role}. Call hafiz_context_for first; keep writes small and structured.`,
+      instructions: `Hafiz is this project's shared memory: a block tree with designs, plans, logs and decisions. You are the ${role}.${host === 'mcp' ? ' Read your context with hafiz_context_for first.' : ''} Keep writes small and structured.`,
     },
   )
 
@@ -66,10 +74,10 @@ export function createMcpServer(opts: McpServerOptions): HafizMcp {
   for (const rt of roleTools) {
     const { spec } = rt
     server.registerTool(
-      toolName(spec.command),
+      spec.name,
       {
-        description: spec.description(config),
-        inputSchema: spec.shape(config, rt.qualifiers),
+        description: spec.description(config, rt),
+        inputSchema: spec.shape(config, rt),
         annotations: { readOnlyHint: spec.readOnly === true },
       },
       async (args: Record<string, unknown>): Promise<CallToolResult> => {
@@ -119,7 +127,7 @@ export function createMcpServer(opts: McpServerOptions): HafizMcp {
     )
   }
 
-  return { server, tools: roleTools.map((t) => toolName(t.spec.command)) }
+  return { server, tools: roleTools.map((t) => t.spec.name) }
 }
 
 // ───────────────────────────── session bootstrap ─────────────────────────────
@@ -166,7 +174,8 @@ export async function runMcpStdio(opts: RunMcpOptions): Promise<void> {
   const project = opts.project ?? resolveProject(opts.projectDir ?? opts.cwd, opts.env)
   const client = await ensureDaemon(project, { env: opts.env, ...opts.daemon })
   await attachSession(client, opts.role, opts.env, project.worktree)
-  const { server } = createMcpServer({ role: opts.role, client, config })
+  const host: ToolHost = opts.env.HAFIZ_HOST === 'kilo' ? 'kilo' : 'mcp'
+  const { server } = createMcpServer({ role: opts.role, client, config, host })
   const done = new Promise<void>((resolve) => {
     server.server.onclose = () => resolve()
   })

@@ -5,10 +5,10 @@
 import {
   agentRoleNames,
   type Config,
+  isAllowed,
   type RoleTool,
+  roleTool,
   TOOL_SPECS,
-  type ToolSpec,
-  toolName,
   toolsForRole,
 } from '@hafiz/core'
 import { runTool } from '@hafiz/gateway-mcp'
@@ -27,22 +27,21 @@ export function managedRoles(config: Config): string[] {
 
 /** Native tool names a role may call (its allowlist through the catalogue). */
 export function toolNamesForRole(config: Config, role: string): string[] {
-  return toolsForRole(config, role).map((t) => toolName(t.spec.command))
+  return toolsForRole(config, role, 'kilo').map((t) => t.spec.name)
 }
 
-/** Catalogue entries at least one managed role can use, with the union of their qualifiers. */
-function registeredSpecs(config: Config): RoleTool[] {
-  const out = new Map<string, RoleTool>()
-  for (const role of managedRoles(config))
-    for (const rt of toolsForRole(config, role)) {
-      const have = out.get(rt.spec.command)
-      if (!have) out.set(rt.spec.command, { spec: rt.spec, qualifiers: [...rt.qualifiers] })
-      else for (const q of rt.qualifiers) if (!have.qualifiers.includes(q)) have.qualifiers.push(q)
-    }
-  // Keep catalogue order so the tool list is stable.
-  return TOOL_SPECS.flatMap((s: ToolSpec) => {
-    const rt = out.get(s.command)
-    return rt ? [rt] : []
+/**
+ * The definitions Kilo registers: plugin tools are global, so each catalogue tool is registered
+ * once for every managed role that can use it, with the union of what those roles may do (enum
+ * values, inputs, description sentences). execute() then routes each call with the caller's own
+ * role, so a worker's `done` is still a request.
+ */
+export function registeredTools(config: Config): RoleTool[] {
+  const allow = managedRoles(config).map((r) => config.roles.roles[r]?.tools ?? [])
+  const can = (command: string, q?: string) => allow.some((p) => isAllowed(p, command, q))
+  return TOOL_SPECS.filter((s) => !s.hosts || s.hosts.includes('kilo')).flatMap((s) => {
+    const t = roleTool(config, s, can, true)
+    return t ? [t] : []
   })
 }
 
@@ -88,11 +87,11 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
   const { config } = opts
   const registry = () => (typeof opts.sessions === 'function' ? opts.sessions() : opts.sessions)
   const tools: Record<string, KiloToolDefinition> = {}
-  for (const all of registeredSpecs(config)) {
-    const name = toolName(all.spec.command)
+  for (const all of registeredTools(config)) {
+    const name = all.spec.name
     tools[name] = {
-      description: all.spec.description(config),
-      args: all.spec.shape(config, all.qualifiers),
+      description: all.spec.description(config, all),
+      args: all.spec.shape(config, all),
       async execute(args: Record<string, unknown>, ctx: KiloToolContext) {
         const sid = ctx.sessionID
         const sessions = registry()
@@ -104,9 +103,9 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
         const role = sessions.get(sid)?.role
         if (!open || !role)
           throw new HafizToolError(
-            `${name}: this Kilo session is not managed by Hafiz (agent '${ctx.agent}'). Subagents are managed only when their task prompt contains hafiz:block=<block id>.`,
+            `${name}: this Kilo session is not managed by Hafiz (agent '${ctx.agent}'). Subagents are managed only when spawned on a block (the block argument of task).`,
           )
-        const rt = toolsForRole(config, role).find((t) => t.spec.command === all.spec.command)
+        const rt = toolsForRole(config, role, 'kilo').find((t) => t.spec.name === name)
         if (!rt) throw new HafizToolError(`${name} is not available to the ${role} role.`)
         const r = await runTool((m, p) => sessions.call(sid, m, p), rt, args)
         if (r.isError) throw new HafizToolError(r.text)

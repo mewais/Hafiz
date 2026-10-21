@@ -1,10 +1,21 @@
 // Metric collection (M6): everything is read back from the Hafiz store (logs, threads, proposals,
 // audit) and the session counters the cost instrumentation and compliance engine already keep.
 // Only agent sessions count; the seed and `hafiz` CLI calls run as role `user` and are ignored.
-import { costTotal, type ReadOps, type Session, TOOL_SPECS } from '@hafiz/core'
+import { COMMAND_SPECS, costTotal, type ReadOps, type Session } from '@hafiz/core'
 
 export type MetricValue = number | null
 export type MetricSet = Record<string, MetricValue>
+
+/** One `task` call the manager (or any managed session) made; `error` when the checks refused it. */
+export interface Delegation {
+  session: string
+  role?: string | undefined
+  agent?: string | undefined
+  block?: string | undefined
+  /** First 200 characters of the prompt. */
+  prompt: string
+  error?: string | undefined
+}
 
 export interface RunMetrics {
   /** All agent roles together. */
@@ -14,8 +25,8 @@ export interface RunMetrics {
 }
 
 const REPORT = 'report'
-/** Commands that change the store (the catalogue's dispatch tools); audit also records reads. */
-const WRITES = new Set(TOOL_SPECS.filter((t) => t.kind === 'dispatch').map((t) => t.command))
+/** Commands that change the store (the catalogue's dispatch commands); audit also records reads. */
+const WRITES = new Set(COMMAND_SPECS.filter((t) => t.kind === 'dispatch').map((t) => t.command))
 const sum = (xs: Iterable<number>) => {
   let n = 0
   for (const x of xs) n += x
@@ -37,6 +48,8 @@ function metricsFor(
     /** Blocks that have a digest doc. */
     digested: ReadonlySet<string>
     proposals: Array<{ source: string; kind: string }>
+    /** Delegations the checks refused. */
+    rejected: readonly Delegation[]
   },
 ): MetricSet {
   const mine = <T extends { by: { sessionId: string; role: string } }>(xs: T[]) =>
@@ -44,7 +57,8 @@ function metricsFor(
   const progress = mine(a.progress)
   const audit = mine(a.audit)
   const cmd = (c: string) => audit.filter((e) => e.command === c || e.command.startsWith(`${c}:`))
-  // `confirm_done: auto` turns request_done into set_status:done; `ask` queues a request.
+  // A request to finish a block: the worker's done is `request_done` (`confirm_done: auto` turns
+  // it into set_status:done, `ask` queues it); the manager's is set_status:done.
   const done = [...cmd('block.request_done'), ...cmd('block.set_status:done')]
   const tools = counter(sessions, 'tool_calls')
   const protocol = counter(sessions, 'tool_calls_hafiz')
@@ -59,8 +73,8 @@ function metricsFor(
     threads_opened: mine(a.threads).length,
     threads_parked: cmd('thread.park').length,
     threads_open_at_end: mine(a.threads).filter((t) => t.status === 'open').length,
-    request_done: done.length,
-    request_done_digest: done.filter((e) => a.digested.has(e.target)).length,
+    done_requests: done.length,
+    done_with_digest: done.filter((e) => a.digested.has(e.target)).length,
     blocks_created: cmd('block.create').length,
     docs_written: audit.filter((e) => /^doc\.(write|patch)/.test(e.command)).length,
     cap_rejections: counter(sessions, 'cap_rejections'),
@@ -69,20 +83,25 @@ function metricsFor(
     tool_calls: tools,
     hafiz_calls: protocol,
     protocol_ratio: ratio(protocol, tools),
-    files_written: counter(sessions, 'files_written'),
+    files_written_managed: counter(sessions, 'files_written'),
     subagents_spawned: counter(sessions, 'subagents_spawned'),
     view_emits: cost.viewEmits,
     tokens_per_view: cost.tokensPerView,
     cache_read_ratio: cost.cacheHit,
     condensations: cost.condensations,
     condense_tokens: cost.condenseTokens,
+    tracked: cmd('project.init').length > 0 ? 1 : 0,
+    spawns_rejected: a.rejected.length,
     hafiz_writes: audit.filter((e) => WRITES.has(e.command.split(':')[0] as string)).length,
   }
   return m
 }
 
 /** Read everything a run produced and compute the metrics. */
-export async function collectMetrics(read: ReadOps): Promise<RunMetrics> {
+export async function collectMetrics(
+  read: ReadOps,
+  run: { filesChanged?: readonly string[]; delegations?: readonly Delegation[] } = {},
+): Promise<RunMetrics> {
   const [all, blocks, proposals, audit, threads] = await Promise.all([
     read.listSessions(),
     read.listBlocks(),
@@ -109,7 +128,10 @@ export async function collectMetrics(read: ReadOps): Promise<RunMetrics> {
     audit: audit.filter((e) => agent(e.by)),
     proposals,
   }
-  const total = metricsFor(sessions, { ...data, isMine: agent })
+  const refused = (run.delegations ?? []).filter((d) => d.error)
+  const total = metricsFor(sessions, { ...data, rejected: refused, isMine: agent })
+  // from the repo's git state, not the session counters: workers may run unmanaged
+  total.files_written = run.filesChanged?.length ?? 0
   total.blocks_done = blocks.filter((b) => b.status === 'done' && b.parentId !== null).length
   total.blocks_total = blocks.length
   total.proposals = proposals.length
@@ -119,7 +141,11 @@ export async function collectMetrics(read: ReadOps): Promise<RunMetrics> {
   const roles: Record<string, MetricSet> = {}
   for (const role of [...new Set(sessions.map((s) => s.role))].sort()) {
     const ss = sessions.filter((s) => s.role === role)
-    roles[role] = metricsFor(ss, { ...data, isMine: (by) => by.role === role })
+    roles[role] = metricsFor(ss, {
+      ...data,
+      rejected: refused.filter((d) => d.role === role),
+      isMine: (by) => by.role === role,
+    })
   }
   // progress per worker session (the protocol asks every worker to log as it goes)
   if (roles.worker) {

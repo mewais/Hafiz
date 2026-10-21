@@ -180,8 +180,8 @@ sections:
 | `block.update / block.move` | CAS; epoch |
 | `block.set_status(id, status, {digest?, reason?, blocked_on?, confirmed?})` | guards; `done→active` allowed |
 | `block.request_done(id, digest)` | worker path; enqueues or auto-applies |
-| `edge.add / edge.remove` | epoch |
-| `doc.write / doc.patch(block, type, …, expected_version)` | full/section replace; validate; CAS; epoch |
+| `edge.add / edge.remove` | epoch; CLI only (agents' edges are derived from designs, below) |
+| `doc.write / doc.patch(block, type, …, expected_version, require_version?)` | full/section replace; validate; CAS; epoch. A design write sets the block's `depends_on` edges to the blocks its `interface.consumes[].block` name (id, or a title matching one block); unknown names → a notice |
 | `step.set(block, step_id, status)` | append-only event; no epoch; no CAS |
 | `progress.append(block, entry)` | append-only |
 | `decision.record(block, {title, decision, rationale, standing?, supersedes?})` | append-only; epoch |
@@ -193,8 +193,22 @@ Stale `expected_version` → `Conflict{current}`. All commands are journaled tra
 successful command produces an `AuditEntry` and (major writes) a git commit authored as
 `<role>/<agent-name> <session-id@hafiz>`; CLI writes are authored as the user.
 
-A catalogue entry (`commands/catalogue.ts`) may declare hooks Core runs around the command when it
-is dispatched (`commands/hooks.ts`): `before: [draft_gist]` on `thread.park`; `after:
+**Agent tool catalogue vs commands.** The commands above are what Core, the daemon, the CLI and
+the tests speak. Agents see a smaller catalogue (`commands/tools.ts`, `TOOL_SPECS`): twelve tools
+on Kilo, each routing a call to one command or query (`routeTool`), e.g. `hafiz_thread`
+`action: park` → `thread.park`, `hafiz_block_read` without `id` → `tree.list`, `hafiz_doc` →
+`doc.patch` (`replace: true` → `doc.write`, always with `require_version`, so an agent never
+overwrites a document it has not seen). A tool's enum input is narrowed per role to the values
+the allowlist grants (`thread.open` + `thread.park` → `action: open | park`; `doc.patch:plan` →
+`type: plan`, no `replace`), the way `doc.write:type` narrows `type`; `done` maps to
+`block.set_status` for a role holding `block.set_status:done` and to `block.request_done`
+otherwise, so policy decides close vs queue with no role check in Core. Entries may name the
+hosts that list them (`hosts: [mcp]`: `context.for`, `context.delta`, `session.status`, which
+Kilo injects instead). The descriptions are the one place a tool's mechanics are written; the
+rules say when to use them.
+
+A command catalogue entry (`commands/catalogue.ts`, `COMMAND_SPECS`) may declare hooks Core runs
+around the command when it is dispatched (`commands/hooks.ts`): `before: [draft_gist]` on `thread.park`; `after:
 [refresh_focus, announce_proposals]` on every `block.*` and `proposal.*` write, plus
 `done_compliance, draft_digest` on `block.request_done` and `block.set_status` (to `done`).
 What a hook has for other sessions or the caller's notice queue goes to the gateway through a
@@ -303,8 +317,9 @@ Everything in `match` is an attribute Relate computed; new attributes need no en
 
 ### 6.4 Computed focus
 
-Focus is set by the adapter at spawn from the role's `focus_policy` (`worker: spawned_block`,
-`manager: all_active`, `designer: all_active + planned_children`) and persisted on the session;
+Focus is set by the adapter at spawn from the role's `focus_policy` and persisted on the session:
+`manager: all_active`; `designer`, `planner`, `worker`: `spawned_block` — the block they are
+spawned on, falling back to the active front when used directly (no block);
 `focus.set` overrides it. Agents do not have to remember to set focus.
 
 ### 6.5 The tail: ownership, policy, delta, condensation
@@ -441,20 +456,26 @@ Markdown the adapter installs as agent prompts).
 ```yaml
 roles:
   manager:  { view: default, focus_policy: all_active,
-              tools: [context.*, block.*, tree.list, edge.*, doc.patch:plan, decision.record,
-                      thread.*, progress.append, focus.set, proposal.*],
+              tools: [context.*, block.*, tree.list, doc.patch:plan, decision.record, thread.*,
+                      progress.append, focus.set, proposal.*, session.status],
               rules: rules/manager.md }
-  designer: { view: designer, focus_policy: all_active,
+  designer: { view: designer, focus_policy: spawned_block,
               tools: [context.*, block.read, tree.list, block.create, doc.write:design,
-                      doc.patch:design, edge.*, decision.record, thread.*],
+                      doc.patch:design, decision.record, thread.*, progress.append:found,
+                      progress.append:question],
               rules: rules/designer.md }
-  planner:  { view: default, focus_policy: all_active,
+  planner:  { view: default, focus_policy: spawned_block,
               tools: [context.*, block.read, tree.list, block.create, doc.write:plan,
                       doc.patch:plan, thread.*], rules: rules/planner.md }
   worker:   { view: worker, focus_policy: spawned_block,
               tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
-                      doc.write:digest, block.request_done], rules: rules/worker.md }
+                      block.request_done], rules: rules/worker.md }
 ```
+
+The allowlist names commands (Core enforces it); the agent tools are narrowed to it (§5.1). No
+agent role holds `edge.*`: dependencies come from designs. Rules are written for an agent that has
+no other prompt: `rules/common.md` (reading the envelope, floor, delta, notices, unfiled, elided
+output; the writing contract) plus the role's workflow, each held to a token budget by test.
 
 A role is data: view, focus policy, allowlist, rules. Adding `reviewer` is a config entry.
 
@@ -544,8 +565,10 @@ state in the backend. Appends never conflict; replaces use CAS; commands are jou
 ### 11.1 MCP (`hafiz mcp --role <r>`)
 
 One server process per role per host agent; exposes that role's tools only (**role = server
-instance**, universal across hosts). The tool catalogue (names, descriptions, zod schemas) lives in
-core (`TOOL_SPECS`) and is shared with host-native tool registrations such as Kilo's (§12.1). Tool descriptions carry protocol hints. Elicitation is used for
+instance**, universal across hosts). The agent tool catalogue (names, descriptions, zod schemas,
+routing to commands; §5.1) lives in core (`commands/tools.ts`) and is shared with host-native tool
+registrations such as Kilo's (§12.1); the server lists the `hosts: [mcp]` context reads unless it
+serves Kilo (`HAFIZ_HOST=kilo`). Tool descriptions carry the mechanics. Elicitation is used for
 `confirm_done: ask` where supported; otherwise `needs_confirmation`. Resources: `hafiz://block/<id>`;
 prompts: one per role. Session: token from env → session; project from roots/cwd.
 
@@ -564,14 +587,31 @@ prompts: one per role. Session: token from env → session; project from roots/c
 
 | Job | Mechanism |
 |---|---|
-| Install (`config` hook, stable) | `agent.<role>` definitions (prompt = role rules + `rules/common.md`, `permission` `hafiz_*: deny` + allow for exactly the role's tools, `permission.task` for who may delegate); default-role tool permissions for non-Hafiz agents; slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions |
-| Tools (`tool` hook, stable) | **plugin-native** `hafiz_<command>` tools generated from the shared catalogue (`TOOL_SPECS` in core, also used by the MCP gateway; execution shared via `runTool`). Each call resolves the calling Kilo session → Hafiz session (`session.open` with the Kilo id; role from the agent, parent from `parentID`, spawned block from `hafiz:block=<id>`) and dispatches with that session's token, so attribution and focus are per session. `host.kilo.tools: mcp` keeps the per-role MCP servers instead |
-| Default roles | `host.kilo.default_role` (default `manager`) manages non-role primary agents (`build`, `plan`, custom) as that role: tools, session, and the role's rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`) does the same for non-role subagents (`general`, `explore`) **only** when spawned with a `hafiz:block=` marker; otherwise they are unmanaged. `none` disables either |
+| Install (`config` hook, stable) | `agent.<role>` definitions (prompt = the user's own prompt for that agent, if any, then a separator comment and the role rules + `rules/common.md`: always appended, never replaced; `permission` `hafiz_*: deny` + allow for exactly the role's tools, `permission.task` for who may delegate); the default role's rules appended the same way to a primary agent that has its own `prompt` (tracked repos); default-role tool permissions for non-Hafiz agents; slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions. Kilo uses an agent's `prompt` instead of its model-specific system prompt, so agents without one (`build` as shipped, subagents spawned on a block, anything managed after mid-session tracking) get the rules from the shaper, ahead of the envelope |
+| Tools (`tool` hook, stable) | **plugin-native** catalogue tools (`TOOL_SPECS` in core, also used by the MCP gateway; execution shared via `runTool`). Plugin tools are global, so each is registered once with the union of what the managed roles may do (enum values, inputs, description sentences) and every call is routed with the caller's own role. Each call resolves the calling Kilo session → Hafiz session (`session.open` with the Kilo id; role from the agent, parent from `parentID`, spawned block from the `hafiz:block=<id>` marker the `task` check writes) and dispatches with that session's token, so attribution and focus are per session. `host.kilo.tools: mcp` keeps the per-role MCP servers instead |
+| Default roles | `host.kilo.default_role` (default `manager`) manages non-role primary agents (`build`, `plan`, custom) as that role: tools, session, and the role's rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`) does the same for non-role subagents (`general`, `explore`) **only** when spawned on a block (`task`'s `block`); otherwise they are unmanaged. `none` disables either |
 | Untracked git repo | near-zero cost: in-memory nudge plus one tool, `hafiz_track_project` (`name`, `reason?`), allowed to primary agents only. Kilo reads agents, permissions and the tool list once at startup, so the plugin installs the role agents and permissions and registers every Hafiz tool up front, and on each request hides all but the track tool by setting `tools[name] = false` on the user message objects `experimental.chat.messages.transform` receives (Kilo filters the request's tools by that field after the hook; the objects are re-read from its database every step, so nothing persists). The tool runs `initProject`, starts the daemon, opens the caller's session and builds the managed hooks; from the next request (same turn) every hook delegates to them and the visibility flips. Outside git: no hooks |
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |
 | `done` confirmation | `needs_confirmation` (no elicitation on Kilo); default `auto` makes it rare |
+
+#### Mechanical checks
+
+A rule that can be checked is a check, not a sentence in a prompt. Hafiz shapes the tools agents
+see (`tool.definition`) and vetoes calls before they run (`tool.execute.before`, a throw becomes
+the tool error the model reads), using Kilo's own tools rather than replacements
+(`host-kilo/src/checks.ts`). All of it applies to managed sessions only; unmanaged sessions and
+the condenser's helper sessions pass through.
+
+| Check | Mechanism |
+|---|---|
+| Spawn on a block | Kilo's `task` gets a required `block`: a block id (exact, unique prefix or unique title, `matchBlock`), or `none` for a helper outside Hafiz, never for a role agent. Unknown ids are refused with the valid ones; a valid one becomes the `hafiz:block=<id>` marker in the prompt, so `session.open` is unchanged |
+| Spawn fits the block | the spawned role must be listed for the block's state in `policies.yaml spawn.roles_by_state` (`no_design` → designer, `no_plan` → designer, planner, `has_plan` → any, `done`/`dropped` → nobody); the refusal names the missing step |
+| Pass the block, not its contents | a `task` prompt that quotes `<hafiz…>` or exceeds `host.kilo.delegation_prompt_cap` tokens is refused: the subagent sees its block in its own view |
+| Only the report reaches the parent | `tool.execute.after`: the child's full text is captured to the store and the parent gets its fenced `hafiz-report` (or the text and a line saying there is none); a child whose role may finish its block and whose session ran neither a done request nor a blocked entry (`session.activity`) gets "ended without a done request or a blocked entry" |
+| No blind overwrites | `hafiz_doc` sends `require_version`: writing an existing doc needs its `expected_version` (Core) |
+| The store is Hafiz's | a `bash` command naming `project.storeDir` is refused (`read`/`edit` are already denied by permission) |
 
 ### 12.2 Claude Code / Codex — specified, not built
 
@@ -587,7 +627,7 @@ prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ```
 packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
-packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · hooks · blocks · docs · logs · project · proposals · reads · authz · catalogue)
+packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · hooks · blocks · docs · logs · project · proposals · reads · authz · catalogue: commands · tools: agent tools)
                   session/ (service: sessions, counters, focus · compliance + compliance-run · cost · nudge · review)
                   condense/ (condenser · service: checkpoint, condense · drafter + drafting) · view/ (engine … · service: context.*, block.read)
                   domain/ · config/ · schema/ · store/ · llm/ · project/

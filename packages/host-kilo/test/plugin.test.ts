@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
-import { loadConfig } from '@hafiz/core'
+import { loadConfig, rulesFor } from '@hafiz/core'
 import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -14,6 +14,7 @@ import {
   type KiloConfig,
   type KiloMessageWithParts,
   type PluginInput,
+  RULES_SEPARATOR,
   SESSION_HEADER,
 } from '../src/index.js'
 
@@ -87,7 +88,7 @@ describe('plugin: config hook', () => {
     // native tools (default): no MCP servers, tools come from the plugin `tool` hook
     expect(cfg.mcp ?? {}).toEqual({})
     expect(Object.keys(hooks.tool ?? {})).toContain('hafiz_progress_append')
-    expect(cfg.agent?.worker?.prompt).toContain('hafiz_block_request_done')
+    expect(cfg.agent?.worker?.prompt).toContain('hafiz_block_set_status')
     // last match wins in Kilo permission maps: the role's allows must come after the deny
     const keys = Object.keys(cfg.agent?.worker?.permission as object)
     expect(keys.indexOf('hafiz_*')).toBeLessThan(keys.indexOf('hafiz_progress_append'))
@@ -205,6 +206,45 @@ describe('plugin: nudge in an untracked repo', () => {
   })
 })
 
+describe('plugin: Hafiz rules in agent prompts', () => {
+  const config = loadConfig()
+  const plan = { config, worktree: '/r', storeDir: '/s', hafiz: ['hafiz'] }
+  const rules = (role: string) => `${RULES_SEPARATOR(role)}\n${rulesFor(config, role)}`
+
+  it('appends the rules to every role agent, after a user prompt instead of under it', () => {
+    const cfg: KiloConfig = {
+      agent: { manager: { prompt: 'You are my manager. Be terse.', model: 'x/y' } },
+    }
+    const prompted = installConfig(cfg, plan)
+    expect(cfg.agent?.manager?.prompt).toBe(`You are my manager. Be terse.\n\n${rules('manager')}`)
+    expect(cfg.agent?.manager?.model).toBe('x/y')
+    // a role agent without a user prompt is the rules alone: they must stand on their own
+    expect(cfg.agent?.worker?.prompt).toBe(rules('worker'))
+    expect(prompted).toEqual(['manager', 'designer', 'planner', 'worker'])
+  })
+
+  it('appends the default role rules to a primary agent with its own prompt, e.g. build', () => {
+    const cfg: KiloConfig = {
+      agent: {
+        build: { prompt: 'House style: small commits.' },
+        plan: { model: 'x/y' },
+        helper: { mode: 'subagent', prompt: 'help' },
+      },
+    }
+    const prompted = installConfig(cfg, plan)
+    expect(cfg.agent?.build?.prompt).toBe(`House style: small commits.\n\n${rules('manager')}`)
+    // no prompt of its own: Kilo's model-specific prompt stays, the shaper adds the rules
+    expect(cfg.agent?.plan?.prompt).toBeUndefined()
+    // subagents are managed only when spawned on a block: the shaper adds the rules then
+    expect(cfg.agent?.helper?.prompt).toBe('help')
+    expect(prompted).toEqual(['manager', 'designer', 'planner', 'worker', 'build'])
+    // untracked: build is not managed yet, so its prompt stays as the user wrote it
+    const untracked: KiloConfig = { agent: { build: { prompt: 'House style.' } } }
+    installConfig(untracked, { ...plan, untracked: { trackTool: 'hafiz_track_project' } })
+    expect(untracked.agent?.build?.prompt).toBe('House style.')
+  })
+})
+
 describe('plugin: host compaction', () => {
   it('is disabled only when a condenser provider is configured', () => {
     const base = loadConfig()
@@ -280,13 +320,18 @@ describe('plugin: sessions, report capture, shaping', () => {
     const { d, hooks, block } = await live()
     await spawnWorker(hooks, block)
     const long = `Fixed rounding in payments.ts.\n${'detail '.repeat(4000)}`
+    const out = {
+      title: 'fix',
+      metadata: { sessionId: 'ses_w' },
+      output: `<task id="ses_w" state="completed">\n<task_result>\n${long}\n</task_result>\n</task>`,
+    }
     await hooks['tool.execute.after']?.(
       { tool: 'task', sessionID: 'ses_m', callID: 'c1', args: {} },
-      {
-        title: 'fix',
-        metadata: { sessionId: 'ses_w' },
-        output: `<task id="ses_w" state="completed">\n<task_result>\n${long}\n</task_result>\n</task>`,
-      },
+      out,
+    )
+    // the parent hears that there was no report, and (from the daemon) that the worker did not finish
+    expect(out.output).toContain(
+      `\nno hafiz-report in this result; full text stored on block ${block}\nended without a done request or a blocked entry\n</task_result>`,
     )
     const read = d.service.core.backend.read
     const log = await read.readLog(block, 'progress')

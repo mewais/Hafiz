@@ -99,128 +99,101 @@ const digest = {
   pointers: [{ label: 'pr', ref: '#1' }],
 }
 
-// The exact tool surface per role: the allowlist in roles.yaml, expanded.
-const TOOLS: Record<string, string[]> = {
+// The exact tool surface per role on an MCP host: the agent catalogue narrowed by roles.yaml.
+const KILO_TOOLS: Record<string, string[]> = {
   manager: [
-    'hafiz_context_for',
-    'hafiz_context_explain',
-    'hafiz_context_delta',
     'hafiz_block_read',
-    'hafiz_tree_list',
-    'hafiz_session_status',
-    'hafiz_proposal_list',
-    'hafiz_proposal_accept',
-    'hafiz_proposal_reject',
     'hafiz_block_create',
-    'hafiz_block_update',
-    'hafiz_block_move',
+    'hafiz_block_edit',
     'hafiz_block_set_status',
-    'hafiz_block_request_done',
-    'hafiz_edge_add',
-    'hafiz_edge_remove',
-    'hafiz_doc_patch',
+    'hafiz_doc',
     'hafiz_progress_append',
     'hafiz_decision_record',
-    'hafiz_thread_open',
-    'hafiz_thread_park',
-    'hafiz_thread_resume',
-    'hafiz_thread_resolve',
-    'hafiz_thread_append',
+    'hafiz_thread',
+    'hafiz_review',
     'hafiz_focus_set',
   ],
   designer: [
-    'hafiz_context_for',
-    'hafiz_context_explain',
-    'hafiz_context_delta',
     'hafiz_block_read',
-    'hafiz_tree_list',
     'hafiz_block_create',
-    'hafiz_edge_add',
-    'hafiz_edge_remove',
+    'hafiz_doc',
     'hafiz_progress_append',
-    'hafiz_doc_write',
-    'hafiz_doc_patch',
     'hafiz_decision_record',
-    'hafiz_thread_open',
-    'hafiz_thread_park',
-    'hafiz_thread_resume',
-    'hafiz_thread_resolve',
-    'hafiz_thread_append',
+    'hafiz_thread',
   ],
-  planner: [
-    'hafiz_context_for',
-    'hafiz_context_explain',
-    'hafiz_context_delta',
-    'hafiz_block_read',
-    'hafiz_tree_list',
-    'hafiz_block_create',
-    'hafiz_doc_write',
-    'hafiz_doc_patch',
-    'hafiz_thread_open',
-    'hafiz_thread_park',
-    'hafiz_thread_resume',
-    'hafiz_thread_resolve',
-    'hafiz_thread_append',
-  ],
+  planner: ['hafiz_block_read', 'hafiz_block_create', 'hafiz_doc', 'hafiz_thread'],
   worker: [
-    'hafiz_context_for',
-    'hafiz_context_explain',
-    'hafiz_context_delta',
     'hafiz_block_read',
+    'hafiz_block_set_status',
     'hafiz_step_set',
     'hafiz_progress_append',
-    'hafiz_thread_open',
-    'hafiz_thread_park',
-    'hafiz_doc_write',
-    'hafiz_block_request_done',
+    'hafiz_thread',
   ],
 }
+const CONTEXT = ['hafiz_context_for', 'hafiz_context_delta']
+const TOOLS: Record<string, string[]> = {
+  manager: [...CONTEXT, 'hafiz_session_status', ...(KILO_TOOLS.manager ?? [])],
+  designer: [...CONTEXT, ...(KILO_TOOLS.designer ?? [])],
+  planner: [...CONTEXT, ...(KILO_TOOLS.planner ?? [])],
+  worker: [...CONTEXT, ...(KILO_TOOLS.worker ?? [])],
+}
+
+type ToolInfo = { name: string; description?: string; inputSchema: { properties?: unknown } }
+const enumOf = (t: ToolInfo | undefined, param: string) =>
+  ((t?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>)[param]?.enum
+const find = async (a: Agent, name: string) =>
+  (await a.mcp.listTools()).tools.find((t) => t.name === name) as ToolInfo | undefined
 
 describe('mcp tool lists', () => {
   it('match each role allowlist exactly', async () => {
     const { d } = await boot()
     for (const [role, expected] of Object.entries(TOOLS)) {
       const a = await agent(d, role, { HAFIZ_SESSION_ID: `s-${role}` })
-      expect((await a.tools()).sort()).toEqual([...expected].sort())
+      expect(await a.tools()).toEqual(expected)
     }
     const u = await agent(d, 'user', { HAFIZ_SESSION_ID: 's-user' })
-    const all = await u.tools()
-    expect(all).toContain('hafiz_block_set_status')
-    expect(all).toContain('hafiz_proposal_accept')
-    expect(all).toHaveLength(27)
+    expect(await u.tools()).toHaveLength(14)
   })
 
-  it('narrows qualified tools: the worker may only write digests', async () => {
+  it('serving Kilo (host.kilo.tools: mcp), leaves out the context reads Kilo injects', async () => {
+    const { d } = await boot()
+    const daemon = await DaemonClient.connect(d.socketPath)
+    cleanup.push(() => daemon.close())
+    await attachSession(daemon, 'manager', { HAFIZ_SESSION_ID: 'k' })
+    expect(createMcpServer({ role: 'manager', client: daemon, host: 'kilo' }).tools).toEqual(
+      KILO_TOOLS.manager,
+    )
+  })
+
+  it('narrows actions and enums to the allowlist', async () => {
     const { d } = await boot()
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w' })
-    const doc = (await w.mcp.listTools()).tools.find((t) => t.name === 'hafiz_doc_write')
-    const props = (doc?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
-    expect(props.type?.enum).toEqual(['digest'])
+    expect(enumOf(await find(w, 'hafiz_block_set_status'), 'status')).toEqual(['done'])
+    expect(enumOf(await find(w, 'hafiz_thread'), 'action')).toEqual(['open', 'park'])
     const p = await agent(d, 'planner', { HAFIZ_SESSION_ID: 'p' })
-    const pdoc = (await p.mcp.listTools()).tools.find((t) => t.name === 'hafiz_doc_write')
-    const pprops = (pdoc?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
-    expect(pprops.type?.enum).toEqual(['plan'])
+    expect(enumOf(await find(p, 'hafiz_doc'), 'type')).toEqual(['plan'])
     const ds = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'd' })
-    const prog = (await ds.mcp.listTools()).tools.find((t) => t.name === 'hafiz_progress_append')
-    const dprops = (prog?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
-    expect(dprops.kind?.enum).toEqual(['found', 'question'])
+    expect(enumOf(await find(ds, 'hafiz_progress_append'), 'kind')).toEqual(['found', 'question'])
+    expect(enumOf(await find(ds, 'hafiz_doc'), 'type')).toEqual(['design'])
   })
 
-  it('carries protocol hints in descriptions', async () => {
+  it('carries the mechanics in descriptions', async () => {
     const { d } = await boot()
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w' })
     const desc = Object.fromEntries(
       (await w.mcp.listTools()).tools.map((t) => [t.name, t.description ?? '']),
     )
-    expect(desc.hafiz_block_request_done).toMatch(/digest is REQUIRED/)
-    expect(desc.hafiz_block_request_done).toMatch(/parked or resolved/)
-    expect(desc.hafiz_thread_park).toMatch(/gist is REQUIRED/)
-    expect(desc.hafiz_progress_append).toMatch(/ONE finding per entry/)
+    expect(desc.hafiz_block_set_status).toMatch(/done needs digest/)
+    expect(desc.hafiz_block_set_status).toMatch(/no open threads/)
+    expect(desc.hafiz_block_set_status).toMatch(/request/)
+    expect(desc.hafiz_thread).toMatch(/gist \(required/)
+    expect(desc.hafiz_progress_append).toMatch(/One finding/)
     const m = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'm' })
     const mdesc = Object.fromEntries(
       (await m.mcp.listTools()).tools.map((t) => [t.name, t.description ?? '']),
     )
     expect(mdesc.hafiz_decision_record).toMatch(/standing/)
+    expect(mdesc.hafiz_doc).toMatch(/expected_version/)
   })
 })
 
@@ -238,22 +211,43 @@ describe('mcp scenario', () => {
     const planner = await agent(d, 'planner', { HAFIZ_SESSION_ID: 'pl' }, { config })
     const designer = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'ds' }, { config })
 
-    const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
+    const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const a = (await planner.json('hafiz_block_create', { parent: root, title: 'Catalog' })).id
     const b = (await planner.json('hafiz_block_create', { parent: root, title: 'Checkout' })).id
     for (const id of [a, b])
-      await planner.json('hafiz_doc_write', { block: id, type: 'plan', sections: plan })
-    await designer.json('hafiz_doc_write', {
+      await planner.json('hafiz_doc', { block: id, type: 'plan', sections: plan, replace: true })
+    await designer.json('hafiz_doc', {
       block: a,
       type: 'design',
       sections: design('Product catalog'),
     })
-    await designer.json('hafiz_doc_write', {
+    // Checkout consumes from Catalog: the design write records the dependency
+    const checkout = design('Checkout flow')
+    await designer.json('hafiz_doc', {
       block: b,
       type: 'design',
-      sections: design('Checkout flow'),
+      sections: {
+        ...checkout,
+        interface: { ...checkout.interface, consumes: [{ name: 'list()', block: a }] },
+      },
     })
-    await mgr.json('hafiz_edge_add', { from: b, to: a })
+    // patching an existing doc needs the version the writer saw
+    const stale = await designer.call('hafiz_doc', {
+      block: a,
+      type: 'design',
+      sections: { purpose: 'Catalog of products' },
+    })
+    expect(stale.isError).toBe(true)
+    expect(stale.text).toMatch(/expected_version: 1/)
+    await designer.json('hafiz_doc', {
+      block: a,
+      type: 'design',
+      sections: { purpose: 'Catalog of products' },
+      expected_version: 1,
+    })
+    expect((await mgr.call('hafiz_block_read', { id: b, zoom: 'DESIGN' })).text).toContain(
+      `Depends on: ${a}`,
+    )
     await mgr.json('hafiz_block_set_status', { id: a, status: 'active' })
     await mgr.json('hafiz_block_set_status', { id: b, status: 'active' })
 
@@ -269,9 +263,10 @@ describe('mcp scenario', () => {
     )
     const w2 = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w2', HAFIZ_BLOCK: b }, { config })
 
-    // a worker cannot even see set_status, and the daemon refuses it anyway
-    expect(await w1.tools()).not.toContain('hafiz_block_set_status')
-    expect((await w1.call('hafiz_block_set_status', { id: a, status: 'done' })).isError).toBe(true)
+    // a worker cannot set any other status, and the daemon refuses set_status anyway
+    expect((await w1.call('hafiz_block_set_status', { id: a, status: 'active' })).isError).toBe(
+      true,
+    )
     await expect(
       w1.daemon.dispatch('block.set_status', { id: a, status: 'done' }),
     ).rejects.toMatchObject({
@@ -313,22 +308,27 @@ describe('mcp scenario', () => {
     expect(long.isError).toBe(true)
     expect(long.text).toContain('One finding per entry')
 
-    // an open thread blocks request_done; parking it needs a gist
-    const th = await w1.json('hafiz_thread_open', { block: a, title: 'Pagination?' })
-    const early = await w1.call('hafiz_block_request_done', { id: a, digest })
+    // an open thread blocks done; parking it needs a gist
+    const th = await w1.json('hafiz_thread', { action: 'open', block: a, title: 'Pagination?' })
+    const early = await w1.call('hafiz_block_set_status', { id: a, status: 'done', digest })
     expect(early.isError).toBe(true)
     expect(early.text).toMatch(/thread/i)
-    expect((await w1.call('hafiz_thread_park', { id: th.id, gist: '   ' })).isError).toBe(true)
-    await w1.json('hafiz_thread_park', { id: th.id, gist: 'Cursor vs offset; leaning cursor.' })
+    const blank = await w1.call('hafiz_thread', { action: 'park', id: th.id, gist: '   ' })
+    expect(blank.isError).toBe(true)
+    await w1.json('hafiz_thread', {
+      action: 'park',
+      id: th.id,
+      gist: 'Cursor vs offset; leaning cursor.',
+    })
 
-    // request_done works (auto policy) and the manager is told a proposal is waiting
-    await w1.call('hafiz_block_request_done', { id: a, digest })
-    const tree = (await mgr.call('hafiz_tree_list')).text
+    // the worker's done is a request (auto policy closes it) and the manager is told
+    await w1.call('hafiz_block_set_status', { id: a, status: 'done', digest })
+    const tree = (await mgr.call('hafiz_block_read')).text
     expect(tree).toMatch(new RegExp(`\\[done\\] ${a}`))
-    const props = await mgr.json('hafiz_proposal_list', { status: 'pending' })
+    const props = await mgr.json('hafiz_review', { action: 'list' })
     expect(props).toHaveLength(1)
     // the pending notice rides along on the manager's next call (one call earlier drained it)
-    expect(tree + (await mgr.call('hafiz_tree_list')).text).toBeTruthy()
+    expect(tree + (await mgr.call('hafiz_block_read')).text).toBeTruthy()
 
     // the manager's focus follows active blocks: Catalog is now done, Checkout remains
     const st = await mgr.json('hafiz_session_status')
@@ -339,19 +339,19 @@ describe('mcp scenario', () => {
   it('tells the manager when a worker queued a proposal', async () => {
     const { d } = await boot()
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' })
-    const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
+    const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Search' })).id
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: blk })
-    await w.call('hafiz_block_request_done', { id: blk, digest })
-    const next = await mgr.call('hafiz_tree_list')
+    await w.call('hafiz_block_set_status', { id: blk, status: 'done', digest })
+    const next = await mgr.call('hafiz_block_read')
     expect(next.text).toMatch(/\[proposal\] proposal prop_\w+ pending review/)
   })
 
   it('re-attaches the same session on reconnect (same focus)', async () => {
     const { d } = await boot()
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' })
-    const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
+    const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const a = (await mgr.json('hafiz_block_create', { parent: root, title: 'Alpha' })).id
     const b = (await mgr.json('hafiz_block_create', { parent: root, title: 'Beta' })).id
     await mgr.json('hafiz_block_set_status', { id: a, status: 'active' })
@@ -398,7 +398,7 @@ describe('mcp confirmation', () => {
     const config = askConfig()
     const { d } = await boot(config)
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { elicit, config })
-    const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
+    const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Ship' })).id
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     return { mgr, blk }
@@ -409,7 +409,7 @@ describe('mcp confirmation', () => {
     const r = await mgr.call('hafiz_block_set_status', { id: blk, status: 'done', digest })
     expect(r.text).toMatch(/requires confirmation/)
     expect(r.text).toMatch(/confirmed: true/)
-    expect((await mgr.call('hafiz_tree_list')).text).toContain(`[active] ${blk}`)
+    expect((await mgr.call('hafiz_block_read')).text).toContain(`[active] ${blk}`)
     const ok = await mgr.call('hafiz_block_set_status', {
       id: blk,
       status: 'done',
@@ -417,29 +417,29 @@ describe('mcp confirmation', () => {
       confirmed: true,
     })
     expect(ok.isError).toBe(false)
-    expect((await mgr.call('hafiz_tree_list')).text).toContain(`[done] ${blk}`)
+    expect((await mgr.call('hafiz_block_read')).text).toContain(`[done] ${blk}`)
   })
 
   it('elicits yes/no and retries when the client supports it', async () => {
     const { mgr, blk } = await setup(true)
     await mgr.call('hafiz_block_set_status', { id: blk, status: 'done', digest })
-    expect((await mgr.call('hafiz_tree_list')).text).toContain(`[done] ${blk}`)
+    expect((await mgr.call('hafiz_block_read')).text).toContain(`[done] ${blk}`)
   })
 
   it('queues a worker request for review under ask', async () => {
     const config = askConfig()
     const { d } = await boot(config)
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { config })
-    const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
+    const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Ship' })).id
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: blk }, { config })
-    const r = await w.json('hafiz_block_request_done', { id: blk, digest })
+    const r = await w.json('hafiz_block_set_status', { id: blk, status: 'done', digest })
     expect(r.queued).toBe(true)
-    expect((await mgr.call('hafiz_tree_list')).text).toContain(`[active] ${blk}`)
-    const [p] = await mgr.json('hafiz_proposal_list', { status: 'pending' })
-    await mgr.json('hafiz_proposal_accept', { id: p.id })
-    expect((await mgr.call('hafiz_tree_list')).text).toContain(`[done] ${blk}`)
+    expect((await mgr.call('hafiz_block_read')).text).toContain(`[active] ${blk}`)
+    const [p] = await mgr.json('hafiz_review', { action: 'list' })
+    await mgr.json('hafiz_review', { action: 'accept', id: p.id })
+    expect((await mgr.call('hafiz_block_read')).text).toContain(`[done] ${blk}`)
   })
 })
 
@@ -447,7 +447,7 @@ describe('mcp resources and prompts', () => {
   it('serves hafiz://context, hafiz://block/{id} and one prompt per role', async () => {
     const { d } = await boot()
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' })
-    const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
+    const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const ctx = await mgr.mcp.readResource({ uri: 'hafiz://context' })
     expect((ctx.contents[0] as { text: string }).text).toContain('Shop')
     const blk = await mgr.mcp.readResource({ uri: `hafiz://block/${root}` })

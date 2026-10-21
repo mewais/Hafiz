@@ -29,8 +29,8 @@ export function holds(want: string | number, got: MetricValue | undefined): bool
 }
 
 /**
- * Metric lookup: `decisions_standing` is a total over agent sessions; `worker_request_done`
- * (or `workers_request_done`) is the same metric for one role.
+ * Metric lookup: `decisions_standing` is a total over agent sessions; `worker_done_requests`
+ * (or `workers_done_requests`) is the same metric for one role.
  */
 export function lookup(metrics: RunMetrics, key: string): MetricValue | undefined {
   if (key in metrics.total) return metrics.total[key]

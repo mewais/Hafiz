@@ -3,14 +3,22 @@
 // Real mode reuses the owner's own Kilo auth/config (their HOME); --mock replaces the provider
 // with the scripted mock LLM and a throwaway HOME.
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run as hafiz, type Io } from '@hafiz/cli'
 import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
 import { writeFixture } from './fixture.js'
-import { collectMetrics, type RunMetrics } from './metrics.js'
+import { collectMetrics, type Delegation, type RunMetrics } from './metrics.js'
 import { type MockLlm, startMockLlm } from './mock-llm.js'
 import { scriptResponder, TURN_MARKER } from './mock-script.js'
 import { type Expectation, scoreExpectations } from './score.js'
@@ -40,6 +48,9 @@ export interface TurnResult {
   ms: number
 }
 
+/** Default per-turn limit for real models (seconds); `--turn-timeout` overrides it. */
+export const TURN_TIMEOUT_S = 1800
+
 export interface RunResult {
   task: string
   size: string
@@ -51,10 +62,28 @@ export interface RunResult {
   turns: TurnResult[]
   wallMs: number
   metrics: RunMetrics
+  /** Files changed or added in the task repo against the seed commit. */
+  filesChanged: string[]
+  /** `task` calls the mechanical checks refused, with the error the model read. */
+  rejected: Delegation[]
   expectations: Expectation[]
   llmRequests?: number
   error?: string
   workdir?: string
+}
+
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    .split('\n')
+    .filter(Boolean)
+
+/** Every delegation the plugin logged (`HAFIZ_DELEGATION_LOG`), in order. */
+function readDelegations(file: string): Delegation[] {
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as Delegation)
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -167,6 +196,9 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   const repo = join(work, 'repo')
   mkdirSync(repo)
   writeFixture(repo)
+  const seedCommit = git(repo, 'rev-parse', 'HEAD')[0] as string
+  const delegationLog = join(runDir, 'delegations.jsonl')
+  rmSync(delegationLog, { force: true })
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -174,6 +206,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     XDG_RUNTIME_DIR: tmp('hafiz-rt-'),
     KILO_DISABLE_SHARE: '1',
     KILO_DISABLE_SESSION_INGEST: '1',
+    HAFIZ_DELEGATION_LOG: delegationLog,
   }
   if (opts.mock) {
     const home = join(work, 'home')
@@ -187,6 +220,8 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   const t0 = Date.now()
   let error: string | undefined
   let metrics: RunMetrics = { total: {}, roles: {} }
+  let filesChanged: string[] = []
+  let delegations: Delegation[] = []
   try {
     const io: Io = { cwd: repo, env, out: () => undefined, err: (l) => log(l) }
     if ((await hafiz(['init', task.setup.project_name], io)) !== 0)
@@ -224,18 +259,30 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
         model,
         prompt,
         session,
-        timeoutMs: opts.turnTimeoutMs ?? (opts.mock ? 120_000 : 900_000),
+        timeoutMs: opts.turnTimeoutMs ?? (opts.mock ? 120_000 : TURN_TIMEOUT_S * 1000),
         logBase: join(runDir, `turn-${i + 1}`),
       })
       turns.push({ agent, code: r.code, ms: r.ms })
       session ??= sessionIdOf(r.stdout)
       if (r.code !== 0) {
-        error = `turn ${i + 1} exited ${r.code} (see ${runDir}/turn-${i + 1}.err.log)`
+        const how =
+          r.code === -1
+            ? 'hit the harness timeout (SIGKILL), not a Kilo failure'
+            : `exited ${r.code}`
+        error = `turn ${i + 1} ${how} (see ${runDir}/turn-${i + 1}.err.log)`
         break
       }
     }
     await sleep(opts.settleMs ?? 3000)
-    metrics = await collectMetrics(daemon.service.core.backend.read)
+    // What the run changed in the repo, whoever changed it (managed workers or not)
+    filesChanged = [
+      ...new Set([
+        ...git(repo, 'diff', '--name-only', seedCommit),
+        ...git(repo, 'ls-files', '--others', '--exclude-standard'),
+      ]),
+    ].sort()
+    delegations = readDelegations(delegationLog)
+    metrics = await collectMetrics(daemon.service.core.backend.read, { filesChanged, delegations })
   } catch (e) {
     error = String(e instanceof Error ? e.message : e)
   } finally {
@@ -254,6 +301,8 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     turns,
     wallMs: Date.now() - t0,
     metrics,
+    filesChanged,
+    rejected: delegations.filter((d) => d.error),
     expectations,
     ...(mock ? { llmRequests: mock.requests.length } : {}),
     ...(error ? { error } : {}),

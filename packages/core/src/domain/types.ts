@@ -92,6 +92,8 @@ export interface Contract {
   name: string
   type?: string
   notes?: string
+  /** On a `consumes` entry: the providing block (its id). Design writes derive edges from it. */
+  block?: string
 }
 
 export interface Doc {
