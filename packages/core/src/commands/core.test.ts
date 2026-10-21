@@ -66,11 +66,21 @@ describe('core scenario', () => {
 
     await core.docWrite(des, { block: billing.id, type: 'design', sections: design('money in') })
     await core.docWrite(des, { block: invoices.id, type: 'design', sections: design('invoices') })
-    await core.docWrite(des, { block: payments.id, type: 'design', sections: design('payments') })
+    // payments consumes from invoices: the design write derives the dependency edge
+    await core.docWrite(des, {
+      block: payments.id,
+      type: 'design',
+      sections: {
+        ...design('payments'),
+        interface: { consumes: [{ name: 'markPaid()', type: 'fn', block: invoices.id }] },
+      },
+    })
     await expect(
       core.docWrite(w1, { block: payments.id, type: 'design', sections: design('x') }),
     ).rejects.toBeInstanceOf(ForbiddenError)
-    await core.edgeAdd(des, { from: payments.id, to: invoices.id })
+    expect(await core.backend.read.listEdges()).toEqual([
+      { from: payments.id, to: invoices.id, kind: 'depends_on' },
+    ])
 
     // CAS on designs: stale version conflicts and returns current
     const cur = (await core.backend.read.getDoc(billing.id, 'design'))?.version

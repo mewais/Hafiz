@@ -68,7 +68,8 @@ function inferFormat(v: SectionValue): string {
 }
 
 function contractLine(verb: string, c: Contract): string {
-  return `- ${verb} \`${c.name}\`${c.type ? ` (${c.type})` : ''}${c.notes ? ` — ${oneLine(c.notes)}` : ''}`
+  const from = c.block ? ` from ${c.block}` : ''
+  return `- ${verb} \`${c.name}\`${c.type ? ` (${c.type})` : ''}${from}${c.notes ? ` — ${oneLine(c.notes)}` : ''}`
 }
 
 function refsLine(refs: readonly Ref[]): string {

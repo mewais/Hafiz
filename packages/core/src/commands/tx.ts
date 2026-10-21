@@ -4,7 +4,7 @@
 // (sessions, counters, condensation, proposals, project setup) and is never reachable through
 // `dispatch` or the tool catalogue.
 
-import type { Config } from '../config/schema.js'
+import type { Config, DocSchema } from '../config/schema.js'
 import type { Clock } from '../domain/clock.js'
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.js'
 import { opaqueId } from '../domain/ids.js'
@@ -20,6 +20,7 @@ import type {
   ProgressKind,
   SectionValue,
   Standing,
+  StructuredInterface,
 } from '../domain/types.js'
 import { type Notice, schemaFor, validateDoc } from '../schema/validate.js'
 import type { StorageBackend, WriteOps } from '../store/backend.js'
@@ -179,8 +180,55 @@ export async function writeDoc(
   await t.putBlock(updated, block.version)
   Object.assign(block, updated)
   if (type === 'digest') delete block.digestStale // Object.assign cannot remove keys
+  if (type === 'design') await deriveDependencies(t, block, schema, v.sections, notices)
   if (type === 'design' && block.parentId === null) await finishOnboarding(ctx, t, by, block)
   return doc
+}
+
+/**
+ * A design's interface is the source of a block's dependencies: after every design write the
+ * block's `depends_on` edges are exactly the blocks its `consumes[].block` entries name (by id,
+ * or by a title that matches one block). Names that match no block get a notice, not an error.
+ * Kinds whose design has no interface section keep their edges as they are (CLI `edge.*`).
+ */
+async function deriveDependencies(
+  t: WriteOps,
+  block: Block,
+  schema: DocSchema,
+  sections: Record<string, SectionValue>,
+  notices: Notice[],
+): Promise<void> {
+  const ifaces = schema.sections.filter((s) => s.format === 'structured')
+  if (!ifaces.length) return
+  const names = ifaces.flatMap((s) =>
+    ((sections[s.name] as StructuredInterface | undefined)?.consumes ?? [])
+      .map((c) => (typeof c.block === 'string' ? c.block.trim() : ''))
+      .filter(Boolean),
+  )
+  const blocks = await t.listBlocks()
+  const resolve = (name: string) => {
+    const byId = blocks.find((b) => b.id === name)
+    if (byId) return byId.id
+    const byTitle = blocks.filter((b) => b.title.toLowerCase() === name.toLowerCase())
+    return byTitle.length === 1 ? byTitle[0]?.id : undefined
+  }
+  const want = new Set<BlockId>()
+  const unknown: string[] = []
+  for (const n of new Set(names)) {
+    const to = resolve(n)
+    if (!to) unknown.push(n)
+    else if (to !== block.id) want.add(to)
+  }
+  const kind = 'depends_on'
+  const have = (await t.listEdges()).filter((e) => e.from === block.id && e.kind === kind)
+  for (const e of have) if (!want.has(e.to)) await t.deleteEdge(e)
+  for (const to of want)
+    if (!have.some((e) => e.to === to)) await t.putEdge({ from: block.id, to, kind })
+  if (unknown.length)
+    notices.push({
+      level: 'warn',
+      text: `interface.consumes names no known block: ${unknown.join(', ')}; no dependency recorded for ${unknown.length > 1 ? 'them' : 'it'}. Use block ids from your context.`,
+    })
 }
 
 /** The first root design of a brownfield project completes its onboarding. */
