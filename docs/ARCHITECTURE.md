@@ -88,7 +88,7 @@ Identifiers are stable human-readable slugs with a random suffix (`billing-7f2a`
 
 **Block kinds** are config-defined (`kinds.yaml`): each names the schema set to use for its docs and
 optional view overrides. Defaults: `root` (architecture: overview, topology/data-flow, interface,
-constraints, references), `component` (purpose, scope, interface, constraints, rationale),
+constraints, references), `component` (purpose, scope, interface, approach, structure, risks, constraints, rationale),
 `feature`, `research` (question, findings, conclusion), `doc`, and **`external`** (interface only —
 a stub for code that exists but was never imported, so edges can point at it).
 
@@ -147,6 +147,9 @@ sections:
   - { name: purpose,     required: true,  cap: 150, format: prose }
   - { name: scope,       required: true,  cap: 200, format: list }
   - { name: interface,   required: true,  cap: 600, format: structured }   # provides/consumes/contracts
+  - { name: approach,    required: false, cap: 300, format: prose }
+  - { name: structure,   required: false, cap: 250, format: list }
+  - { name: risks,       required: false, cap: 200, format: list }
   - { name: constraints, required: false, cap: 200, format: list }
   - { name: rationale,   required: false, cap: 300, format: prose }
   - { name: references,  required: false, cap: 100, format: refs }
