@@ -78,8 +78,10 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 - `hafiz status` shows the epoch, live sessions, token cost and re-emits, and pending
   proposals. In Kilo the same is `/hafiz-status`; `/hafiz-checkpoint` records unrecorded work.
 - Record a rule for every agent with `hafiz direct "Never touch the billing schema." --kind never`.
-- Look around: `hafiz tree`, `hafiz show <block>`, `hafiz context --role worker --focus <block>`,
-  `hafiz explain <block>`, `hafiz history <block> design`, `hafiz revert <block> design <commit>`.
+- Look around: `hafiz tree`, `hafiz show [<block>]`, `hafiz context --role worker --focus <block>`,
+  `hafiz explain <block>`, `hafiz history [<block>] design`, `hafiz revert <block> design <commit>`.
+  `<block>` may be omitted for `show` and `history` (the root block is used), and anywhere it is
+  accepted it can be a block id, a unique id prefix or a case-insensitive exact title.
 
 ## The Kilo TUI panel
 
