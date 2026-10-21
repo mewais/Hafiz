@@ -213,6 +213,16 @@ MCP shim/CLI); Core maps token → session → role. The host additionally hides
 running daemon) are detected by the git working-tree check on the next command and surfaced as a
 notice; they are not prevented.
 
+In code every write goes through one transaction helper (`commands/tx.ts`: authz → dirty check →
+tx → epoch bump → audit) with two entry points. `runAs(ctx, actor, {command, …}, fn)` checks the
+actor's role against the allowlist first; it backs every command `dispatch` serves.
+`runSystem(ctx, actor, {command, …}, fn)` skips the role check and is Hafiz's own bookkeeping (session
+open/end, counters, compliance state, focus refresh, condensation, checkpoint requests, queued
+proposals, view-hash and delta-cursor updates, `system.progress`, `project.init`,
+`schema.migrate`, and `done` applied by `request_done` under `confirm_done: auto`). No
+`runSystem` write is reachable through `dispatch` or the tool catalogue; grep for it to see every
+write that bypasses roles.
+
 ---
 
 ## 6. Core: the view engine and the tail
@@ -569,6 +579,10 @@ prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ```
 packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
+packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · blocks · docs · logs · project · proposals · reads · authz · catalogue)
+                  session/ (service: sessions, counters, focus · compliance + compliance-run · cost · nudge · review)
+                  condense/ (condenser · service: checkpoint, condense · drafter + drafting) · view/ (engine … · service: context.*, block.read)
+                  domain/ · config/ · schema/ · store/ · llm/ · project/
 packages/core/config/default/ roles.yaml views.yaml zooms.yaml kinds.yaml schemas/ policies.yaml compliance.yaml nudge.yaml tail.yaml rules/
 docs/ ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
 ```

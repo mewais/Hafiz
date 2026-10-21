@@ -181,6 +181,8 @@ const schemas = {
 } as const
 
 export type DaemonMethod = keyof typeof schemas
+/** A method's params after validation. */
+type Params<M extends DaemonMethod> = z.infer<(typeof schemas)[M]>
 
 /** The session as clients may see it: everything except the capability token. */
 export function publicSession(s: Session): Omit<Session, 'token'> {
@@ -189,8 +191,10 @@ export function publicSession(s: Session): Omit<Session, 'token'> {
 }
 
 /** Drop `undefined` values: Core's optional fields reject explicit undefined. */
-function compact<T extends object>(o: T): T {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
+function compact<T extends object>(o: T): { [K in keyof T]: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as {
+    [K in keyof T]: Exclude<T[K], undefined>
+  }
 }
 
 function ctxOf(p: Record<string, unknown>): ContextOptions {
@@ -255,7 +259,7 @@ export class DaemonService {
           .join('; ')}`,
       })
     const p = parsed.data as Record<string, unknown>
-    if (method === 'session.open') return this.sessionOpen(p as never)
+    if (method === 'session.open') return this.sessionOpen(p as Params<'session.open'>)
 
     const session = await this.authenticate(p.token as string)
     if (WRITE_METHODS.has(method) && this.core.config.roles.roles[session.role]?.read_only)
@@ -330,7 +334,7 @@ export class DaemonService {
         return s ? publicSession(s) : null
       }
       case 'condense':
-        return this.condense(session, p as never)
+        return this.condense(session, p as Params<'condense'>)
       case 'checkpoint.request': {
         // The user (CLI) may name a session; agents may only ask for their own.
         const target = (p.session as string | undefined) ?? session.id
@@ -360,7 +364,7 @@ export class DaemonService {
           typeof p.recentDecisions === 'number' ? { recentDecisions: p.recentDecisions } : {},
         )
       case 'block.history':
-        return core.docHistory(by, p.id as string, p.type as never)
+        return core.docHistory(by, p.id as string, p.type as Params<'block.history'>['type'])
       case 'llm.serve': {
         if (!peer) throw new ValidationError('llm.serve needs a socket connection')
         this.relay.register(peer, p.providers as string[])
@@ -451,13 +455,7 @@ export class DaemonService {
     return enqueue ? [] : notices
   }
 
-  private async condense(
-    session: Session,
-    p: {
-      turns: Array<{ role: string; content: string; toolName?: string | undefined }>
-      through: { index: number; fingerprint: string }
-    },
-  ) {
+  private async condense(session: Session, p: Params<'condense'>) {
     const turns = p.turns.map((t) => ({
       role: t.role,
       content: t.content,
@@ -484,15 +482,7 @@ export class DaemonService {
     return s
   }
 
-  private async sessionOpen(a: {
-    id: string
-    host: string
-    role: string
-    agent?: string
-    parentSessionId?: string
-    spawnedBlock?: string
-    worktree?: string
-  }) {
+  private async sessionOpen(a: Params<'session.open'>) {
     const prior = await this.core.backend.read.getSession(a.id)
     if (prior && prior.role !== a.role)
       throw new ValidationError(
