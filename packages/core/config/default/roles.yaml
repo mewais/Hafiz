@@ -14,14 +14,14 @@ roles:
     rules: rules/manager.md
   designer:
     view: designer
-    focus_policy: all_active
+    focus_policy: spawned_block     # the block it is spawned on; the active front when used directly
     tools: [context.*, block.read, tree.list, block.create, doc.write:design, doc.patch:design,
             decision.record, thread.*, progress.append:found, progress.append:question]
     # block.create: external stubs, sub-components; progress: findings and questions only
     rules: rules/designer.md
   planner:
     view: default
-    focus_policy: all_active
+    focus_policy: spawned_block
     tools: [context.*, block.read, tree.list, block.create, doc.write:plan, doc.patch:plan, thread.*]
     rules: rules/planner.md
   worker:

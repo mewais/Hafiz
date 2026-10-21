@@ -317,8 +317,9 @@ Everything in `match` is an attribute Relate computed; new attributes need no en
 
 ### 6.4 Computed focus
 
-Focus is set by the adapter at spawn from the role's `focus_policy` (`worker: spawned_block`,
-`manager: all_active`, `designer: all_active + planned_children`) and persisted on the session;
+Focus is set by the adapter at spawn from the role's `focus_policy` and persisted on the session:
+`manager: all_active`; `designer`, `planner`, `worker`: `spawned_block` — the block they are
+spawned on, falling back to the active front when used directly (no block);
 `focus.set` overrides it. Agents do not have to remember to set focus.
 
 ### 6.5 The tail: ownership, policy, delta, condensation
@@ -458,12 +459,12 @@ roles:
               tools: [context.*, block.*, tree.list, doc.patch:plan, decision.record, thread.*,
                       progress.append, focus.set, proposal.*, session.status],
               rules: rules/manager.md }
-  designer: { view: designer, focus_policy: all_active,
+  designer: { view: designer, focus_policy: spawned_block,
               tools: [context.*, block.read, tree.list, block.create, doc.write:design,
                       doc.patch:design, decision.record, thread.*, progress.append:found,
                       progress.append:question],
               rules: rules/designer.md }
-  planner:  { view: default, focus_policy: all_active,
+  planner:  { view: default, focus_policy: spawned_block,
               tools: [context.*, block.read, tree.list, block.create, doc.write:plan,
                       doc.patch:plan, thread.*], rules: rules/planner.md }
   worker:   { view: worker, focus_policy: spawned_block,
