@@ -20,6 +20,7 @@ expect:
   subagents_spawned: "==4"
   files_written: ">=4"
   cap_rejections: "==0"
+  spawns_rejected: "==0"
 mock:
   - turn: 1
     roles:

@@ -57,14 +57,24 @@ export class ValidationError extends HafizError {
   }
 }
 
+export interface CapOverage {
+  section: string
+  measured: number
+  cap: number
+}
+
+/** Every section beyond its cap's soft zone, so one rejection is enough to fix them all. */
 export class CapExceededError extends HafizError {
-  constructor(section: string, measured: number, cap: number, remedy: string) {
-    super('cap_exceeded', `section '${section}' is ${measured} tokens; cap is ${cap}. ${remedy}`, {
-      section,
-      measured,
-      cap,
-      remedy,
-    })
+  constructor(overages: CapOverage[], softZone: number, remedy: string) {
+    const lines = overages.map(
+      (o) =>
+        `- '${o.section}': ${o.measured} tokens, cap ${o.cap}, ${o.measured - o.cap} over (+${Math.round(((o.measured - o.cap) / o.cap) * 100)}%)`,
+    )
+    super(
+      'cap_exceeded',
+      `${overages.length === 1 ? '1 section is' : `${overages.length} sections are`} over the cap (a write is accepted up to ${Math.round(softZone * 100)}% over, with a notice):\n${lines.join('\n')}\n${remedy}`,
+      { sections: overages, remedy },
+    )
   }
 }
 

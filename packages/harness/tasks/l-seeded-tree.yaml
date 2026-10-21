@@ -44,7 +44,10 @@ turns:
       Unrelated thought: maybe we should move order storage to Postgres some day. Talk it
       through with me briefly on the Orders block, but we are not doing it now, so park it.
 expect:
-  designer_sessions: "==1"
+  # one for the Checkout design the user asked for, one for onboarding: the seeded repo is
+  # brownfield (existing code), so the project starts with onboarding pending and the manager
+  # legitimately spawns the designer once more to document the existing code
+  designer_sessions: "==2"
   planner_sessions: "==1"
   worker_sessions: "==3"
   designer_docs_written: ">=1"
@@ -56,6 +59,7 @@ expect:
   threads_parked: "==1"
   threads_open_at_end: "==0"
   cap_rejections: "==0"
+  spawns_rejected: "==0"
 mock:
   - turn: 1
     roles:
@@ -67,6 +71,13 @@ mock:
                 subagent_type: designer
                 block: "{b.checkout}"
                 prompt: "[[turn:{turn}]] Refine the design of Checkout (block {b.checkout}): add its constraints."
+        - calls:
+            - tool: task
+              args:
+                description: Onboard Cart
+                subagent_type: designer
+                block: "{b.cart}"
+                prompt: "[[turn:{turn}]] Onboarding: document the existing code under Cart (block {b.cart})."
         - calls:
             - tool: task
               args:
@@ -97,7 +108,7 @@ mock:
         - calls:
             - tool: hafiz_doc
               args:
-                block: "{b.checkout}"
+                block: "{block}"
                 type: design
                 expected_version: 1
                 sections: { constraints: ["Money is integer cents.", "No card data is stored."] }

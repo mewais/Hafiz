@@ -16,9 +16,10 @@ const digest = {
 }
 
 let metrics: RunMetrics
+let core: Core
 
 beforeAll(async () => {
-  const core = new Core({ config: loadConfig(), backend: new MemoryBackend(), clock: fixedClock() })
+  core = new Core({ config: loadConfig(), backend: new MemoryBackend(), clock: fixedClock() })
   const { result: init } = await core.projectInit(human, { name: 'Shop', originFingerprint: 'fp' })
   const root = init.root.id
   const b1 = (await core.blockCreate(mgr, { parent: root, title: 'One' })).result.id
@@ -105,7 +106,10 @@ describe('collectMetrics', () => {
       cap_rejections: 1,
       retries: 1,
       compliance_notices: 2,
-      files_written: 1,
+      files_written: 0, // from git, not the counters
+      files_written_managed: 1,
+      tracked: 0,
+      spawns_rejected: 0,
       subagents_spawned: 2,
       proposals: 3, // the done also queues an auto-done review
       proposals_compliance: 1,
@@ -133,6 +137,23 @@ describe('collectMetrics', () => {
     expect(metrics.roles.worker).toMatchObject({ view_emits: 2, tokens_per_view: 200 })
     expect(metrics.roles.worker?.cache_read_ratio).toBeCloseTo(0.75)
     expect(metrics.roles.manager?.cache_read_ratio).toBeNull()
+  })
+
+  it('measures files from git and counts refused spawns per role', async () => {
+    const m = await collectMetrics(core.backend.read, {
+      filesChanged: ['src/a.ts', 'src/b.ts'],
+      delegations: [
+        { session: 'm1', role: 'manager', agent: 'worker', prompt: 'ok' },
+        { session: 'm1', role: 'manager', agent: 'worker', prompt: 'no', error: 'task: refused' },
+      ],
+    })
+    expect(m.total).toMatchObject({
+      files_written: 2,
+      files_written_managed: 1,
+      spawns_rejected: 1,
+    })
+    expect(m.roles.manager?.spawns_rejected).toBe(1)
+    expect(m.roles.worker?.spawns_rejected).toBe(0)
   })
 
   it('counts store writes, not reads', () => {

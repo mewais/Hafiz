@@ -27,6 +27,8 @@ const result = (m: RunMetrics, repeat = 1): RunResult => ({
   turns: [{ agent: 'build', code: 0, ms: 5 }],
   wallMs: 5000,
   metrics: m,
+  filesChanged: [],
+  rejected: [],
   expectations: scoreExpectations({ progress: '>=2', done_requests: '==1' }, m),
 })
 
@@ -55,6 +57,23 @@ describe('report', () => {
     expect(md).toContain('| progress entries | 2 | 2 |')
     expect(md).toContain('| protocol / all | - | 50% |')
     expect(md).toContain('| progress | >=2 | 2 | ok |')
+  })
+
+  it('lists the spawns the checks refused', () => {
+    const r = result(metrics({ spawns_rejected: 1 }))
+    r.rejected = [
+      {
+        session: 's',
+        role: 'manager',
+        agent: 'worker',
+        block: 'b1',
+        prompt: 'do it',
+        error: 'task: no worker on X',
+      },
+    ]
+    const md = renderMarkdown(buildReport([r], { model: 'p/m', mock: false }))
+    expect(md).toContain('| spawns rejected | 1 | 1 |')
+    expect(md).toContain('- run 1: worker on b1: task: no worker on X (prompt: do it)')
   })
 
   it('averages repeats and reports the pass rate', () => {

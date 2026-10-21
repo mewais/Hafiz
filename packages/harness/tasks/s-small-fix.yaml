@@ -1,5 +1,5 @@
 # S: a one-off fix in a project that has Hafiz but no block tree beyond the root. The protocol
-# should stay out of the way: no Hafiz writes, no nudge.
+# should stay out of the way: no Hafiz writes, no nudge, no project created.
 id: s-small-fix
 size: S
 description: one-off bug fix, no tree; expect zero Hafiz writes and no nudge
@@ -10,7 +10,7 @@ turns:
       always shown with two digits). Fix it and make sure the tests pass.
 expect:
   hafiz_writes: "==0"
-  hafiz_calls: "==0"
+  tracked: "==0" # the manager may peek at Hafiz or call hafiz_track_project; no project may be created
   blocks_created: "==0"
   compliance_notices: "==0"
   files_written: ">=1"

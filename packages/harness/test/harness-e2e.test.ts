@@ -32,7 +32,7 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     expect(r.passed).toBe(true)
     expect(r.metrics.total).toMatchObject({
       hafiz_writes: 0,
-      hafiz_calls: 0,
+      tracked: 0,
       files_written: 1,
       sessions: 1,
     })
@@ -63,12 +63,23 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
       progress: 8, // exactly the scripted 2 per worker
       steps: 8,
       progress_min: 2,
-      files_written: 4,
+      files_written_managed: 4,
     })
     expect(r.metrics.total.view_emits).toBeGreaterThan(0)
     expect(r.metrics.total.cache_read_ratio).toBeGreaterThan(0)
     expect(r.llmRequests).toBeGreaterThan(10)
     expect(existsSync(join(out, 'm-feature-1', 'result.json'))).toBe(true)
+    // every delegation as the model wrote it, none refused
+    const sent = readFileSync(join(out, 'm-feature-1', 'delegations.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    expect(sent).toHaveLength(4)
+    expect(sent[0]).toMatchObject({ role: 'manager', agent: 'worker' })
+    expect(sent[0].block).toBeTruthy()
+    expect(r.rejected).toEqual([])
+    expect(r.metrics.total.spawns_rejected).toBe(0)
+    expect(r.filesChanged).toHaveLength(4)
   }, 150000)
 
   it('L: seeded tree, designer + planner + three workers, a standing decision, a parked thread', async () => {
@@ -77,14 +88,14 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     expect(r.passed).toBe(true)
     expect(r.turns).toHaveLength(3)
     expect(r.metrics.total).toMatchObject({
-      sessions: 6,
+      sessions: 7,
       decisions_standing: 1,
       threads_opened: 1,
       threads_parked: 1,
       threads_open_at_end: 0,
       done_requests: 3,
     })
-    expect(r.metrics.roles.designer).toMatchObject({ docs_written: 1 })
+    expect(r.metrics.roles.designer).toMatchObject({ docs_written: 2 })
     expect(r.metrics.roles.planner).toMatchObject({ docs_written: 2 })
   }, 300000)
 })

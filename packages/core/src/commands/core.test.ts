@@ -237,6 +237,23 @@ describe('core scenario', () => {
         sections: { overview: long(600), topology: ['a'] },
       }),
     ).rejects.toThrow(/Split detail/)
+    // every over-cap section is reported at once, with how far over, and the soft zone once
+    const err = await core
+      .docWrite(des, {
+        block: root.id,
+        type: 'design',
+        sections: { overview: long(600), topology: [long(600)] },
+      })
+      .catch((e) => e)
+    expect(err.code).toBe('cap_exceeded')
+    expect(err.message).toMatch(/2 sections are over the cap/)
+    expect(err.message).toMatch(/- 'overview': \d+ tokens, cap \d+, \d+ over \(\+\d+%\)/)
+    expect(err.message).toMatch(/- 'topology': /)
+    expect(err.message.match(/accepted up to 15% over/g)).toHaveLength(1)
+    expect(err.details.sections.map((o: { section: string }) => o.section)).toEqual([
+      'overview',
+      'topology',
+    ])
     await expect(
       core.docWrite(des, { block: root.id, type: 'design', sections: { overview: 'x' } }),
     ).rejects.toThrow(/missing required section/)

@@ -37,13 +37,23 @@ $H compare results/baseline/<a>/report.json results/tuned/<a>/report.json
 ```
 Options: `--tasks dir|file` (custom task files), `--only S,M,<task id>`, `--shaper proxy|hooks`
 (default: the project's setting; `proxy` gives exact wire cache numbers), `--keep` (keep the
-workdir to inspect the repo and store). Exit code 1 means a turn failed or an expectation missed.
+workdir to inspect the repo and store), `--turn-timeout <seconds>` (per Kilo turn, default 1800;
+a turn killed by it is reported as "harness timeout (SIGKILL)", not as a Kilo failure).
+Exit code 1 means a turn failed or an expectation missed.
 
 ## Results
 `<out>/<model>-<timestamp>/` holds `report.md` (one table per task: roles as columns, means over
 repeats, then the expectation table), `report.json` (what `compare` reads), and per run
-`<task>-<n>/result.json` plus `turn-N.out.jsonl` / `turn-N.err.log` (Kilo's raw output).
-Metrics: decisions (standing), progress per worker, step events, threads opened/parked,
+`<task>-<n>/result.json` plus `turn-N.out.jsonl` / `turn-N.err.log` (Kilo's raw output) and
+`delegations.jsonl`: every `task` call of a managed session as the model wrote it (`role`, `agent`,
+`block`, first 200 characters of the prompt, and the `error` text when the mechanical checks
+refused it). The plugin writes it when the harness sets `HAFIZ_DELEGATION_LOG`; the refused ones
+are listed under the task table in `report.md`.
+Metrics: `files_written` is read from the task repo's git state after the run (files changed or
+added against the seed commit, whoever wrote them; names in `result.json`), `files_written_managed`
+is the Hafiz session counter (workers running unmanaged do not count). `spawns_rejected` counts
+`task` calls vetoed by the checks; `tracked` is 1 when an agent created the Hafiz project.
+Other metrics: decisions (standing), progress per worker, step events, threads opened/parked,
 done requests (+ with digest), reports captured, cap rejections and retries, compliance notices,
 proposals by source, protocol / all tool calls, view re-emits, tokens per view, cache read ratio,
 condensations. Expectations use `>=1`, `==3`, `1..3` against totals or `worker_…` per role.

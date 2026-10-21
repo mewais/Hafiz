@@ -8,7 +8,7 @@
 //   the selected RequestShaper, and runs the mechanical checks on Kilo's own tools (checks.ts).
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -356,7 +356,31 @@ function managedHooks(
     },
 
     async 'tool.execute.before'(i, o) {
-      await checks.before(i, o)
+      const log = env.HAFIZ_DELEGATION_LOG
+      if (!log || i.tool !== 'task') return checks.before(i, o)
+      // Harness sink: every delegation as the model wrote it, and the check's refusal if any.
+      const a = (o.args ?? {}) as Record<string, unknown>
+      const entry = {
+        session: i.sessionID,
+        role: sessions.get(i.sessionID)?.role,
+        agent: a.subagent_type,
+        block: a.block,
+        prompt: String(a.prompt ?? '').slice(0, 200),
+      }
+      const write = (error?: string) => {
+        try {
+          appendFileSync(log, `${JSON.stringify({ ...entry, ...(error ? { error } : {}) })}\n`)
+        } catch (e) {
+          quiet(`hafiz: cannot write ${log}: ${String(e)}`)
+        }
+      }
+      try {
+        await checks.before(i, o)
+      } catch (e) {
+        write(e instanceof Error ? e.message : String(e))
+        throw e
+      }
+      write()
     },
 
     async 'tool.execute.after'(i, o) {

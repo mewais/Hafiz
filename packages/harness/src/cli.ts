@@ -10,6 +10,7 @@ const USAGE = `hafiz-harness — compliance harness for Hafiz on Kilo
 
   run      --model provider/model [--model …] [--tasks dir|file[,…]] [--only S,M,<id>]
            [--repeat N] [--kilo-bin path] [--out dir] [--shaper proxy|hooks|auto] [--keep]
+           [--turn-timeout seconds]      (per Kilo turn; default 1800)
            [--mock]                      (scripted mock LLM instead of a model; no --model needed)
   compare  a.json b.json                 diff a baseline run against a tuned one
   report   run.json                      print a result file as the markdown table
@@ -79,6 +80,7 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
       shaper: { type: 'string' },
       mock: { type: 'boolean' },
       keep: { type: 'boolean' },
+      'turn-timeout': { type: 'string' },
     },
   })
   const mock = !!values.mock
@@ -91,6 +93,8 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
     split(values.tasks).length ? split(values.tasks) : [DEFAULT_TASKS_DIR],
     split(values.only),
   )
+  const timeout = values['turn-timeout'] === undefined ? undefined : Number(values['turn-timeout'])
+  if (timeout !== undefined && !(timeout > 0)) throw new Error('--turn-timeout takes seconds > 0')
   const kiloBin = resolveKilo(values['kilo-bin'])
   const out = resolve(values.out ?? 'harness-results')
   mkdirSync(out, { recursive: true })
@@ -108,6 +112,7 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
           outDir: runDir,
           shaper: values.shaper,
           keep: values.keep,
+          ...(timeout ? { turnTimeoutMs: timeout * 1000 } : {}),
           log: (l) => io.err(l),
         })
         results.push(r)
