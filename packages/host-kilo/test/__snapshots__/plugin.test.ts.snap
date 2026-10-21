@@ -24,6 +24,7 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
         "hafiz_doc_write": "allow",
         "hafiz_edge_add": "allow",
         "hafiz_edge_remove": "allow",
+        "hafiz_progress_append": "allow",
         "hafiz_thread_append": "allow",
         "hafiz_thread_open": "allow",
         "hafiz_thread_park": "allow",
@@ -35,7 +36,7 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
         },
         "task": "deny",
       },
-      "prompt": "<6048 chars>",
+      "prompt": "<6034 chars>",
     },
     "explore": {
       "permission": {

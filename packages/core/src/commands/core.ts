@@ -814,7 +814,7 @@ export class Core {
     by: Actor,
     args: { block: BlockId; kind: ProgressKind; text: string; refs?: string[] },
   ): Promise<CommandResult<ProgressEntry>> {
-    return this.logProgress(by, 'progress.append', args, false)
+    return this.logProgress(by, 'progress.append', args.kind, args, false)
   }
 
   /**
@@ -827,19 +827,20 @@ export class Core {
     by: Actor,
     args: { block: BlockId; text: string },
   ): Promise<CommandResult<ProgressEntry>> {
-    return this.logProgress(by, 'report.capture', { ...args, kind: 'report' }, true)
+    return this.logProgress(by, 'report.capture', undefined, { ...args, kind: 'report' }, true)
   }
 
   private async logProgress(
     by: Actor,
     command: string,
+    qualifier: string | undefined,
     args: { block: BlockId; kind: ProgressKind; text: string; refs?: string[] },
     skipAuthz: boolean,
   ): Promise<CommandResult<ProgressEntry>> {
     return this.run(
       by,
       command,
-      undefined,
+      qualifier,
       !this.isMinor('progress'),
       args.block,
       async (t) => {

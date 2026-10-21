@@ -137,6 +137,7 @@ const TOOLS: Record<string, string[]> = {
     'hafiz_block_create',
     'hafiz_edge_add',
     'hafiz_edge_remove',
+    'hafiz_progress_append',
     'hafiz_doc_write',
     'hafiz_doc_patch',
     'hafiz_decision_record',
@@ -199,6 +200,10 @@ describe('mcp tool lists', () => {
     const pdoc = (await p.mcp.listTools()).tools.find((t) => t.name === 'hafiz_doc_write')
     const pprops = (pdoc?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
     expect(pprops.type?.enum).toEqual(['plan'])
+    const ds = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'd' })
+    const prog = (await ds.mcp.listTools()).tools.find((t) => t.name === 'hafiz_progress_append')
+    const dprops = (prog?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
+    expect(dprops.kind?.enum).toEqual(['found', 'question'])
   })
 
   it('carries protocol hints in descriptions', async () => {

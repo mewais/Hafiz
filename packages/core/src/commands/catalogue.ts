@@ -37,6 +37,7 @@ const sections = (hint: string) =>
 const enumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
 
 const DOC_TYPES = ['design', 'plan', 'digest'] as const
+const PROGRESS_KINDS = ['done', 'blocked', 'found', 'changed', 'question', 'report'] as const
 const STATUSES = ['planned', 'active', 'blocked', 'done', 'dropped'] as const
 
 function qualified(allowed: readonly string[], all: readonly string[]) {
@@ -265,11 +266,12 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'progress.append',
     kind: 'dispatch',
+    qualifier: { param: 'kind', values: PROGRESS_KINDS },
     description: (cfg) =>
       `Append one entry to the block's progress log. ONE finding per entry, at most ~${cfg.logs.progress.cap} tokens; write several entries rather than one long one. Kinds: ${cfg.logs.progress.kinds.join(', ')}. Log what changed or what you learned, not what you are about to do.`,
-    shape: (cfg) => ({
+    shape: (cfg, q) => ({
       block: id('Block id.'),
-      kind: enumOf(cfg.logs.progress.kinds),
+      kind: qualified(q, cfg.logs.progress.kinds),
       text: z.string().describe('One finding, one or two sentences.'),
       refs: z.array(z.string()).optional().describe('Files, commits, block ids.'),
     }),
@@ -277,8 +279,8 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'decision.record',
     kind: 'dispatch',
-    description: (cfg) =>
-      `Record a decision on a block: state the decision and why, not the discussion (cap ~${cfg.logs.decision.cap} tokens). Set \`standing\` only for rules that must hold for all later work and be shown to every agent: 'never' (a prohibition), 'always' (a requirement) or 'prefer' (a default); standing text is capped at ~${cfg.logs.decision.standing_cap} tokens, so keep it a single line. Use \`supersedes\` to replace an earlier decision id.`,
+    description: () =>
+      'Record a choice that was made, by the user or agreed in design, with its rationale. Not for findings, status or observations: use a research block or a progress entry (kind found). `standing` (never/always/prefer) makes it a standing instruction every agent sees; `supersedes` replaces an earlier decision.',
     shape: (cfg) => ({
       block: id('Block the decision belongs to (the root for project-wide rules).'),
       title: z.string(),
