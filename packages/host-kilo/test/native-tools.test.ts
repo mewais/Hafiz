@@ -206,12 +206,12 @@ describe('native tools resolve the calling Kilo session', () => {
     )
   })
 
-  it('report.capture is in no role’s tool list and is not a dispatchable command', async () => {
+  it('system.progress is in no role’s tool list and is not a dispatchable command', async () => {
     const { hooks } = await live()
     const config = loadConfig()
     for (const role of agentRoles(config)) {
       expect(toolNamesForRole(config, role).join(' ')).not.toMatch(/report/)
-      expect(toolsForRole(config, role).map((t) => t.spec.command)).not.toContain('report.capture')
+      expect(toolsForRole(config, role).map((t) => t.spec.command)).not.toContain('system.progress')
     }
     expect(Object.keys(hooks.tool ?? {}).join(' ')).not.toMatch(/report_capture/)
   })

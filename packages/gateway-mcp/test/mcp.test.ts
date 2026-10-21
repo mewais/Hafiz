@@ -226,10 +226,17 @@ describe('mcp tool lists', () => {
 
 describe('mcp scenario', () => {
   it('manager, planner, designer and two workers drive a mini project', async () => {
-    const { d } = await boot()
-    const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr', HAFIZ_AGENT: 'boss' })
-    const planner = await agent(d, 'planner', { HAFIZ_SESSION_ID: 'pl' })
-    const designer = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'ds' })
+    const config = loadConfig()
+    config.hafiz.confirm_done = 'auto'
+    const { d } = await boot(config)
+    const mgr = await agent(
+      d,
+      'manager',
+      { HAFIZ_SESSION_ID: 'mgr', HAFIZ_AGENT: 'boss' },
+      { config },
+    )
+    const planner = await agent(d, 'planner', { HAFIZ_SESSION_ID: 'pl' }, { config })
+    const designer = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'ds' }, { config })
 
     const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
     const a = (await planner.json('hafiz_block_create', { parent: root, title: 'Catalog' })).id
@@ -250,12 +257,17 @@ describe('mcp scenario', () => {
     await mgr.json('hafiz_block_set_status', { id: a, status: 'active' })
     await mgr.json('hafiz_block_set_status', { id: b, status: 'active' })
 
-    const w1 = await agent(d, 'worker', {
-      HAFIZ_SESSION_ID: 'w1',
-      HAFIZ_BLOCK: a,
-      HAFIZ_PARENT_SESSION: 'mgr',
-    })
-    const w2 = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w2', HAFIZ_BLOCK: b })
+    const w1 = await agent(
+      d,
+      'worker',
+      {
+        HAFIZ_SESSION_ID: 'w1',
+        HAFIZ_BLOCK: a,
+        HAFIZ_PARENT_SESSION: 'mgr',
+      },
+      { config },
+    )
+    const w2 = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w2', HAFIZ_BLOCK: b }, { config })
 
     // a worker cannot even see set_status, and the daemon refuses it anyway
     expect(await w1.tools()).not.toContain('hafiz_block_set_status')

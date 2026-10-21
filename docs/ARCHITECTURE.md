@@ -112,8 +112,8 @@ dropped  ◀── (any, reason recorded as a decision)
 Guards are config (`policies.status`), composed from registered predicates. Defaults:
 
 - `→ done`: a `digest` present and not stale; no `open` threads; children `done`/`dropped`;
-  `confirm_done` policy (default **`auto`** — proceeds and enqueues a `status` proposal for review;
-  `ask` uses elicitation where the host has it, else returns `needs_confirmation`).
+  `confirm_done` policy (default **`ask`** — uses elicitation where the host has it, else returns
+  `needs_confirmation`; `auto` proceeds and enqueues a `status` proposal for review).
   Records `done_at.commit` (repo HEAD) for later drift detection.
 - A worker may `block.request_done(id, digest)`: writes the digest and enqueues the transition for
   the manager (or auto-applies under `auto` if the role policy allows).
@@ -503,7 +503,7 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   tracked source files starts with `Project.onboarding: pending`: the roles in
   `onboarding.roles` (manager) get `onboarding.directive` at the top of their view (spawn the
   designer once on the root to describe the codebase as it is), and the first root design write
-  clears the flag and records the decision "Onboarded existing codebase".
+  clears the flag and writes a `changed` progress entry "Onboarded existing codebase" (Hafiz never records decisions).
 
 `storage-sqlite` implements the same interface and passes the same conformance suite: one SQLite
 file (`<store>/hafiz.sqlite`, `node:sqlite`), rows per entity, append-only `logs`/`audit` tables, and a

@@ -325,10 +325,31 @@ export class Core {
     if (project?.onboarding !== 'pending') return
     const { onboarding: _done, ...rest } = project
     await t.putProject(rest)
-    await this.recordDecision(t, by, root.id, {
-      title: 'Onboarded existing codebase',
-      decision: 'The root design describes the codebase as it was when Hafiz started tracking it.',
-    })
+    // Hafiz is not a decision-maker: onboarding is a progress entry, never a decision.
+    await t.appendLog(
+      root.id,
+      'progress',
+      this.progressEntry(by, root.id, 'changed', {
+        text: 'Onboarded existing codebase: the root design describes it as it was when Hafiz started tracking it.',
+      }),
+    )
+  }
+
+  private progressEntry(
+    by: Actor,
+    blockId: BlockId,
+    kind: ProgressKind,
+    args: { text: string; refs?: string[] },
+  ): ProgressEntry {
+    return {
+      id: opaqueId('prg'),
+      blockId,
+      ts: this.clock.now(),
+      by,
+      kind,
+      text: args.text,
+      refs: args.refs ?? [],
+    }
   }
 
   private async recordDecision(
@@ -818,16 +839,17 @@ export class Core {
   }
 
   /**
-   * Report capture: a host plugin stores a finished subagent's final message as a `report`
-   * entry on its block. A system action, not an agent tool call: no role allowlist applies, but
-   * the entry is attributed to the child session and audited as `report.capture`. Not a
-   * registered command, so `dispatch` (and every tool catalogue) cannot reach it.
+   * System progress: Hafiz's own notes on a block, written for a session without a role check.
+   * `report` is a host plugin storing a finished subagent's final message; `changed` records
+   * something Hafiz did on the session's behalf (e.g. started tracking). Never a decision. The
+   * entry is attributed to the acting session and audited as `system.progress`. Not a registered
+   * command, so `dispatch` (and every tool catalogue) cannot reach it.
    */
-  async reportCapture(
+  async systemProgress(
     by: Actor,
-    args: { block: BlockId; text: string },
+    args: { block: BlockId; kind: 'report' | 'changed'; text: string },
   ): Promise<CommandResult<ProgressEntry>> {
-    return this.logProgress(by, 'report.capture', undefined, { ...args, kind: 'report' }, true)
+    return this.logProgress(by, 'system.progress', undefined, args, true)
   }
 
   private async logProgress(
@@ -856,15 +878,7 @@ export class Core {
             `progress entry is ${n} tokens; cap is ${cap}. One finding per entry.`,
             { measured: n, cap },
           )
-        const e: ProgressEntry = {
-          id: opaqueId('prg'),
-          blockId: b.id,
-          ts: this.clock.now(),
-          by,
-          kind: args.kind,
-          text: args.text,
-          refs: args.refs ?? [],
-        }
+        const e = this.progressEntry(by, b.id, args.kind, args)
         await t.appendLog(b.id, 'progress', e)
         return e
       },

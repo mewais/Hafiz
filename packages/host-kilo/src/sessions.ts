@@ -231,7 +231,7 @@ export class SessionRegistry implements SessionSource {
 
   /**
    * Store a subagent's final message as a `report` progress entry on its focus block, capped
-   * at `compliance.yaml report_capture.cap_tokens`. A system action (`report.capture`), not an
+   * at `compliance.yaml report_capture.cap_tokens`. A system action (`system.progress`), not an
    * agent tool call: written as the child, whatever its role's allowlist. Duplicate texts for
    * the same child are ignored.
    */
@@ -249,8 +249,9 @@ export class SessionRegistry implements SessionSource {
     }
     k.reports.add(fp)
     try {
-      await this.call(childId, 'report.capture', {
+      await this.call(childId, 'system.progress', {
         block,
+        kind: 'report',
         text: capReport(text, rc.cap_tokens, this.tok),
       })
       return true

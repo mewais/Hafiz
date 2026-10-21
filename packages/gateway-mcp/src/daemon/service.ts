@@ -40,7 +40,7 @@ const RECENT_CAP = 20
 const WRITE_METHODS = new Set([
   'dispatch',
   'counters.add',
-  'report.capture',
+  'system.progress',
   'condense',
   'checkpoint.request',
   'llm.serve',
@@ -137,8 +137,13 @@ const schemas = {
   'session.self': z.object(token),
   'project.status': z.object(token),
   'session.end': z.object(token),
-  /** Plugin-only system action (not an agent tool, not role-gated): store a subagent's report. */
-  'report.capture': z.object({ ...token, block: z.string().min(1), text: z.string().min(1) }),
+  /** Plugin-only system action (not an agent tool, not role-gated): a subagent's report, or a `changed` note. */
+  'system.progress': z.object({
+    ...token,
+    block: z.string().min(1),
+    kind: z.enum(['report', 'changed']),
+    text: z.string().min(1),
+  }),
   'counters.add': z.object({ ...token, delta: z.record(z.string(), z.number()) }),
   'proposal.list': z.object({
     ...token,
@@ -313,10 +318,12 @@ export class DaemonService {
         await core.sessionEnd(session.id)
         return { ended: true }
       }
-      case 'report.capture': {
-        const r = await core.reportCapture(by, { block: p.block as string, text: p.text as string })
-        return r
-      }
+      case 'system.progress':
+        return core.systemProgress(by, {
+          block: p.block as string,
+          kind: p.kind as 'report' | 'changed',
+          text: p.text as string,
+        })
       case 'counters.add': {
         const s = await core.countersAdd(session.id, p.delta as Record<string, number>)
         if (s) await this.compliance(s.id, 'counters')

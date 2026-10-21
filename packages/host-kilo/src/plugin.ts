@@ -493,9 +493,10 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
     const opened = await m.sessions.open(tctx.sessionID, { agent: tctx.agent })
     if (opened && args.reason)
       await m.sessions
-        .call(tctx.sessionID, 'dispatch', {
-          command: 'decision.record',
-          args: { block: r.rootBlockId, title: 'Tracking with Hafiz', decision: args.reason },
+        .call(tctx.sessionID, 'system.progress', {
+          block: r.rootBlockId,
+          kind: 'changed',
+          text: `Tracking with Hafiz: ${args.reason}`,
         })
         .catch((e) => log(`hafiz: could not record the tracking reason: ${String(e)}`))
     const tail = r.onboarding ? ' Existing code: onboarding is pending (see your view).' : ''

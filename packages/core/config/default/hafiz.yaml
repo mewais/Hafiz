@@ -12,7 +12,7 @@ tokenizer:
   soft_zone: 0.15                  # writes within cap*(1+soft_zone) succeed with a notice
 windows:                           # context window per model family; used for budgets
   default: 200000
-confirm_done: auto                 # auto | ask
+confirm_done: ask                  # ask | auto
 llm:
   # provider: none | kilo | openai-compatible | anthropic | fake (tests).  none = condensation
   # disabled (the host's own compaction stays on). kilo = run through Kilo itself (the Kilo plugin

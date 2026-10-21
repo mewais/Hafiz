@@ -338,7 +338,7 @@ describe('plugin: sessions, report capture, shaping', () => {
       const entry = log[0]?.entry as { kind: string; text: string; by: { sessionId: string } }
       expect(entry).toMatchObject({ kind: 'report', text: `Report from ${role}.` })
       expect(entry.by.sessionId).toBe(id)
-      const audit = (await read.readAudit()).filter((a) => a.command === 'report.capture')
+      const audit = (await read.readAudit()).filter((a) => a.command === 'system.progress')
       expect(audit).toHaveLength(1)
       expect(audit[0]?.by).toMatchObject({ sessionId: id, role })
     },
