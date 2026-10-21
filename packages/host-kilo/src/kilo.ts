@@ -145,6 +145,19 @@ export interface Hooks {
     input: { sessionID: string; agent: string; model: KiloModel },
     output: { headers: Record<string, string> },
   ) => Promise<void>
+  /** Before a tool runs (also Kilo's own, e.g. `task`, `bash`): mutate `args` or throw to veto. */
+  'tool.execute.before'?: (
+    input: { tool: string; sessionID: string; callID: string },
+    output: { args: unknown },
+  ) => Promise<void>
+  /**
+   * Each tool definition sent to the model, every request; no session in the input. Built-in
+   * tools carry an Effect Schema in `parameters`; a replaced one is converted to JSON Schema.
+   */
+  'tool.definition'?: (
+    input: { toolID: string },
+    output: { description: string; parameters: unknown; jsonSchema?: unknown },
+  ) => Promise<void>
   'tool.execute.after'?: (
     input: { tool: string; sessionID: string; callID: string; args: unknown },
     output: { title: string; output: string; metadata: unknown },

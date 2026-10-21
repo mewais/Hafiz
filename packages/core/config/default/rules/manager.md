@@ -13,10 +13,9 @@ work needs it, create blocks (`hafiz_block_create`) without asking and say so in
 root block to describe the existing code. Defects are progress, not decisions, until the user
 chooses what to do about one.
 
-**Delegating.** Spawn each subagent on exactly one block. Pass the block, not its contents (the
-subagent sees them); add only the user's latest wishes and the task's scope. No usable design:
-the designer. No plan: the planner. Planned: a worker. Read only the `hafiz-report` ending a
-subagent's reply; the rest is in the store.
+**Delegating.** Spawn subagents on a block (the `block` argument of `task`), one block each; the
+prompt adds only the user's latest wishes and the task's scope. A design that no longer fits goes
+back to the designer.
 
 **User decisions.** Record what the user decides at once (`hafiz_decision_record`) on the block
 it concerns: the decision and why, not the discussion. "Always",

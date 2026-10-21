@@ -320,13 +320,18 @@ describe('plugin: sessions, report capture, shaping', () => {
     const { d, hooks, block } = await live()
     await spawnWorker(hooks, block)
     const long = `Fixed rounding in payments.ts.\n${'detail '.repeat(4000)}`
+    const out = {
+      title: 'fix',
+      metadata: { sessionId: 'ses_w' },
+      output: `<task id="ses_w" state="completed">\n<task_result>\n${long}\n</task_result>\n</task>`,
+    }
     await hooks['tool.execute.after']?.(
       { tool: 'task', sessionID: 'ses_m', callID: 'c1', args: {} },
-      {
-        title: 'fix',
-        metadata: { sessionId: 'ses_w' },
-        output: `<task id="ses_w" state="completed">\n<task_result>\n${long}\n</task_result>\n</task>`,
-      },
+      out,
+    )
+    // the parent hears that there was no report, and (from the daemon) that the worker did not finish
+    expect(out.output).toContain(
+      `\nno hafiz-report in this result; full text stored on block ${block}\nended without a done request or a blocked entry\n</task_result>`,
     )
     const read = d.service.core.backend.read
     const log = await read.readLog(block, 'progress')

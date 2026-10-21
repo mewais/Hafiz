@@ -2,6 +2,7 @@
 import type { PluginModule } from './kilo.js'
 import { createHafizPlugin } from './plugin.js'
 
+export * from './checks.js'
 export * from './counters.js'
 export * from './install.js'
 export type * from './kilo.js'

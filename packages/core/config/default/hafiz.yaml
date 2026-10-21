@@ -39,4 +39,5 @@ host:
     shaper: auto                   # proxy | hooks | auto (hooks when the host exposes them)
     tools: native                  # native (plugin tool hook, per-session) | mcp (hafiz-<role> servers)
     default_role: manager          # role for non-Hafiz primary agents (build, plan, …); none = unmanaged
-    default_subagent_role: worker  # non-Hafiz subagents spawned with hafiz:block=<id>; none = unmanaged
+    default_subagent_role: worker  # non-Hafiz subagents spawned on a block (task's `block`); none = unmanaged
+    delegation_prompt_cap: 600     # tokens; a longer task prompt is refused (the subagent sees its block)

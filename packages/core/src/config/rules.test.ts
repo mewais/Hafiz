@@ -70,7 +70,6 @@ describe('rules files', () => {
     expect(worker).toContain('```hafiz-report')
     const manager = rulesFor(config, 'manager')
     for (const s of config.logs.decision.standing) expect(manager).toContain(`\`${s}\``)
-    expect(manager).toContain('`hafiz-report`')
   })
 
   it('leave tool mechanics to the descriptions: no argument names, no marker syntax', () => {

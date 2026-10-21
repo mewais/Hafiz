@@ -3,11 +3,13 @@ import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
   type Actor,
+  blockList,
   type Core,
   type DocType,
   describeProposal,
   focusFromPolicy,
   isViewerSession,
+  matchBlock,
   renderCostTable,
 } from '@hafiz/core'
 import {
@@ -79,25 +81,11 @@ export async function resolveBlock(core: Core, ref: string | undefined): Promise
     if (!project) throw new CliError('no project found')
     return project.rootBlockId
   }
-  const blocks = await core.backend.read.listBlocks()
-  if (blocks.some((b) => b.id === ref)) return ref
-  const pick = (matches: typeof blocks, how: string): string | undefined => {
-    if (matches.length === 0) return undefined
-    if (matches.length === 1) return (matches[0] as (typeof blocks)[number]).id
-    const list = matches.map((b) => `  ${b.id} — ${b.title}`).join('\n')
-    throw new CliError(`'${ref}' is ambiguous (${how}); candidates:\n${list}`)
-  }
-  const found =
-    pick(
-      blocks.filter((b) => b.id.startsWith(ref)),
-      'id prefix',
-    ) ??
-    pick(
-      blocks.filter((b) => b.title.toLowerCase() === ref.toLowerCase()),
-      'title',
-    )
-  if (!found) throw new CliError(`no block matches '${ref}' (by id, id prefix or title)`)
-  return found
+  const m = matchBlock(await core.backend.read.listBlocks(), ref)
+  if ('id' in m) return m.id
+  if ('ambiguous' in m)
+    throw new CliError(`'${ref}' is ambiguous (${m.by}); candidates:\n${blockList(m.ambiguous)}`)
+  throw new CliError(`no block matches '${ref}' (by id, id prefix or title)`)
 }
 
 function need(v: string | undefined, what: string): string {

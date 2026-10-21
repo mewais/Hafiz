@@ -98,9 +98,12 @@ export const hafizFile = z.object({
           tools: z.enum(['native', 'mcp']).default('native'),
           // Role for Kilo primary agents that are not Hafiz roles (build, plan, …); none = off.
           default_role: z.string().default('manager'),
-          // Role for non-Hafiz subagents (general, explore, …) spawned with a
-          // `hafiz:block=<id>` marker; without the marker they stay unmanaged. none = off.
+          // Role for non-Hafiz subagents (general, explore, …) spawned on a
+          // block (the `block` argument of Kilo's `task`); otherwise they stay unmanaged. none = off.
           default_subagent_role: z.string().default('worker'),
+          // A managed `task` prompt longer than this (tokens) is refused: the subagent already
+          // sees its block, so the prompt carries only the wishes and scope on top.
+          delegation_prompt_cap: z.number().int().positive().default(600),
         })
         .prefault({}),
     })
@@ -204,6 +207,13 @@ export function isViewerSession(roles: z.infer<typeof rolesFile>, s: { role: str
   return !!roles.roles[s.role]?.read_only
 }
 
+/**
+ * A block's state for spawning: `done` and `dropped` by status, otherwise by its docs
+ * (`no_design`, `no_plan`, `has_plan`).
+ */
+export const SPAWN_STATES = ['no_design', 'no_plan', 'has_plan', 'done', 'dropped'] as const
+export type SpawnState = (typeof SPAWN_STATES)[number]
+
 export const policiesFile = z.object({
   status: z.object({
     transitions: z.record(z.string(), z.array(z.string())),
@@ -215,6 +225,8 @@ export const policiesFile = z.object({
     on_exceeded: z.enum(['reject', 'warn']).default('reject'),
     allow_block_overrides: z.boolean().default(true),
   }),
+  // Roles a subagent may be spawned as on a block, by the block's state; `*` = any role.
+  spawn: z.object({ roles_by_state: z.record(z.enum(SPAWN_STATES), z.array(z.string())) }),
 })
 
 export const complianceFile = z.object({

@@ -135,6 +135,8 @@ const schemas = {
   'tree.list': z.object(token),
   'session.status': z.object(token),
   'session.self': z.object(token),
+  /** The commands the caller's session ran since it opened, as audited (`block.request_done`, `progress.append:blocked`, …). */
+  'session.activity': z.object(token),
   'project.status': z.object(token),
   'session.end': z.object(token),
   /** Plugin-only system action (not an agent tool, not role-gated): a subagent's report, or a `changed` note. */
@@ -300,6 +302,16 @@ export class DaemonService {
         // A session's own record (focus, counters, unfiled summary): not role-gated.
         const fresh = (await core.backend.read.getSession(session.id)) ?? session
         return publicSession(fresh)
+      }
+      case 'session.activity': {
+        // Own record only, like session.self: not role-gated.
+        const since = session.createdAt
+        const audit = await core.backend.read.readAudit()
+        return {
+          commands: audit
+            .filter((a) => a.by.sessionId === session.id && a.ts >= since)
+            .map((a) => a.command),
+        }
       }
       case 'project.status': {
         authorize(core.config, by.role, 'session.status')

@@ -153,11 +153,12 @@ only for the optional proxy).
 |---|---|
 | Install | one plugin module (works in CLI and VS Code); `config` hook injects: `agent.<role>` definitions (prompt = the user's own prompt, if any, then the role rules, always appended; `permission` map `hafiz_*: deny` + `allow` for exactly the role's tools, `permission.task` to control who may delegate to whom), per-agent tool permissions for non-Hafiz agents (default roles, below), slash commands, `permission.edit/read` deny for the store path |
 | Tools | **plugin-native** (`tool` hook, stable): the agent tool catalogue (`@hafiz/core` `TOOL_SPECS`, same as the MCP gateway; `hafiz_block_read`, `hafiz_doc`, `hafiz_thread`, …, each routing to a Core command), registered once with the union of the managed roles' narrowing since plugin tools are global; each call carries the Kilo `sessionID`/`agent` and is routed and dispatched with that session's role and token. `host.kilo.tools: mcp` falls back to `hafiz-<role>` MCP servers |
-| Default roles | `host.kilo.default_role` (default `manager`): primary agents that are not role agents (`build`, `plan`, custom) are managed as that role — its tools (global permission), a session, the role rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`): non-role subagents (`general`, `explore`, custom) get that role's tools but are managed only when spawned with `hafiz:block=<id>`; otherwise passthrough and tool calls are refused. `none` disables either |
+| Default roles | `host.kilo.default_role` (default `manager`): primary agents that are not role agents (`build`, `plan`, custom) are managed as that role — its tools (global permission), a session, the role rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`): non-role subagents (`general`, `explore`, custom) get that role's tools but are managed only when spawned on a block (`task`'s `block` argument, below); otherwise passthrough and tool calls are refused. `none` disables either |
 | Observe | `event` hook: `session.created/idle/compacted`, `tool.execute.after`, `file.edited` → counters |
 | Act: inject | `experimental.chat.system.transform` → envelope at the end of the system prompt, replaced in place on epoch change (prefix-stable, no stale copies) |
 | Act: tail | `experimental.chat.messages.transform` → stub tool results older than `tool_result_max_age_turns`, never user turns, never the newest turn; complements `compaction.prune` |
-| Act: shape results | `tool.execute.after` on `task` → keep handback block; cap large tool outputs |
+| Act: shape results | `tool.execute.after` on `task` → the parent reads only the child's `hafiz-report` (full text captured to the store), plus a line when a worker ended without a done request or a blocked entry; cap large tool outputs |
+| Act: check calls | `tool.definition` on the built-in `task` → a required `block` argument (block id or `none`); `tool.execute.before` (managed sessions) → resolve it, refuse spawns that do not fit the block's state (`policies.yaml spawn.roles_by_state`) or whose prompt quotes `<hafiz…>` / exceeds `host.kilo.delegation_prompt_cap`, inject the `hafiz:block=<id>` marker; refuse `bash` commands naming the store directory. ARCHITECTURE §12.1 |
 | Compaction | `experimental.session.compacting` → `output.prompt` = Hafiz compaction prompt; `session.compacted` → re-render (system transform already carries the envelope, so nothing is lost) |
 | `done` confirmation | `needs_confirmation` fallback (no elicitation) |
 
@@ -186,7 +187,7 @@ against a mock LLM; corrections to the above in bold):**
   would be Responses (not adapted).
 - Subagents: `session.created` carries `info.parentID` **and `info.agent`**; the child's first
   `chat.message` holds the task prompt (Hafiz convention: `hafiz:block=<id>` marks the spawned
-  block). `tool.execute.after` for `task` gives `metadata.sessionId` and output
+  block; the `task` check writes it from the `block` argument). `tool.execute.after` for `task` gives `metadata.sessionId` and output
   `<task id="…" state="completed">\n<task_result>\n…\n</task_result>\n</task>`; the child's
   `session.idle` arrives first. Background tasks (`background: true`, behind
   `KILO_EXPERIMENTAL_BACKGROUND_SUBAGENTS`) return `state="running"`; their result comes later.
@@ -217,6 +218,16 @@ against a mock LLM; corrections to the above in bold):**
   shaper puts the rules ahead of the envelope for managed agents without one. Tool definitions
   pass through a `tool.definition` hook whose input is only `{toolID}` (no agent or session), so
   per-role descriptions are not possible for plugin tools.
+- **Checks on Kilo's own tools (verified with `kilo run` against the mock LLM):** built-in tools
+  carry an Effect Schema Struct in `tool.definition`'s `parameters`; replacing it with
+  `parameters.mapFields(…)` (a `block` field made by annotating the existing `prompt` field)
+  makes Kilo derive the JSON Schema from ours, so the request's `task` tool lists `block` as
+  required. Kilo's own decoder still uses the original schema and drops `block`, so the
+  `tool.execute.before` hook reads it from the raw `args` and rewrites `args.prompt` in place
+  (the same object reaches `execute`). A throw there comes back to the model as that call's tool
+  error and the turn goes on. The hook input has no agent: the change applies to every agent of a
+  tracked instance, and the veto only to managed callers. A command's subtask (`prompt.ts`) runs
+  the same hook with Kilo's own args (no `block`, `command` set); the check lets it through.
 - `session.compacted` exists; `compaction` is global config (`auto`, `prune`, `tail_turns`, …).
 - **Tools and permissions are fixed per instance** (tracking mid-session, verified with `kilo run`
   against the mock LLM): plugin tools are read from `Hooks.tool` once when the tool registry state

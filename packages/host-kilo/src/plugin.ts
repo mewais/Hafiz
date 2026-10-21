@@ -5,7 +5,7 @@
 //   immediately (see `untrackedHooks`);
 // - a tracked repo: installs config, registers the Hafiz tools (plugin-native, resolved per
 //   calling session), observes sessions, captures subagent reports and shapes requests through
-//   the selected RequestShaper.
+//   the selected RequestShaper, and runs the mechanical checks on Kilo's own tools (checks.ts).
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -25,6 +25,7 @@ import {
   worktreeOf,
 } from '@hafiz/core'
 import { type DaemonClient, ensureDaemon, initProject } from '@hafiz/gateway-mcp'
+import { createChecks, TASK_RESULT } from './checks.js'
 import { toolCounters, USER_TURN_COUNTERS } from './counters.js'
 import { installConfig } from './install.js'
 import type {
@@ -115,9 +116,6 @@ function hafizCommand(env: NodeJS.ProcessEnv): string[] {
     } catch {}
   return ['hafiz']
 }
-
-const TASK_RESULT =
-  /<task id="([^"]+)" state="completed">\n(?:<summary>[\s\S]*?<\/summary>\n)?<task_result>\n?([\s\S]*?)\n?<\/task_result>/
 
 /** Final non-synthetic assistant text of a message list (what Kilo's task tool returns). */
 export function finalAssistantText(messages: KiloMessageWithParts[]): string | undefined {
@@ -280,6 +278,7 @@ function managedHooks(
   }
 
   const toolsMode = toolsModeOf(options, config)
+  const checks = createChecks({ config, storeDir: project.storeDir, sessions })
 
   const out: Hooks = {
     async config(cfg) {
@@ -352,6 +351,14 @@ function managedHooks(
         await sessions.counters(i.sessionID, USER_TURN_COUNTERS)
     },
 
+    async 'tool.definition'(i, o) {
+      checks.definition(i.toolID, o)
+    },
+
+    async 'tool.execute.before'(i, o) {
+      await checks.before(i, o)
+    },
+
     async 'tool.execute.after'(i, o) {
       if (!sessions.isManaged(i.sessionID)) return
       await sessions.counters(i.sessionID, toolCounters(i.tool))
@@ -360,7 +367,8 @@ function managedHooks(
       if (!m) return
       const child = m[1] as string
       if (await sessions.open(child)) {
-        await sessions.captureReport(child, m[2] as string)
+        const stored = await sessions.captureReport(child, m[2] as string)
+        o.output = await checks.handback(child, o.output, stored)
         await sessions.end(child)
       }
     },
@@ -552,6 +560,12 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
     },
     async 'tool.execute.after'(i, o) {
       return (managed?.hooks ?? nudge)['tool.execute.after']?.(i, o)
+    },
+    async 'tool.definition'(i, o) {
+      return managed?.hooks['tool.definition']?.(i, o)
+    },
+    async 'tool.execute.before'(i, o) {
+      return managed?.hooks['tool.execute.before']?.(i, o)
     },
     async 'experimental.chat.system.transform'(i, o) {
       return (managed?.hooks ?? nudge)['experimental.chat.system.transform']?.(i, o)

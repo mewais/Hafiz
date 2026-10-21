@@ -42,7 +42,7 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   manager: 'Hafiz manager: runs the block tree, delegates designer/planner/worker subagents',
   designer: 'Hafiz designer: writes and revises block designs',
   planner: 'Hafiz planner: breaks designed blocks into plans and child blocks',
-  worker: 'Hafiz worker: implements one block; spawn with hafiz:block=<id> in the prompt',
+  worker: 'Hafiz worker: implements one planned block',
 }
 
 /** Roles that get a Kilo agent (not the roles a person plays: `user`, `viewer`). */
@@ -82,7 +82,7 @@ export function withRules(config: Config, role: string, prompt?: unknown): strin
   return own ? `${own}\n\n${rules}` : rules
 }
 
-/** Kilo's built-in subagents; they get `default_subagent_role`'s tools (used only with a marker). */
+/** Kilo's built-in subagents; they get `default_subagent_role`'s tools (used only on a block). */
 export const KILO_BUILTIN_SUBAGENTS = ['general', 'explore'] as const
 
 type PermMap = Record<string, unknown>
@@ -202,7 +202,7 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
     }
 
   // Non-Hafiz subagents (general, explore, custom): the default subagent role's tools. They
-  // become managed only when spawned with hafiz:block=<id>; otherwise a call is refused.
+  // become managed only when spawned on a block (task's `block`); otherwise a call is refused.
   for (const name of nonRoleSubagents) {
     const theirs = cfg.agent[name] ?? {}
     const ours = {

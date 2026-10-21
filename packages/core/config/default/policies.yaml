@@ -16,3 +16,13 @@ epoch:
 caps:
   on_exceeded: reject                          # after the tokenizer soft zone
   allow_block_overrides: true                  # recorded as a decision
+spawn:
+  # Who may be spawned on a block (Kilo: the `task` tool's `block` argument), by the block's
+  # state: no_design / no_plan / has_plan from its docs, done / dropped from its status.
+  # A refused spawn names the missing step. `*` = any role.
+  roles_by_state:
+    no_design: [designer]
+    no_plan:   [designer, planner]
+    has_plan:  ['*']
+    done:      []                          # reopen first
+    dropped:   []

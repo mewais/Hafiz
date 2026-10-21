@@ -69,9 +69,11 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 - The plugin adds four agents: **manager**, **designer**, **planner**, **worker**. Plain Kilo
   agents (`build`, `plan`, ...) act as the manager by default (`host.kilo.default_role`), so you
   can just start talking; the agent starts tracking on its own once the work is multi-step.
-- The manager delegates one block per subagent. Every task prompt carries `hafiz:block=<id>`;
-  without it a subagent is unmanaged. A worker's final message ends with a `hafiz-report` block
-  that Hafiz captures into the block's progress log.
+- The manager delegates one block per subagent: Kilo's `task` tool takes a required `block`
+  (a block id, or `none` for a helper outside Hafiz). Hafiz refuses a spawn that does not fit the
+  block (a worker before there is a plan, anyone on a done block) or that copies the block into
+  the prompt. A worker's final message ends with a `hafiz-report` block; Hafiz stores the whole
+  reply in the block's progress log and hands the manager only that block.
 - Anything agents want to change that needs a human (marking a block done, a proposed digest,
   a missing protocol call) lands in the **review queue**: `hafiz review`, then
   `hafiz review --accept ID` or `--reject ID`.

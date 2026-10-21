@@ -35,9 +35,8 @@ turns:
   - prompt: >-
       Checkout is the active piece of work and it is in the Hafiz tree. Get it moving: have a
       designer refine the Checkout design, a planner write plans for Pricing and Orders, then
-      run workers in parallel on the three leaf blocks Cart totals, Pricing and Orders (give
-      each worker hafiz:block=<id> in its task prompt). Each worker implements its block in
-      src/ and reports back.
+      run workers in parallel on the three leaf blocks Cart totals, Pricing and Orders (each
+      spawned on its block). Each worker implements its block in src/ and reports back.
   - prompt: >-
       Side note while that is going on: let's settle that all money in this project is stored as
       integer cents, never floats. Make that a standing rule for the whole project.
@@ -66,12 +65,14 @@ mock:
               args:
                 description: Refine Checkout design
                 subagent_type: designer
+                block: "{b.checkout}"
                 prompt: "[[turn:{turn}]] Refine the design of Checkout (block {b.checkout}): add its constraints."
         - calls:
             - tool: task
               args:
                 description: Plan Pricing and Orders
                 subagent_type: planner
+                block: "{b.pricing}"
                 prompt: "[[turn:{turn}]] Write plans for Pricing ({b.pricing}) and Orders ({b.orders})."
         - calls:
             - tool: hafiz_block_set_status
@@ -85,11 +86,12 @@ mock:
               args: &spawn
                 description: Cart totals
                 subagent_type: worker
-                prompt: "hafiz:block={b.totals} [[turn:{turn}]] Implement cart totals in src/."
+                block: "{b.totals}"
+                prompt: "[[turn:{turn}]] Implement cart totals in src/."
             - tool: task
-              args: { <<: *spawn, description: Pricing, prompt: "hafiz:block={b.pricing} [[turn:{turn}]] Implement pricing in src/." }
+              args: { <<: *spawn, description: Pricing, block: "{b.pricing}", prompt: "[[turn:{turn}]] Implement pricing in src/." }
             - tool: task
-              args: { <<: *spawn, description: Orders, prompt: "hafiz:block={b.orders} [[turn:{turn}]] Implement orders in src/." }
+              args: { <<: *spawn, description: Orders, block: "{b.orders}", prompt: "[[turn:{turn}]] Implement orders in src/." }
         - text: Design refined, plans written, and the three leaf blocks implemented.
       designer:
         - calls:

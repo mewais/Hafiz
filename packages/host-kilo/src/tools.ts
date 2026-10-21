@@ -103,7 +103,7 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
         const role = sessions.get(sid)?.role
         if (!open || !role)
           throw new HafizToolError(
-            `${name}: this Kilo session is not managed by Hafiz (agent '${ctx.agent}'). Subagents are managed only when their task prompt contains hafiz:block=<block id>.`,
+            `${name}: this Kilo session is not managed by Hafiz (agent '${ctx.agent}'). Subagents are managed only when spawned on a block (the block argument of task).`,
           )
         const rt = toolsForRole(config, role, 'kilo').find((t) => t.spec.name === name)
         if (!rt) throw new HafizToolError(`${name} is not available to the ${role} role.`)
