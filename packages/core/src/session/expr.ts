@@ -18,6 +18,10 @@ export type Expr =
 
 const TOKEN = /\s*(?:(\d+(?:\.\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|(&&|\|\||>=|<=|==|!=|[><!()]))/y
 
+const CMP_OPS = ['>', '>=', '<', '<=', '==', '!='] as const
+const isCmp = (v: string): v is (typeof CMP_OPS)[number] =>
+  (CMP_OPS as readonly string[]).includes(v)
+
 function tokenize(src: string): Array<{ k: 'num' | 'id' | 'op'; v: string }> {
   const out: Array<{ k: 'num' | 'id' | 'op'; v: string }> = []
   TOKEN.lastIndex = 0
@@ -66,9 +70,9 @@ export function parseExpr(src: string): Expr {
   const cmp = (): Expr => {
     const l = primary()
     const t = peek()
-    if (t?.k === 'op' && ['>', '>=', '<', '<=', '==', '!='].includes(t.v)) {
+    if (t?.k === 'op' && isCmp(t.v)) {
       i++
-      return { t: 'bin', op: t.v as never, l, r: primary() }
+      return { t: 'bin', op: t.v, l, r: primary() }
     }
     return l
   }

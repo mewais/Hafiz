@@ -112,8 +112,8 @@ dropped  ◀── (any, reason recorded as a decision)
 Guards are config (`policies.status`), composed from registered predicates. Defaults:
 
 - `→ done`: a `digest` present and not stale; no `open` threads; children `done`/`dropped`;
-  `confirm_done` policy (default **`auto`** — proceeds and enqueues a `status` proposal for review;
-  `ask` uses elicitation where the host has it, else returns `needs_confirmation`).
+  `confirm_done` policy (default **`ask`** — uses elicitation where the host has it, else returns
+  `needs_confirmation`; `auto` proceeds and enqueues a `status` proposal for review).
   Records `done_at.commit` (repo HEAD) for later drift detection.
 - A worker may `block.request_done(id, digest)`: writes the digest and enqueues the transition for
   the manager (or auto-applies under `auto` if the role policy allows).
@@ -193,6 +193,14 @@ Stale `expected_version` → `Conflict{current}`. All commands are journaled tra
 successful command produces an `AuditEntry` and (major writes) a git commit authored as
 `<role>/<agent-name> <session-id@hafiz>`; CLI writes are authored as the user.
 
+A catalogue entry (`commands/catalogue.ts`) may declare hooks Core runs around the command when it
+is dispatched (`commands/hooks.ts`): `before: [draft_gist]` on `thread.park`; `after:
+[refresh_focus, announce_proposals]` on every `block.*` and `proposal.*` write, plus
+`done_compliance, draft_digest` on `block.request_done` and `block.set_status` (to `done`).
+What a hook has for other sessions or the caller's notice queue goes to the gateway through a
+`DispatchSink`; the daemon keeps only gateway concerns (queues, cap-rejection counters,
+announcing proposals to reviewers).
+
 ### 5.2 Queries
 
 | Query | Semantics |
@@ -212,6 +220,16 @@ MCP shim/CLI); Core maps token → session → role. The host additionally hides
 (role = MCP server instance, §11.1). Writes outside this path (editing store files by hand under a
 running daemon) are detected by the git working-tree check on the next command and surfaced as a
 notice; they are not prevented.
+
+In code every write goes through one transaction helper (`commands/tx.ts`: authz → dirty check →
+tx → epoch bump → audit) with two entry points. `runAs(ctx, actor, {command, …}, fn)` checks the
+actor's role against the allowlist first; it backs every command `dispatch` serves.
+`runSystem(ctx, actor, {command, …}, fn)` skips the role check and is Hafiz's own bookkeeping (session
+open/end, counters, compliance state, focus refresh, condensation, checkpoint requests, queued
+proposals, view-hash and delta-cursor updates, `system.progress`, `project.init`,
+`schema.migrate`, and `done` applied by `request_done` under `confirm_done: auto`). No
+`runSystem` write is reachable through `dispatch` or the tool catalogue; grep for it to see every
+write that bypasses roles.
 
 ---
 
@@ -390,8 +408,9 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 - **Report capture**: the adapter hands every subagent's final message to Core, which stores it as
   a `progress` entry of kind `report` on the worker's block, verbatim up to a cap, with the rest
   spilled to the store. Mechanical, unconditional, no LLM.
-- **Nudge**: counter thresholds in a tree-less project → one-line notice, once per session. With
-  no Hafiz project at all the plugin takes a cheap path: it returns four tiny hooks, keeps the
+- **Nudge**: counter thresholds in an untracked repo (never in a tracked project, whatever its tree size) →
+  one-line notice naming `hafiz_track_project`, once per session. With
+  no Hafiz project the plugin takes a cheap path: it returns four tiny hooks, keeps the
   counters in memory and, when a threshold trips, appends the line to the session's next system
   prompt (`system.transform`), once. No daemon, config change or proxy is ever started.
 - **Drafters** (opt-in, default off): at `request_done` (digest draft from the progress log) and at
@@ -502,7 +521,7 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   tracked source files starts with `Project.onboarding: pending`: the roles in
   `onboarding.roles` (manager) get `onboarding.directive` at the top of their view (spawn the
   designer once on the root to describe the codebase as it is), and the first root design write
-  clears the flag and records the decision "Onboarded existing codebase".
+  clears the flag and writes a `changed` progress entry "Onboarded existing codebase" (Hafiz never records decisions).
 
 `storage-sqlite` implements the same interface and passes the same conformance suite: one SQLite
 file (`<store>/hafiz.sqlite`, `node:sqlite`), rows per entity, append-only `logs`/`audit` tables, and a
@@ -568,6 +587,10 @@ prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ```
 packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
+packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · hooks · blocks · docs · logs · project · proposals · reads · authz · catalogue)
+                  session/ (service: sessions, counters, focus · compliance + compliance-run · cost · nudge · review)
+                  condense/ (condenser · service: checkpoint, condense · drafter + drafting) · view/ (engine … · service: context.*, block.read)
+                  domain/ · config/ · schema/ · store/ · llm/ · project/
 packages/core/config/default/ roles.yaml views.yaml zooms.yaml kinds.yaml schemas/ policies.yaml compliance.yaml nudge.yaml tail.yaml rules/
 docs/ ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
 ```

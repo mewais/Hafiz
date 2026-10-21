@@ -102,6 +102,9 @@ describe('pointer in the git common dir', () => {
     const main = repo()
     const { io } = harness(main)
     expect(await run(['init', 'Shop'], io)).toBe(0)
+    const { storeDir } = resolveProject(main, io.env)
+    mkdirSync(join(storeDir, 'config'), { recursive: true })
+    writeFileSync(join(storeDir, 'config/hafiz.yaml'), 'confirm_done: auto\n') // default is ask
     const wt1 = join(tmp('hafiz-wt-'), 'one')
     const wt2 = join(tmp('hafiz-wt-'), 'two')
     git(main, 'worktree', 'add', '-q', '-b', 'one', wt1)

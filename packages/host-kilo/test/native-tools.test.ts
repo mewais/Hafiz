@@ -127,7 +127,7 @@ describe('native tools resolve the calling Kilo session', () => {
     const w = await read().getSession('ses_w')
     expect(w).toMatchObject({ role: 'worker', parentSessionId: 'ses_m', host: 'kilo' })
     expect(w?.focus.blocks).toEqual([blocks[0]])
-    const audit = (await read().readAudit()).filter((a) => a.command === 'progress.append')
+    const audit = (await read().readAudit()).filter((a) => a.command === 'progress.append:found')
     expect(audit).toHaveLength(1)
     expect(audit[0]?.by).toMatchObject({ sessionId: 'ses_w', role: 'worker', agent: 'worker' })
     const log = await read().readLog(blocks[0], 'progress')
@@ -180,6 +180,40 @@ describe('native tools resolve the calling Kilo session', () => {
         ctx('ses_w', 'worker'),
       ),
     ).rejects.toThrow(/not available to the worker role/)
+  })
+
+  it('a planner cannot call hafiz_progress_append; a designer only with kind found or question', async () => {
+    const { hooks, blocks } = await live()
+    await session(hooks, 'ses_m', 'manager', 'go')
+    await session(hooks, 'ses_planner', 'planner', `hafiz:block=${blocks[0]}`, 'ses_m')
+    await expect(
+      tool(hooks, 'hafiz_progress_append').execute(
+        { block: blocks[0], kind: 'found', text: 'x' },
+        ctx('ses_planner', 'planner'),
+      ),
+    ).rejects.toThrow(/not available to the/)
+    await session(hooks, 'ses_designer', 'designer', `hafiz:block=${blocks[0]}`, 'ses_m')
+    const append = tool(hooks, 'hafiz_progress_append')
+    await expect(
+      append.execute(
+        { block: blocks[0], kind: 'done', text: 'x' },
+        ctx('ses_designer', 'designer'),
+      ),
+    ).rejects.toThrow()
+    await append.execute(
+      { block: blocks[0], kind: 'found', text: 'x' },
+      ctx('ses_designer', 'designer'),
+    )
+  })
+
+  it('system.progress is in no role’s tool list and is not a dispatchable command', async () => {
+    const { hooks } = await live()
+    const config = loadConfig()
+    for (const role of agentRoles(config)) {
+      expect(toolNamesForRole(config, role).join(' ')).not.toMatch(/report/)
+      expect(toolsForRole(config, role).map((t) => t.spec.command)).not.toContain('system.progress')
+    }
+    expect(Object.keys(hooks.tool ?? {}).join(' ')).not.toMatch(/report_capture/)
   })
 
   it('daemon errors come back as tool errors the agent can act on', async () => {

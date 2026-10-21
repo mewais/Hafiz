@@ -32,13 +32,19 @@ const digest = {
 }
 
 async function setup() {
-  const core = new Core({ config: loadConfig(), backend: new MemoryBackend(), clock: fixedClock() })
+  const core = new Core({ config: autoConfig(), backend: new MemoryBackend(), clock: fixedClock() })
   const { result: init } = await core.projectInit(mgr, {
     name: 'Shop',
     originFingerprint: 'fp',
     rootDesign: { overview: 'an online shop', topology: ['web → api → db'] },
   })
   return { core, root: init.root }
+}
+
+function autoConfig() {
+  const config = loadConfig()
+  config.hafiz.confirm_done = 'auto'
+  return config
 }
 
 describe('core scenario', () => {

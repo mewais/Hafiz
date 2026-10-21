@@ -162,8 +162,13 @@ describe('untracked git repo', () => {
     })
     const project = await read.getProject()
     expect(project?.onboarding).toBeUndefined() // empty repo: greenfield
-    const decisions = await read.readLog(project?.rootBlockId as string, 'decisions')
-    expect(decisions.map((d) => d.entry.decision)).toEqual(['Multi-step build with subagents.'])
+    // Hafiz records the reason as progress, never as a decision
+    const root = project?.rootBlockId as string
+    expect(await read.readLog(root, 'decisions')).toHaveLength(0)
+    expect((await read.readLog(root, 'progress')).map((p) => [p.entry.kind, p.entry.text])).toEqual(
+      [['changed', 'Tracking with Hafiz: Multi-step build with subagents.']],
+    )
+    expect((await read.readAudit()).map((a) => a.command)).not.toContain('decision.record')
 
     // next request: envelope + manager rules, manager tools shown, track tool hidden
     const sys = await system(hooks, 'ses_b')

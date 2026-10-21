@@ -122,6 +122,49 @@ describe('cli', () => {
     expect(await run(['revert', child.id, 'design', 'deadbeef'], io)).toBe(1)
   })
 
+  it('defaults show/history to the root and resolves prefixes and titles', async () => {
+    const cwd = repo()
+    const storeRoot = tmp('hafiz-stores-')
+    const { io, out, err } = harness(cwd, storeRoot)
+    expect(await run(['init', 'Shop'], io)).toBe(0)
+    const { storeDir } = resolveProject(cwd, io.env)
+    const backend = new FsBackend({ dir: storeDir, minorBatchSeconds: 0 })
+    await backend.open()
+    const core = new Core({ config: loadConfig(), backend })
+    const root = (await backend.read.getProject())?.rootBlockId as string
+    const me = userActor()
+    const a = (await core.blockCreate(me, { parent: root, title: 'Billing' })).result
+    const b = (await core.blockCreate(me, { parent: root, title: 'Basket' })).result
+    await core.docWrite(me, { block: a.id, type: 'design', sections: design('first') })
+    await backend.close()
+
+    out.length = 0
+    expect(await run(['show'], io)).toBe(0)
+    expect(out.join('\n').split('\n')[0]).toContain(`[${root}]`)
+    out.length = 0
+    expect(await run(['history', '--json'], io)).toBe(0)
+    expect(JSON.parse(out.join('\n')).length).toBeGreaterThan(0)
+
+    out.length = 0
+    expect(await run(['show', a.id.slice(0, a.id.length - 1), '--zoom', 'LINE'], io)).toBe(0)
+    expect(out).toEqual([`# Billing [${a.id}] planned`])
+    out.length = 0
+    expect(await run(['show', 'bAsKeT', '--zoom', 'LINE'], io)).toBe(0)
+    expect(out).toEqual([`# Basket [${b.id}] planned`])
+    out.length = 0
+    expect(await run(['history', 'billing', 'design'], io)).toBe(0)
+    expect(out.length).toBeGreaterThan(0)
+
+    err.length = 0
+    expect(await run(['show', 'b'], io)).toBe(1)
+    expect(err.join('\n')).toContain('ambiguous')
+    expect(err.join('\n')).toContain(a.id)
+    expect(err.join('\n')).toContain(b.id)
+    err.length = 0
+    expect(await run(['explain', 'nope'], io)).toBe(1)
+    expect(err.join('\n')).toContain('no block matches')
+  })
+
   it('tells the user to adopt when the store is gone, and adopt re-points with a new id', async () => {
     const cwd = repo()
     const storeRoot = tmp('hafiz-stores-')

@@ -191,7 +191,19 @@ function managedHooks(
   config: Config,
   opts: { late?: boolean } = {},
 ): Managed {
-  const { input, options, deps, env, log, hafiz } = ctx
+  const { input, options, deps, env, hafiz } = ctx
+  const fatalLog = ctx.log
+  const log = fatalLog
+  // Mechanical failures (counters, report capture, condensation, shaping, ...) are not the
+  // user's business: log each distinct one once, and only when HAFIZ_DEBUG is set.
+  const seen = new Set<string>()
+  const quiet = (line: string) => {
+    if (!env.HAFIZ_DEBUG) return
+    const key = line.replace(/\bses_\w+/g, 'ses_*')
+    if (seen.has(key)) return
+    seen.add(key)
+    fatalLog(line)
+  }
   const configured = ((options as { shaper?: unknown }).shaper ??
     config.hafiz.host.kilo.shaper) as ShaperSetting
   if (opts.late && configured === 'proxy')
@@ -221,7 +233,7 @@ function managedHooks(
     project,
     config,
     connect: () => connect(project),
-    log,
+    log: quiet,
     ...(kiloLlm
       ? {
           llm: {
@@ -236,14 +248,14 @@ function managedHooks(
         }
       : {}),
   })
-  const shaper = new ConversationShaper({ config, source: sessions, log })
+  const shaper = new ConversationShaper({ config, source: sessions, log: quiet })
   const useHooks = setting !== 'proxy'
   const useProxy = setting !== 'hooks'
-  const hooks = useHooks ? new TransformHooksShaper(shaper, log) : undefined
+  const hooks = useHooks ? new TransformHooksShaper(shaper, quiet) : undefined
   const proxy = useProxy
     ? new EmbeddedProxy({
         shaper,
-        log,
+        log: quiet,
         onUsage: (sid, u) =>
           void sessions.counters(sid, {
             wire_requests: 1,
@@ -481,9 +493,10 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
     const opened = await m.sessions.open(tctx.sessionID, { agent: tctx.agent })
     if (opened && args.reason)
       await m.sessions
-        .call(tctx.sessionID, 'dispatch', {
-          command: 'decision.record',
-          args: { block: r.rootBlockId, title: 'Tracking with Hafiz', decision: args.reason },
+        .call(tctx.sessionID, 'system.progress', {
+          block: r.rootBlockId,
+          kind: 'changed',
+          text: `Tracking with Hafiz: ${args.reason}`,
         })
         .catch((e) => log(`hafiz: could not record the tracking reason: ${String(e)}`))
     const tail = r.onboarding ? ' Existing code: onboarding is pending (see your view).' : ''

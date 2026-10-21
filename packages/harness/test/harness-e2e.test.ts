@@ -33,7 +33,6 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     expect(r.metrics.total).toMatchObject({
       hafiz_writes: 0,
       hafiz_calls: 0,
-      nudges: 0,
       files_written: 1,
       sessions: 1,
     })

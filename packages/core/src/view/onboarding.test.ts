@@ -47,7 +47,7 @@ describe('brownfield onboarding', () => {
       expect((await view(role)).text).not.toContain('Onboarding:')
   })
 
-  it('the first root design completes it: flag cleared, decision recorded, directive gone', async () => {
+  it('the first root design completes it: flag cleared, progress entry (no decision), directive gone', async () => {
     const { core, root, view } = await project(true)
     await core.docWrite(des, {
       block: root.id,
@@ -56,9 +56,13 @@ describe('brownfield onboarding', () => {
     })
     const p = await core.backend.read.getProject()
     expect(p?.onboarding).toBeUndefined()
-    const decisions = await core.backend.read.readLog(root.id, 'decisions')
-    expect(decisions.map((d) => d.entry.title)).toEqual(['Onboarded existing codebase'])
-    expect(decisions[0]?.entry.by).toMatchObject({ role: 'designer' })
+    // Hafiz never records a decision of its own
+    expect(await core.backend.read.readLog(root.id, 'decisions')).toHaveLength(0)
+    const progress = await core.backend.read.readLog(root.id, 'progress')
+    expect(progress.map((p) => [p.entry.kind, p.entry.text])).toEqual([
+      ['changed', expect.stringContaining('Onboarded existing codebase')],
+    ])
+    expect(progress[0]?.entry.by).toMatchObject({ role: 'designer' })
     expect((await view('manager')).text).not.toContain('Onboarding:')
     // later root designs record nothing more
     await core.docPatch(des, {
@@ -66,7 +70,8 @@ describe('brownfield onboarding', () => {
       type: 'design',
       sections: { overview: 'A Rails monolith with a React front end and a job queue.' },
     })
-    expect(await core.backend.read.readLog(root.id, 'decisions')).toHaveLength(1)
+    expect(await core.backend.read.readLog(root.id, 'progress')).toHaveLength(1)
+    expect(await core.backend.read.readLog(root.id, 'decisions')).toHaveLength(0)
   })
 
   it('greenfield: no flag, no directive, nothing recorded on the first root design', async () => {

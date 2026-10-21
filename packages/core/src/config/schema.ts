@@ -67,7 +67,7 @@ export const hafizFile = z.object({
     soft_zone: z.number().min(0).max(1).default(0.15),
   }),
   windows: z.record(z.string(), z.number().int().positive()).default({ default: 200000 }),
-  confirm_done: z.enum(['auto', 'ask']).default('auto'),
+  confirm_done: z.enum(['auto', 'ask']).default('ask'),
   llm: z
     .object({
       condenser: llmSettings,

@@ -158,7 +158,7 @@ describe('daemon', () => {
     expect((await m.sessionStatus()).session.focus.blocks).toEqual([result.id])
   })
 
-  it('queues nudges once and announces new proposals to reviewers', async () => {
+  it('never nudges a tracked project and announces new proposals to reviewers', async () => {
     const { d } = await boot()
     const u = await user(d)
     const m = await client(d)
@@ -166,12 +166,8 @@ describe('daemon', () => {
     const w = await client(d)
     await w.openSession({ id: 'w', host: 't', role: 'worker' })
 
-    // tree-less project: counters past the nudge threshold queue one line, once
-    await w.countersAdd({ tool_calls: 30 })
-    await w.countersAdd({ tool_calls: 30 })
-    const nudges = await w.noticesDrain()
-    expect(nudges.map((n) => n.event)).toEqual(['nudge'])
-    expect(nudges[0]?.text).toContain('30 tool calls')
+    // a tracked project never gets the nudge, whatever the counters and the tree size
+    await w.countersAdd({ tool_calls: 30, subagents_spawned: 1 })
     expect(await w.noticesDrain()).toEqual([])
 
     // a worker's done request queues a proposal notice for the manager

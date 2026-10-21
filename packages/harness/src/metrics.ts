@@ -66,7 +66,6 @@ function metricsFor(
     cap_rejections: counter(sessions, 'cap_rejections'),
     retries: counter(sessions, 'retries_after_reject'),
     compliance_notices: counter(sessions, 'compliance_notices'),
-    nudges: counter(sessions, 'nudges'),
     tool_calls: tools,
     hafiz_calls: protocol,
     protocol_ratio: ratio(protocol, tools),

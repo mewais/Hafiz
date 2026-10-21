@@ -231,8 +231,9 @@ export class SessionRegistry implements SessionSource {
 
   /**
    * Store a subagent's final message as a `report` progress entry on its focus block, capped
-   * at `compliance.yaml report_capture.cap_tokens`. Written as the child; if its role may not
-   * append progress, as the parent. Duplicate texts for the same child are ignored.
+   * at `compliance.yaml report_capture.cap_tokens`. A system action (`system.progress`), not an
+   * agent tool call: written as the child, whatever its role's allowlist. Duplicate texts for
+   * the same child are ignored.
    */
   async captureReport(childId: string, text: string): Promise<boolean> {
     const rc = this.opts.config.compliance.report_capture
@@ -247,21 +248,18 @@ export class SessionRegistry implements SessionSource {
       return false
     }
     k.reports.add(fp)
-    const args = {
-      command: 'progress.append',
-      args: { block, kind: 'report', text: capReport(text, rc.cap_tokens, this.tok) },
+    try {
+      await this.call(childId, 'system.progress', {
+        block,
+        kind: 'report',
+        text: capReport(text, rc.cap_tokens, this.tok),
+      })
+      return true
+    } catch (e) {
+      this.opts.log(`hafiz: report capture as ${childId} failed: ${String(e)}`)
+      k.reports.delete(fp)
+      return false
     }
-    for (const who of [childId, k.parentId]) {
-      if (!who || !this.known.get(who)?.token) continue
-      try {
-        await this.call(who, 'dispatch', args)
-        return true
-      } catch (e) {
-        this.opts.log(`hafiz: report capture as ${who} failed: ${String(e)}`)
-      }
-    }
-    k.reports.delete(fp)
-    return false
   }
 
   // ───────────────────────── SessionSource ─────────────────────────

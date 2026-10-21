@@ -12,7 +12,7 @@ tokenizer:
   soft_zone: 0.15                  # writes within cap*(1+soft_zone) succeed with a notice
 windows:                           # context window per model family; used for budgets
   default: 200000
-confirm_done: auto                 # auto | ask
+confirm_done: ask                  # ask | auto
 llm:
   # provider: none | kilo | openai-compatible | anthropic | fake (tests).  none = condensation
   # disabled (the host's own compaction stays on). kilo = run through Kilo itself (the Kilo plugin
@@ -34,8 +34,13 @@ onboarding:
   directive: >-
     Onboarding: this repo already had code when Hafiz started tracking it. Before planning new
     work, spawn the designer once with hafiz:block={root} to write the root design describing the
-    codebase as it is (overview, topology, interface, constraints). Import what you touch, stub
-    what you call: external dependencies get stubs only where current work needs them.
+    codebase as it is: stable architecture facts only (overview, topology, interface, true
+    constraints). Defects are facts, not rules: each goes in progress (kind found) on the block it
+    concerns, and only a full audit becomes a research child block. Existing choices worth keeping
+    may be decisions with rationale "existing design"; findings are never decisions until the user
+    chooses what to do. Task rules and process notes go in the report, not the store.
+    Import what you touch, stub what you call: external dependencies get stubs only where current
+    work needs them.
   roles: [manager]
 host:
   kilo:

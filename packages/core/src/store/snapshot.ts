@@ -106,7 +106,9 @@ export async function importStore(
         if (rec.log === 'threads') {
           const { seq: _seq, ...thread } = rec.entry as Thread & { seq?: number }
           await t.putThread(thread as Thread)
-        } else await t.appendLog(rec.block, rec.log, rec.entry as never)
+        }
+        // `log` and `entry` are a correlated pair TS cannot narrow through the union
+        else await t.appendLog(rec.block, rec.log, rec.entry as never)
       }
     },
   )

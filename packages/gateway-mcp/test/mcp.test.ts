@@ -137,6 +137,7 @@ const TOOLS: Record<string, string[]> = {
     'hafiz_block_create',
     'hafiz_edge_add',
     'hafiz_edge_remove',
+    'hafiz_progress_append',
     'hafiz_doc_write',
     'hafiz_doc_patch',
     'hafiz_decision_record',
@@ -199,6 +200,10 @@ describe('mcp tool lists', () => {
     const pdoc = (await p.mcp.listTools()).tools.find((t) => t.name === 'hafiz_doc_write')
     const pprops = (pdoc?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
     expect(pprops.type?.enum).toEqual(['plan'])
+    const ds = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'd' })
+    const prog = (await ds.mcp.listTools()).tools.find((t) => t.name === 'hafiz_progress_append')
+    const dprops = (prog?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
+    expect(dprops.kind?.enum).toEqual(['found', 'question'])
   })
 
   it('carries protocol hints in descriptions', async () => {
@@ -221,10 +226,17 @@ describe('mcp tool lists', () => {
 
 describe('mcp scenario', () => {
   it('manager, planner, designer and two workers drive a mini project', async () => {
-    const { d } = await boot()
-    const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr', HAFIZ_AGENT: 'boss' })
-    const planner = await agent(d, 'planner', { HAFIZ_SESSION_ID: 'pl' })
-    const designer = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'ds' })
+    const config = loadConfig()
+    config.hafiz.confirm_done = 'auto'
+    const { d } = await boot(config)
+    const mgr = await agent(
+      d,
+      'manager',
+      { HAFIZ_SESSION_ID: 'mgr', HAFIZ_AGENT: 'boss' },
+      { config },
+    )
+    const planner = await agent(d, 'planner', { HAFIZ_SESSION_ID: 'pl' }, { config })
+    const designer = await agent(d, 'designer', { HAFIZ_SESSION_ID: 'ds' }, { config })
 
     const root = (await mgr.call('hafiz_tree_list')).text.match(/\] (\S+) —/)?.[1] as string
     const a = (await planner.json('hafiz_block_create', { parent: root, title: 'Catalog' })).id
@@ -245,12 +257,17 @@ describe('mcp scenario', () => {
     await mgr.json('hafiz_block_set_status', { id: a, status: 'active' })
     await mgr.json('hafiz_block_set_status', { id: b, status: 'active' })
 
-    const w1 = await agent(d, 'worker', {
-      HAFIZ_SESSION_ID: 'w1',
-      HAFIZ_BLOCK: a,
-      HAFIZ_PARENT_SESSION: 'mgr',
-    })
-    const w2 = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w2', HAFIZ_BLOCK: b })
+    const w1 = await agent(
+      d,
+      'worker',
+      {
+        HAFIZ_SESSION_ID: 'w1',
+        HAFIZ_BLOCK: a,
+        HAFIZ_PARENT_SESSION: 'mgr',
+      },
+      { config },
+    )
+    const w2 = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w2', HAFIZ_BLOCK: b }, { config })
 
     // a worker cannot even see set_status, and the daemon refuses it anyway
     expect(await w1.tools()).not.toContain('hafiz_block_set_status')

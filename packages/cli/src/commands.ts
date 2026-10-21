@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
   type Actor,
+  type Core,
   type DocType,
   describeProposal,
   focusFromPolicy,
@@ -41,10 +42,10 @@ const USAGE = `usage: hafiz <command> [options]
                                              track the current repo (pointer in its git dir)
   migrate-pointer                            move a legacy .hafiz/project.yaml into the git dir
   tree [--json]                              print the block tree
-  show <block> [--zoom Z] [--json]           print a block at a zoom level (default FULL)
+  show [<block>] [--zoom Z] [--json]         print a block (default: the root) at a zoom level (default FULL)
   context --role R [--focus a,b] [--budget N] [--explain id]
                                              print the view an agent in role R would get
-  history <block> [type] [--json]            git history of a block or one doc
+  history [<block>] [type] [--json]          git history of a block (default: the root) or one doc
   revert <block> <type> <commit>             restore a doc from an earlier commit
   status [--json]                            project, epoch, sessions, cost, pending proposals
   checkpoint [--session ID]                  condense live sessions' conversation tails now
@@ -66,6 +67,37 @@ function docType(s: string | undefined): DocType {
   if (!DOC_TYPES.includes(s as DocType))
     throw new CliError(`doc type must be one of ${DOC_TYPES.join(', ')}`)
   return s as DocType
+}
+
+/**
+ * Resolve a user-typed block reference: exact id, then unique id prefix, then unique
+ * case-insensitive exact title. Ambiguity is an error listing the candidates.
+ */
+export async function resolveBlock(core: Core, ref: string | undefined): Promise<string> {
+  if (ref === undefined) {
+    const project = await core.backend.read.getProject()
+    if (!project) throw new CliError('no project found')
+    return project.rootBlockId
+  }
+  const blocks = await core.backend.read.listBlocks()
+  if (blocks.some((b) => b.id === ref)) return ref
+  const pick = (matches: typeof blocks, how: string): string | undefined => {
+    if (matches.length === 0) return undefined
+    if (matches.length === 1) return (matches[0] as (typeof blocks)[number]).id
+    const list = matches.map((b) => `  ${b.id} — ${b.title}`).join('\n')
+    throw new CliError(`'${ref}' is ambiguous (${how}); candidates:\n${list}`)
+  }
+  const found =
+    pick(
+      blocks.filter((b) => b.id.startsWith(ref)),
+      'id prefix',
+    ) ??
+    pick(
+      blocks.filter((b) => b.title.toLowerCase() === ref.toLowerCase()),
+      'title',
+    )
+  if (!found) throw new CliError(`no block matches '${ref}' (by id, id prefix or title)`)
+  return found
 }
 
 function need(v: string | undefined, what: string): string {
@@ -121,10 +153,11 @@ export async function tree(io: Io, opts: { json?: boolean | undefined }): Promis
 
 export async function show(
   io: Io,
-  block: string,
+  ref: string | undefined,
   opts: { zoom?: string | undefined; json?: boolean | undefined },
 ): Promise<void> {
   await withCore(io, async (core) => {
+    const block = await resolveBlock(core, ref)
     if (opts.json)
       return io.out(JSON.stringify(await core.blockDetail(userActor(), block), null, 2))
     io.out(await core.blockRead(userActor(), block, opts.zoom ?? 'FULL'))
@@ -172,12 +205,17 @@ export async function context(
 
 export async function history(
   io: Io,
-  block: string,
+  ref: string | undefined,
   type: string | undefined,
   opts: { json?: boolean | undefined },
 ): Promise<void> {
-  const entries = await withCore(io, (core) =>
-    core.backend.read.history(block, type ? docType(type) : undefined),
+  // `hafiz history design` means the root block's design history.
+  if (ref !== undefined && type === undefined && DOC_TYPES.includes(ref as DocType)) {
+    type = ref
+    ref = undefined
+  }
+  const entries = await withCore(io, async (core) =>
+    core.backend.read.history(await resolveBlock(core, ref), type ? docType(type) : undefined),
   )
   if (opts.json) return io.out(JSON.stringify(entries, null, 2))
   for (const e of entries) io.out(`${e.commit} ${e.ts} ${e.author} ${e.message}`)
@@ -185,9 +223,10 @@ export async function history(
 
 // ───────────────────────────── revert ─────────────────────────────
 
-export async function revert(io: Io, block: string, type: string, commit: string): Promise<void> {
+export async function revert(io: Io, ref: string, type: string, commit: string): Promise<void> {
   const t = docType(type)
   await withCore(io, async (core) => {
+    const block = await resolveBlock(core, ref)
     const old = await core.backend.read.docAt(block, t, commit)
     if (!old) throw new CliError(`no ${t} doc for ${block} at commit ${commit}`)
     const { result, notices } = await core.docWrite(userActor(), {
@@ -343,10 +382,11 @@ export async function focus(io: Io, opts: { role?: string | undefined }): Promis
 
 export async function explain(
   io: Io,
-  block: string,
+  ref: string,
   opts: { role?: string | undefined; session?: string | undefined },
 ): Promise<void> {
   await withCore(io, async (core) => {
+    const block = await resolveBlock(core, ref)
     if (opts.session) {
       const by: Actor = { ...userActor(), sessionId: opts.session }
       return io.out((await core.contextExplain(by, block)).text)
@@ -436,13 +476,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
         await tree(io, values)
         break
       case 'show':
-        await show(io, need(a, '<block>'), values)
+        await show(io, a, values)
         break
       case 'context':
         await context(io, values)
         break
       case 'history':
-        await history(io, need(a, '<block>'), b, values)
+        await history(io, a, b, values)
         break
       case 'revert':
         await revert(io, need(a, '<block>'), need(b, '<type>'), need(c, '<commit>'))

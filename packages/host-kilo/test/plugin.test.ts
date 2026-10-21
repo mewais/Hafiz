@@ -170,7 +170,7 @@ describe('plugin: nudge in an untracked repo', () => {
     const tripped = await transform()
     expect(tripped).toHaveLength(2)
     expect(tripped[1]).toMatch(
-      /^Hafiz: this session has 0 tool calls across 0 files and no block tree/,
+      /^Hafiz: this session has 0 tool calls across 0 files in a repo Hafiz is not tracking.*hafiz_track_project/,
     )
     // once: not again on the next request, nor after much more activity
     expect(await transform()).toEqual(['You are Kilo.'])
@@ -303,6 +303,46 @@ describe('plugin: sessions, report capture, shaping', () => {
     })
     expect((await read.getSession('ses_w'))?.endedAt).toBeDefined()
   })
+
+  it.each(['designer', 'planner', 'worker'])(
+    'captures a %s child’s report as a system action, whatever its role allowlist',
+    async (role) => {
+      const { d, hooks, block } = await live()
+      const id = `ses_${role}`
+      await hooks.event?.(ev('session.created', { sessionID: 'ses_m', info: { id: 'ses_m' } }))
+      await hooks['chat.message']?.(
+        { sessionID: 'ses_m' },
+        { message: { agent: 'manager' }, parts: text('Ship payments') },
+      )
+      await hooks.event?.(
+        ev('session.created', {
+          sessionID: id,
+          info: { id, parentID: 'ses_m', agent: role },
+        }),
+      )
+      await hooks['chat.message']?.(
+        { sessionID: id, agent: role },
+        { message: {}, parts: text(`hafiz:block=${block} Do the thing.`) },
+      )
+      await hooks['tool.execute.after']?.(
+        { tool: 'task', sessionID: 'ses_m', callID: 'c1', args: {} },
+        {
+          title: 't',
+          metadata: { sessionId: id },
+          output: `<task id="${id}" state="completed">\n<task_result>\nReport from ${role}.\n</task_result>\n</task>`,
+        },
+      )
+      const read = d.service.core.backend.read
+      const log = await read.readLog(block, 'progress')
+      expect(log).toHaveLength(1)
+      const entry = log[0]?.entry as { kind: string; text: string; by: { sessionId: string } }
+      expect(entry).toMatchObject({ kind: 'report', text: `Report from ${role}.` })
+      expect(entry.by.sessionId).toBe(id)
+      const audit = (await read.readAudit()).filter((a) => a.command === 'system.progress')
+      expect(audit).toHaveLength(1)
+      expect(audit[0]?.by).toMatchObject({ sessionId: id, role })
+    },
+  )
 
   it('falls back to the child transcript when a (background) task goes idle', async () => {
     const asked: string[] = []
