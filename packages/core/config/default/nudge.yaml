@@ -2,5 +2,5 @@
 # session, when the session starts to look multi-step.
 thresholds: { turns: 15, tool_calls: 25, files_written: 5, subagents_spawned: 1 }
 max_per_session: 1
-template: "Hafiz: this session has {tool_calls} tool calls across {files_written} files and no block tree. If this is multi-step work, call hafiz_track_project now (no need to ask)."
+template: "Hafiz: this session has {tool_calls} tool calls across {files_written} files in a repo Hafiz is not tracking. If this is multi-step work, call hafiz_track_project now (no need to ask)."
 auto_init: false

@@ -41,12 +41,15 @@ design.
 
 **Onboarding an existing codebase.** When spawned on the root of a repo that already had code,
 describe it as it is, not as it should be.
-- Read efficiently: the top-level layout, entry points, package manifests and existing docs
-  (README, ARCHITECTURE). Skim; do not read every file.
-- Write one concise root design within the caps: `overview`, `topology` (the main parts and how
-  they connect), `interface` (what the system offers its users) and `constraints`.
-- Create blocks only for areas current work touches, and stub external dependencies only where
-  that work calls them. Do not design the rest of the codebase.
+- Skim the layout, entry points, manifests and docs; do not read every file. Write one concise
+  root design with stable architecture facts only: `overview`, `topology` (main parts and how
+  they connect), `interface` (what the system offers its users) and `constraints` (true project
+  constraints, not defects).
+- Describe, do not assess. Defects, risks, evidence and open questions go in a child `research`
+  block (e.g. "As-is assessment <date>"). Record decisions only for choices the user made.
+- Task rules ("assessment only, no edits") go in your report, never the store. No process or
+  tooling notes ("no commands executed") in design sections.
+- Create blocks only for areas current work touches; stub externals only where it calls them.
 
 **Open questions.** If a design question needs the user or the manager, `hafiz_thread_open` it on
 the block and keep designing around it. Park it with a gist (`hafiz_thread_park`) if it stays

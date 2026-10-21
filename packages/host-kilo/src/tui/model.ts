@@ -199,6 +199,7 @@ export interface SidebarNotice {
   level: string
   event: string
   text: string
+  ts?: string | undefined
 }
 
 export interface SidebarData {
@@ -227,6 +228,17 @@ export function compact(n: number): string {
   if (n < 1000) return String(n)
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}k`
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+}
+
+const NOTICE_LINES = 3
+
+/** A notice as `! text` wrapped to the sidebar: at most 3 lines, the last ending in `…` if cut. */
+export function noticeWrap(text: string, width: number): string[] {
+  const lines = wrap(text, Math.max(8, width - 2)).map((l, i) => `${i ? '  ' : '! '}${l}`)
+  if (lines.length <= NOTICE_LINES) return lines
+  const kept = lines.slice(0, NOTICE_LINES)
+  kept[NOTICE_LINES - 1] = `${clip(kept[NOTICE_LINES - 1] as string, width - 1)}…`
+  return kept
 }
 
 /** The tree rows for the sidebar, capped: focus rows (and their paths) are kept first. */
@@ -310,7 +322,7 @@ export function sidebarLines(data: SidebarData, opts: SidebarOptions = {}): Line
   }
   if (data.pending) add(`review  ${data.pending} pending · hafiz review`, 'warning')
   for (const n of [...data.notices].reverse().slice(0, 3))
-    add(`! ${n.text}`, n.level === 'warn' ? 'warning' : 'muted')
+    for (const l of noticeWrap(n.text, width)) add(l, n.level === 'warn' ? 'warning' : 'muted')
   const c = data.counters ?? {}
   const emits = c.view_emits ?? 0
   const cond = (c.condense_tokens_in ?? 0) + (c.condense_tokens_out ?? 0)
@@ -482,6 +494,23 @@ export function decisionLines(
     for (const d of n.recentDecisions)
       add(`    ${d.ts.slice(0, 10)}  ${d.title} — ${d.decision}`, 'text')
   }
+  return out
+}
+
+// ─────────────────────────────── route: notices tab ───────────────────────────────
+
+/** Every notice of the session, untruncated, newest first, with its timestamp. */
+export function noticeLines(notices: readonly SidebarNotice[], width: number): Line[] {
+  if (!notices.length) return [{ text: 'no notices', tone: 'muted' }]
+  const out: Line[] = []
+  for (const n of [...notices].reverse()) {
+    const tone: Tone = n.level === 'warn' ? 'warning' : 'text'
+    const when = n.ts ? `${n.ts.slice(0, 16).replace('T', ' ')}  ` : ''
+    out.push({ text: clip(`${when}${n.event}`, width), tone: 'muted' })
+    for (const l of wrap(n.text, width - 2)) out.push({ text: `  ${l}`, tone })
+    out.push({ text: '', tone: 'text' })
+  }
+  out.pop()
   return out
 }
 

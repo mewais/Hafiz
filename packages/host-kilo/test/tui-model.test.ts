@@ -10,6 +10,8 @@ import {
   inactiveLines,
   indexTree,
   nextDetail,
+  noticeLines,
+  noticeWrap,
   reviewDetail,
   reviewList,
   routeTree,
@@ -147,8 +149,10 @@ describe('sidebar', () => {
       threads  1 open · 2…
        ? retry semantics …
       review  2 pending ·…
-      ! worker-2: 4 files…
-      ! proposal prop_1 p…
+      ! worker-2: 4 files,
+        no progress
+      ! proposal prop_1
+        pending review
       cost  3 re-emits · …"
     `)
   })
@@ -314,5 +318,47 @@ describe('route: review and decisions tabs', () => {
           2026-10-01  Cents — Cents decided.
           2026-10-01  Stripe — Stripe decided."
     `)
+  })
+})
+
+describe('notices', () => {
+  it('wraps in the sidebar to 3 lines then ellipsis', () => {
+    const long =
+      'Hafiz: this session has 3 tool calls across 0 files and a very long tail of words that goes on'
+    expect(noticeWrap(long, 24).join('\n')).toMatchInlineSnapshot(`
+      "! Hafiz: this session
+        has 3 tool calls
+        across 0 files and a…"
+    `)
+    expect(noticeWrap('short', 24)).toEqual(['! short'])
+  })
+
+  it('lists every notice in full, newest first, with timestamps', () => {
+    const ns = [
+      {
+        level: 'info',
+        event: 'proposal',
+        text: 'proposal prop_1 pending review',
+        ts: '2026-10-21T10:00:00Z',
+      },
+      {
+        level: 'warn',
+        event: 'compliance',
+        text: 'worker-2: 4 files, no progress and a long explanation',
+        ts: '2026-10-21T11:30:00Z',
+      },
+    ]
+    expect(`\n${text(noticeLines(ns, 30))}`).toMatchInlineSnapshot(`
+      "
+      2026-10-21 11:30  compliance
+        worker-2: 4 files, no
+        progress and a long
+        explanation
+
+      2026-10-21 10:00  proposal
+        proposal prop_1 pending
+        review"
+    `)
+    expect(text(noticeLines([], 30))).toBe('no notices')
   })
 })

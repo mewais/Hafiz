@@ -17,7 +17,6 @@ import {
   type LLMResult,
   type LLMSettings,
   type Notice,
-  nudgeText,
   type Session,
   ValidationError,
 } from '@hafiz/core'
@@ -197,7 +196,6 @@ export class DaemonService {
   private chain: Promise<unknown> = Promise.resolve()
   private readonly queues = new Map<string, QueuedNotice[]>()
   private readonly recent = new Map<string, QueuedNotice[]>()
-  private readonly nudged = new Map<string, number>()
   /** Command whose last cap rejection a session has not yet retried. */
   private readonly rejected = new Map<string, string>()
   /** Proposals already announced (everything pending at startup counts as old news). */
@@ -321,10 +319,7 @@ export class DaemonService {
       }
       case 'counters.add': {
         const s = await core.countersAdd(session.id, p.delta as Record<string, number>)
-        if (s) {
-          await this.maybeNudge(s)
-          await this.compliance(s.id, 'counters')
-        }
+        if (s) await this.compliance(s.id, 'counters')
         return s ? publicSession(s) : null
       }
       case 'condense':
@@ -570,14 +565,5 @@ export class DaemonService {
           'proposal',
         )
     }
-  }
-
-  /** Tree-less project and a session past a nudge threshold: one line, bounded per session. */
-  private async maybeNudge(s: Session): Promise<void> {
-    const text = nudgeText(this.core.config.nudge, s.counters, this.nudged.get(s.id) ?? 0)
-    if (!text || (await this.core.treeListRaw()).length > 1) return
-    this.nudged.set(s.id, (this.nudged.get(s.id) ?? 0) + 1)
-    await this.core.countersAdd(s.id, { nudges: 1 })
-    this.enqueue(s.id, { level: 'info', text }, 'nudge')
   }
 }

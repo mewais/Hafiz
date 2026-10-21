@@ -35,3 +35,4 @@ need it again.
 - Pass `expected_version` when you edit a document you read. On a conflict, re-read, merge,
   retry.
 - Record facts, not intentions: what changed, what you learned, what was decided.
+- Decisions record choices someone made, not findings. Put findings in progress or a research block.

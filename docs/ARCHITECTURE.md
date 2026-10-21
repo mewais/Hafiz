@@ -390,8 +390,9 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 - **Report capture**: the adapter hands every subagent's final message to Core, which stores it as
   a `progress` entry of kind `report` on the worker's block, verbatim up to a cap, with the rest
   spilled to the store. Mechanical, unconditional, no LLM.
-- **Nudge**: counter thresholds in a tree-less project → one-line notice, once per session. With
-  no Hafiz project at all the plugin takes a cheap path: it returns four tiny hooks, keeps the
+- **Nudge**: counter thresholds in an untracked repo (never in a tracked project, whatever its tree size) →
+  one-line notice naming `hafiz_track_project`, once per session. With
+  no Hafiz project the plugin takes a cheap path: it returns four tiny hooks, keeps the
   counters in memory and, when a threshold trips, appends the line to the session's next system
   prompt (`system.transform`), once. No daemon, config change or proxy is ever started.
 - **Drafters** (opt-in, default off): at `request_done` (digest draft from the progress log) and at

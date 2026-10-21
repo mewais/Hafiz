@@ -1,7 +1,7 @@
 // The Hafiz panel in Kilo's TUI (a separate module: `hafiz-kilo/tui`). Strictly
 // view-only: a sidebar section with the block tree, a status chip next to the prompt, toasts for
 // new review items and compliance notices, and a full-screen `/hafiz` route (Tree / Review /
-// Decisions). Nothing here writes; changes go through agents or the `hafiz` CLI.
+// Decisions / Notices). Nothing here writes; changes go through agents or the `hafiz` CLI.
 //
 // Kilo loads this file in its TUI thread (the server plugin runs in a worker), compiled from Solid
 // JSX with `generate: universal` against `@opentui/solid`; Kilo maps `solid-js` and `@opentui/*`
@@ -20,6 +20,7 @@ import {
   inactiveLines,
   type Line,
   nextDetail,
+  noticeLines,
   reviewDetail,
   reviewList,
   routeTree,
@@ -229,8 +230,8 @@ function TrackedChip(props: { api: TuiApi; store: TuiStore; sessionId: string })
   )
 }
 
-type Tab = 'tree' | 'review' | 'decisions'
-const TABS: Tab[] = ['tree', 'review', 'decisions']
+type Tab = 'tree' | 'review' | 'decisions' | 'notices'
+const TABS: Tab[] = ['tree', 'review', 'decisions', 'notices']
 
 function RouteView(props: {
   api: TuiApi
@@ -331,6 +332,7 @@ function RouteView(props: {
         cmd('tree', () => setTab('tree')),
         cmd('review', () => setTab('review')),
         cmd('decisions', () => setTab('decisions')),
+        cmd('notices', () => setTab('notices')),
         cmd('back', back),
       ],
       bindings: [
@@ -344,6 +346,7 @@ function RouteView(props: {
         { key: '1', cmd: 'hafiz.view.tree' },
         { key: '2', cmd: 'hafiz.view.review' },
         { key: '3', cmd: 'hafiz.view.decisions' },
+        { key: '4', cmd: 'hafiz.view.notices' },
         { key: 'escape,q', cmd: 'hafiz.view.back' },
       ],
     })
@@ -361,6 +364,7 @@ function RouteView(props: {
       return `↑↓ move · ⏎/→ open · ← close · z zoom (${props.zooms[zoom() % props.zooms.length] ?? 'FULL'}) · h ${history() ? 'render' : 'history'} · tab · esc back`
     if (tab() === 'review')
       return '↑↓ move · accept/reject with: hafiz review --accept <id> · tab · esc back'
+    if (tab() === 'notices') return 'newest first · read-only · tab · esc back'
     return 'read-only · change decisions through agents or the hafiz CLI · tab · esc back'
   }
 
@@ -420,6 +424,14 @@ function RouteView(props: {
             <Lines
               theme={theme}
               lines={decisionLines(snap()?.standing ?? [], snap()?.nodes ?? [], cols() - 6)}
+            />
+          </scrollbox>
+        </Show>
+        <Show when={tab() === 'notices'}>
+          <scrollbox flexGrow={1}>
+            <Lines
+              theme={theme}
+              lines={noticeLines(props.store.sessionNotices(sessionId()), cols() - 6)}
             />
           </scrollbox>
         </Show>

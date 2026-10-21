@@ -170,7 +170,7 @@ describe('plugin: nudge in an untracked repo', () => {
     const tripped = await transform()
     expect(tripped).toHaveLength(2)
     expect(tripped[1]).toMatch(
-      /^Hafiz: this session has 0 tool calls across 0 files and no block tree/,
+      /^Hafiz: this session has 0 tool calls across 0 files in a repo Hafiz is not tracking.*hafiz_track_project/,
     )
     // once: not again on the next request, nor after much more activity
     expect(await transform()).toEqual(['You are Kilo.'])

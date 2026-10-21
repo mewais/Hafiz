@@ -1,6 +1,6 @@
-// Nudge (§7): in a project with no block tree, counter thresholds produce one line, once per
-// session. Pure, so the daemon (tree-less project) and the plugin (no project at all, no daemon,
-// in-memory counters) share the rule.
+// Nudge (§7): in an untracked repo (no pointer), counter thresholds produce one line, once per
+// session, suggesting hafiz_track_project. A tracked project never gets it, whatever its tree size.
+// Pure; only the plugin's in-memory path (no project, no daemon) evaluates it.
 import type { Config } from '../config/schema.js'
 
 export type NudgeConfig = Config['nudge']

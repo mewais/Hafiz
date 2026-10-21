@@ -40,7 +40,6 @@ const ROWS: Array<[string, string, boolean?]> = [
   ['cap_rejections', 'cap rejections'],
   ['retries', 'retries after reject'],
   ['compliance_notices', 'compliance notices'],
-  ['nudges', 'nudges'],
   ['hafiz_calls', 'protocol tool calls'],
   ['tool_calls', 'all tool calls', true],
   ['protocol_ratio', 'protocol / all'],

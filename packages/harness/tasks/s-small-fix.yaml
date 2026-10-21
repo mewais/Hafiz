@@ -12,7 +12,6 @@ expect:
   hafiz_writes: "==0"
   hafiz_calls: "==0"
   blocks_created: "==0"
-  nudges: "==0"
   compliance_notices: "==0"
   files_written: ">=1"
   tool_calls: ">=2"
