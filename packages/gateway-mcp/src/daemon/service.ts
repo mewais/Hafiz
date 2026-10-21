@@ -6,8 +6,8 @@ import {
   authorize,
   type ContextOptions,
   type Core,
+  type DispatchSink,
   ForbiddenError,
-  focusFromPolicy,
   HafizError,
   isAllowed,
   isViewerSession,
@@ -276,7 +276,7 @@ export class DaemonService {
         return this.dispatch(by, p.command as string, p.args as Record<string, unknown>)
       }
       case 'context.for': {
-        await this.refreshIfStale(session)
+        await this.core.refreshStaleFocus(session)
         return core.contextFor(by, ctxOf(p))
       }
       case 'context.explain':
@@ -339,7 +339,7 @@ export class DaemonService {
         // The user (CLI) may name a session; agents may only ask for their own.
         const target = (p.session as string | undefined) ?? session.id
         if (target !== session.id) authorize(core.config, by.role, 'session.checkpoint')
-        const live = target === '*' ? await this.activeAgents() : []
+        const live = target === '*' ? await this.core.activeAgents() : []
         const ids =
           target === '*' ? live.filter((x) => x.id !== session.id).map((x) => x.id) : [target]
         const done: string[] = []
@@ -375,7 +375,11 @@ export class DaemonService {
     }
   }
 
-  /** One dispatched command, with the bookkeeping compliance and cost need around it. */
+  /**
+   * One dispatched command. Core runs the command's own hooks (focus refresh, compliance at
+   * request_done, drafters); the daemon adds what only it can: cap-rejection and retry counters,
+   * the caller's notice queue, and proposal announcements to other sessions.
+   */
   private async dispatch(by: Actor, command: string, args: Record<string, unknown>) {
     const core = this.core
     const sid = by.sessionId
@@ -383,11 +387,12 @@ export class DaemonService {
       this.rejected.delete(sid)
       await core.countersAdd(sid, { retries_after_reject: 1 })
     }
-    if (command === 'thread.park' && !(typeof args.gist === 'string' && args.gist.trim()))
-      await this.draftGistHint(by, args)
-    let out: Awaited<ReturnType<Core['dispatch']>>
+    const sink: DispatchSink = {
+      proposalsAdded: () => this.announceNewProposals(sid),
+      enqueue: (n, event) => this.enqueue(sid, n, event),
+    }
     try {
-      out = await core.dispatch(by, command, args)
+      return await core.dispatch(by, command, args, sink)
     } catch (e) {
       // a cap rejection: doc sections (cap_exceeded) and log entries (validation with a cap)
       if (
@@ -398,45 +403,6 @@ export class DaemonService {
         await core.countersAdd(sid, { cap_rejections: 1 })
       }
       throw e
-    }
-    if (command.startsWith('block.') || command.startsWith('proposal.'))
-      await this.afterStatusWrite(sid)
-    if (
-      command === 'block.request_done' ||
-      (command === 'block.set_status' && args.status === 'done')
-    ) {
-      const extra = await this.compliance(sid, 'request_done', false)
-      if (extra.length) out = { ...out, notices: [...out.notices, ...extra] }
-      await this.draftDigest(sid, args)
-    }
-    return out
-  }
-
-  /** Thin digest + drafters on: queue a better draft for review. Best effort. */
-  private async draftDigest(sid: string, args: Record<string, unknown>): Promise<void> {
-    const core = this.core
-    const digest = args.digest as Record<string, never> | undefined
-    const block = (args.id ?? args.block) as string | undefined
-    if (!core.draftersEnabled || !digest || !block || !core.digestIsThin(digest)) return
-    try {
-      if (await core.draftDigest(sid, block)) await this.announceNewProposals(sid)
-    } catch (e) {
-      this.enqueue(sid, { level: 'info', text: `digest drafter failed: ${String(e)}` }, 'drafter')
-    }
-  }
-
-  /** `thread.park` without a gist: hand the agent a draft to submit instead of a bare refusal. */
-  private async draftGistHint(by: Actor, args: Record<string, unknown>): Promise<void> {
-    const core = this.core
-    if (!core.draftersEnabled || typeof args.id !== 'string') return
-    try {
-      const d = await core.draftGist(by.sessionId, args.id)
-      if (d)
-        throw new ValidationError(
-          `a gist is required to park a thread: what was being discussed and where it stands. Draft (submit it if accurate, else fix it): ${JSON.stringify(d.gist)}`,
-        )
-    } catch (e) {
-      if (e instanceof ValidationError) throw e
     }
   }
 
@@ -489,39 +455,13 @@ export class DaemonService {
         `session '${a.id}' already exists with role '${prior.role}'; cannot re-attach as '${a.role}'`,
       )
     const s = await this.core.sessionOpen(compact(a))
-    if (prior) await this.refreshIfStale(s)
+    if (prior) await this.core.refreshStaleFocus(s)
     // The token is returned here and nowhere else.
     return (await this.core.backend.read.getSession(s.id)) ?? s
   }
 
   private isViewer(s: Session): boolean {
     return isViewerSession(this.core.config.roles, s)
-  }
-
-  /** Live sessions that are agents: the read-only viewer is left out of every agent-facing loop. */
-  private async activeAgents(): Promise<Session[]> {
-    return (await this.core.backend.read.listSessions({ active: true })).filter(
-      (s) => !this.isViewer(s),
-    )
-  }
-
-  // ───────────────────────── computed focus ─────────────────────────
-
-  /** Refresh one session's computed focus if the policy now yields a different set. */
-  private async refreshIfStale(s: Session): Promise<void> {
-    if (!s.focus.computed || s.endedAt) return
-    if (this.core.config.roles.roles[s.role]?.focus_policy !== 'all_active') return
-    const blocks = await this.core.backend.read.listBlocks()
-    const want = focusFromPolicy(blocks, 'all_active').blocks
-    if (want.length === s.focus.blocks.length && want.every((b, i) => b === s.focus.blocks[i]))
-      return
-    await this.core.refreshComputedFocus(s.id)
-  }
-
-  /** After a block/proposal write: keep every live all_active session's focus current. */
-  private async afterStatusWrite(caller: string): Promise<void> {
-    for (const s of await this.activeAgents()) await this.refreshIfStale(s)
-    await this.announceNewProposals(caller)
   }
 
   // ───────────────────────── notices ─────────────────────────
@@ -552,7 +492,7 @@ export class DaemonService {
     const fresh = (await r.listProposals({ status: 'pending' })).filter((p) => !seen.has(p.id))
     if (!fresh.length) return
     for (const p of fresh) seen.add(p.id)
-    for (const s of await this.activeAgents()) {
+    for (const s of await this.core.activeAgents()) {
       const patterns = this.core.config.roles.roles[s.role]?.tools ?? []
       if (s.id === caller || !isAllowed(patterns, 'proposal.list')) continue
       for (const p of fresh)

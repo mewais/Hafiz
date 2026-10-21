@@ -14,16 +14,19 @@ import type { Config } from '../config/schema.js'
 import { type Clock, systemClock } from '../domain/clock.js'
 import { ValidationError } from '../domain/errors.js'
 import { StatusMachine } from '../domain/status.js'
-import type { Actor, BlockId, DocType, SectionValue } from '../domain/types.js'
+import type { Actor, BlockId, DocType, SectionValue, Session } from '../domain/types.js'
 import { createProvider, NoneProvider } from '../llm/providers.js'
 import type { LLMProvider, LLMRelay } from '../llm/types.js'
 import { ComplianceEngine, type ComplianceWhen } from '../session/compliance.js'
 import { complianceRun } from '../session/compliance-run.js'
 import {
+  activeAgents,
   countersAdd,
   type FocusSetArgs,
   focusSet,
+  refreshAgentFocus,
   refreshComputedFocus,
+  refreshStaleFocus,
   type SessionOpenArgs,
   sessionEnd,
   sessionOpen,
@@ -53,7 +56,9 @@ import {
   edgeAdd,
   edgeRemove,
 } from './blocks.js'
+import { TOOL_SPECS, type ToolSpec } from './catalogue.js'
 import { type DocWriteArgs, docPatch, docWrite } from './docs.js'
+import { AFTER_HOOKS, BEFORE_HOOKS, type DispatchSink, type HookCall, NO_SINK } from './hooks.js'
 import {
   type DecisionRecordArgs,
   decisionRecord,
@@ -94,6 +99,7 @@ import type { CommandResult, CoreContext } from './tx.js'
 export { focusFromPolicy } from '../session/service.js'
 export type { ContextOptions, ContextView } from '../view/service.js'
 export type { NeedsConfirmation } from './blocks.js'
+export type { DispatchSink } from './hooks.js'
 export type { BlockDetail, DecisionBrief, TreeSummary, TreeSummaryNode } from './reads.js'
 export type { CommandResult, CoreContext } from './tx.js'
 
@@ -157,6 +163,10 @@ export class Core {
   /** What every module works over. */
   readonly ctx: CoreContext
   private readonly handlers: ReadonlyMap<string, Handler>
+  /** The catalogue entry of each dispatchable command: its before/after hooks. */
+  private readonly hooks: ReadonlyMap<string, ToolSpec> = new Map(
+    TOOL_SPECS.filter((t) => t.kind === 'dispatch').map((t) => [t.command, t]),
+  )
 
   constructor(deps: CoreDeps) {
     this.config = deps.config
@@ -284,6 +294,18 @@ export class Core {
   refreshComputedFocus(sessionId: string) {
     return refreshComputedFocus(this.ctx, sessionId)
   }
+  /** Refresh a session's computed focus only if its policy now yields a different set. */
+  refreshStaleFocus(s: Session) {
+    return refreshStaleFocus(this.ctx, s)
+  }
+  /** Keep every live agent's computed focus current. */
+  refreshAgentFocus() {
+    return refreshAgentFocus(this.ctx)
+  }
+  /** Live agent sessions (the read-only viewer left out). */
+  activeAgents() {
+    return activeAgents(this.ctx)
+  }
   complianceRun(sessionId: string, when: ComplianceWhen) {
     return complianceRun(this.ctx, this.compliance, sessionId, when)
   }
@@ -386,14 +408,27 @@ export class Core {
     return new Map(Object.entries(table) as Array<[string, Handler]>)
   }
 
-  /** Generic entry point used by gateways. */
+  /**
+   * Generic entry point used by gateways: the command with the hooks its catalogue entry
+   * declares around it. `sink` receives what the hooks have for the gateway (queued notices,
+   * proposals to announce).
+   */
   async dispatch(
     by: Actor,
     command: string,
     args: Record<string, unknown>,
+    sink: DispatchSink = NO_SINK,
   ): Promise<CommandResult<unknown>> {
     const h = this.handlers.get(command)
     if (!h) throw new ValidationError(`unknown command '${command}'`)
-    return h(by, args)
+    const spec = this.hooks.get(command)
+    const call: HookCall = { by, command, args, sink }
+    for (const name of spec?.before ?? []) await BEFORE_HOOKS[name](this, call)
+    let out = await h(by, args)
+    for (const name of spec?.after ?? []) {
+      const extra = await AFTER_HOOKS[name](this, call)
+      if (extra?.length) out = { ...out, notices: [...out.notices, ...extra] }
+    }
+    return out
   }
 }

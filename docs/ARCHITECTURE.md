@@ -193,6 +193,14 @@ Stale `expected_version` → `Conflict{current}`. All commands are journaled tra
 successful command produces an `AuditEntry` and (major writes) a git commit authored as
 `<role>/<agent-name> <session-id@hafiz>`; CLI writes are authored as the user.
 
+A catalogue entry (`commands/catalogue.ts`) may declare hooks Core runs around the command when it
+is dispatched (`commands/hooks.ts`): `before: [draft_gist]` on `thread.park`; `after:
+[refresh_focus, announce_proposals]` on every `block.*` and `proposal.*` write, plus
+`done_compliance, draft_digest` on `block.request_done` and `block.set_status` (to `done`).
+What a hook has for other sessions or the caller's notice queue goes to the gateway through a
+`DispatchSink`; the daemon keeps only gateway concerns (queues, cap-rejection counters,
+announcing proposals to reviewers).
+
 ### 5.2 Queries
 
 | Query | Semantics |
@@ -579,7 +587,7 @@ prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ```
 packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
-packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · blocks · docs · logs · project · proposals · reads · authz · catalogue)
+packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · hooks · blocks · docs · logs · project · proposals · reads · authz · catalogue)
                   session/ (service: sessions, counters, focus · compliance + compliance-run · cost · nudge · review)
                   condense/ (condenser · service: checkpoint, condense · drafter + drafting) · view/ (engine … · service: context.*, block.read)
                   domain/ · config/ · schema/ · store/ · llm/ · project/

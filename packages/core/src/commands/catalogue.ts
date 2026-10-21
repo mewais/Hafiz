@@ -16,7 +16,32 @@ export interface ToolSpec {
   description(cfg: Config): string
   shape(cfg: Config, qualifiers: readonly string[]): z.ZodRawShape
   readOnly?: boolean
+  /** Hooks Core runs before the command when it is dispatched (commands/hooks.ts). */
+  before?: readonly BeforeHook[]
+  /** Hooks Core runs after the command succeeds when it is dispatched, in order. */
+  after?: readonly AfterHook[]
 }
+
+/**
+ * Before-hooks (commands/hooks.ts):
+ * - `draft_gist`: parking a thread without a gist (drafters on) is refused with a drafted gist.
+ */
+export type BeforeHook = 'draft_gist'
+
+/**
+ * After-hooks (commands/hooks.ts):
+ * - `refresh_focus`: re-compute every live agent's computed focus that is now stale.
+ * - `announce_proposals`: tell the gateway new proposals may be pending review.
+ * - `done_compliance`: a request to finish a block (`request_done`, `set_status` → done) runs
+ *   the `request_done` compliance checks; their notices join the reply.
+ * - `draft_digest`: the same request with a thin digest queues a drafted one (drafters on).
+ */
+export type AfterHook = 'refresh_focus' | 'announce_proposals' | 'done_compliance' | 'draft_digest'
+
+/** After any write that can change a block's status or the review queue. */
+const TREE_WRITE: readonly AfterHook[] = ['refresh_focus', 'announce_proposals']
+/** After a request to finish a block. */
+const DONE_WRITE: readonly AfterHook[] = [...TREE_WRITE, 'done_compliance', 'draft_digest']
 
 export const toolName = (command: string) => `hafiz_${command.replace(/\./g, '_')}`
 
@@ -118,6 +143,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'proposal.accept',
     kind: 'dispatch',
+    after: TREE_WRITE,
     description: () =>
       'Accept a pending proposal. For a worker done-request this marks the block done.',
     shape: () => ({ id: id('Proposal id from proposal_list.') }),
@@ -125,12 +151,14 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'proposal.reject',
     kind: 'dispatch',
+    after: TREE_WRITE,
     description: () => 'Reject a pending proposal; the block keeps its current status.',
     shape: () => ({ id: id('Proposal id from proposal_list.') }),
   },
   {
     command: 'block.create',
     kind: 'dispatch',
+    after: TREE_WRITE,
     description: (cfg) =>
       `Create a block under a parent. It starts as 'planned'. Kinds: ${Object.keys(cfg.kinds.kinds).join(', ')} (default ${cfg.kinds.default_kind}). A block is a unit of work or a component with its own design and plan; do not create one per task step (steps live in the plan).`,
     shape: (cfg) => ({
@@ -148,6 +176,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'block.update',
     kind: 'dispatch',
+    after: TREE_WRITE,
     description: () => 'Rename a block, change its kind or sibling order.',
     shape: () => ({
       id: id('Block id.'),
@@ -160,6 +189,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'block.move',
     kind: 'dispatch',
+    after: TREE_WRITE,
     description: () => 'Re-parent a block (not under its own descendant).',
     shape: () => ({
       id: id('Block id.'),
@@ -170,6 +200,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'block.set_status',
     kind: 'dispatch',
+    after: DONE_WRITE,
     qualifier: { param: 'status', values: STATUSES },
     description: () =>
       "Move a block along planned -> active -> done (or blocked/dropped; done -> active reopens). Guards: 'done' needs a fresh digest (pass `digest`), no open threads, and closed children; 'blocked' needs blocked_on; 'dropped' and reopening need a reason (recorded as a decision). If the result says confirmation is needed, ask the user, then call again with confirmed: true. Never set confirmed without the user's yes.",
@@ -198,6 +229,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'block.request_done',
     kind: 'dispatch',
+    after: DONE_WRITE,
     description: () =>
       'Say your block is finished. A digest is REQUIRED: outcome (what now exists), interface_delta (what other blocks can rely on; "none" is allowed), pointers (files, commits, PRs). Open threads must be parked or resolved first. Depending on project policy the block becomes done at once or the request is queued for the manager. Call this instead of trying to set status yourself.',
     shape: () => ({
@@ -304,6 +336,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     command: 'thread.park',
     kind: 'dispatch',
+    before: ['draft_gist'],
     description: (cfg) =>
       `Park an open thread to set it aside. A gist is REQUIRED (<= ~${cfg.logs.thread.gist_cap} tokens): what was discussed and where it stands, so someone can resume without the history. Only the title and gist stay in context.`,
     shape: () => ({

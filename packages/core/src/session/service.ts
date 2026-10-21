@@ -9,6 +9,7 @@ import {
   runAs,
   runSystem,
 } from '../commands/tx.js'
+import { isViewerSession } from '../config/schema.js'
 import { NotFoundError, ValidationError } from '../domain/errors.js'
 import { token as mintToken } from '../domain/ids.js'
 import type { Actor, Block, BlockId, Focus, Session } from '../domain/types.js'
@@ -168,4 +169,26 @@ export async function refreshComputedFocus(
     return ns
   })
   return result
+}
+
+/** Live sessions that are agents: the read-only viewer is left out of every agent-facing loop. */
+export async function activeAgents(ctx: CoreContext): Promise<Session[]> {
+  return (await ctx.backend.read.listSessions({ active: true })).filter(
+    (s) => !isViewerSession(ctx.config.roles, s),
+  )
+}
+
+/** Refresh one session's computed focus if the policy now yields a different set. */
+export async function refreshStaleFocus(ctx: CoreContext, s: Session): Promise<void> {
+  if (!s.focus.computed || s.endedAt) return
+  if (ctx.config.roles.roles[s.role]?.focus_policy !== 'all_active') return
+  const blocks = await ctx.backend.read.listBlocks()
+  const want = focusFromPolicy(blocks, 'all_active').blocks
+  if (want.length === s.focus.blocks.length && want.every((b, i) => b === s.focus.blocks[i])) return
+  await refreshComputedFocus(ctx, s.id)
+}
+
+/** Keep every live agent's computed focus current (after a block or proposal write). */
+export async function refreshAgentFocus(ctx: CoreContext): Promise<void> {
+  for (const s of await activeAgents(ctx)) await refreshStaleFocus(ctx, s)
 }
