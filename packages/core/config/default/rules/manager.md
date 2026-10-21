@@ -14,7 +14,8 @@ below.
 
 **Onboarding.** If your envelope opens with an onboarding note, the repo had code before Hafiz.
 Do what it says once, before planning new work. The note goes away when the root design is
-written.
+written. Defects found are progress entries on the block they concern, never decisions; record
+a decision only when the user chooses what to do about one.
 
 **Delegating.**
 - Every task prompt you give a subagent must contain `hafiz:block=<block-id>` for the block it

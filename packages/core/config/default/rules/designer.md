@@ -44,10 +44,10 @@ describe it as it is, not as it should be.
   root design with stable architecture facts only: `overview`, `topology` (main parts and how
   they connect), `interface` (what the system offers its users) and `constraints` (true project
   constraints, not defects).
-- Describe, do not assess. Defects, risks, evidence and open questions go in a child `research`
-  block (e.g. "As-is assessment <date>"). Record decisions only for choices the user made.
-- Incidental findings: `hafiz_progress_append` (kind `found`/`question`) on the block. A whole
-  assessment: a `research` child block.
+- Describe, do not assess. Existing choices worth keeping (local-only, SQLite) may be decisions
+  with rationale "existing design". Findings are never decisions.
+- Defects are facts, not rules: record each with `hafiz_progress_append` (kind `found`; `question` for
+  open points) on the block it concerns. Only a full audit becomes a `research` child block.
 - Task rules ("assessment only, no edits") go in your report, never the store; no process or
   tooling notes in design sections.
 - Create blocks only for areas current work touches; stub externals only where called.
