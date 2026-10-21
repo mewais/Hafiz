@@ -41,6 +41,7 @@ const RECENT_CAP = 20
 const WRITE_METHODS = new Set([
   'dispatch',
   'counters.add',
+  'report.capture',
   'condense',
   'checkpoint.request',
   'llm.serve',
@@ -137,6 +138,8 @@ const schemas = {
   'session.self': z.object(token),
   'project.status': z.object(token),
   'session.end': z.object(token),
+  /** Plugin-only system action (not an agent tool, not role-gated): store a subagent's report. */
+  'report.capture': z.object({ ...token, block: z.string().min(1), text: z.string().min(1) }),
   'counters.add': z.object({ ...token, delta: z.record(z.string(), z.number()) }),
   'proposal.list': z.object({
     ...token,
@@ -311,6 +314,10 @@ export class DaemonService {
         await this.compliance(session.id, 'session_end')
         await core.sessionEnd(session.id)
         return { ended: true }
+      }
+      case 'report.capture': {
+        const r = await core.reportCapture(by, { block: p.block as string, text: p.text as string })
+        return r
       }
       case 'counters.add': {
         const s = await core.countersAdd(session.id, p.delta as Record<string, number>)

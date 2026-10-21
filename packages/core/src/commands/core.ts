@@ -814,9 +814,31 @@ export class Core {
     by: Actor,
     args: { block: BlockId; kind: ProgressKind; text: string; refs?: string[] },
   ): Promise<CommandResult<ProgressEntry>> {
+    return this.logProgress(by, 'progress.append', args, false)
+  }
+
+  /**
+   * Report capture: a host plugin stores a finished subagent's final message as a `report`
+   * entry on its block. A system action, not an agent tool call: no role allowlist applies, but
+   * the entry is attributed to the child session and audited as `report.capture`. Not a
+   * registered command, so `dispatch` (and every tool catalogue) cannot reach it.
+   */
+  async reportCapture(
+    by: Actor,
+    args: { block: BlockId; text: string },
+  ): Promise<CommandResult<ProgressEntry>> {
+    return this.logProgress(by, 'report.capture', { ...args, kind: 'report' }, true)
+  }
+
+  private async logProgress(
+    by: Actor,
+    command: string,
+    args: { block: BlockId; kind: ProgressKind; text: string; refs?: string[] },
+    skipAuthz: boolean,
+  ): Promise<CommandResult<ProgressEntry>> {
     return this.run(
       by,
-      'progress.append',
+      command,
       undefined,
       !this.isMinor('progress'),
       args.block,
@@ -845,6 +867,7 @@ export class Core {
         await t.appendLog(b.id, 'progress', e)
         return e
       },
+      { skipAuthz },
     )
   }
 

@@ -182,6 +182,30 @@ describe('native tools resolve the calling Kilo session', () => {
     ).rejects.toThrow(/not available to the worker role/)
   })
 
+  it('a designer or planner still cannot call hafiz_progress_append as a tool', async () => {
+    const { hooks, blocks } = await live()
+    await session(hooks, 'ses_m', 'manager', 'go')
+    for (const role of ['designer', 'planner']) {
+      await session(hooks, `ses_${role}`, role, `hafiz:block=${blocks[0]}`, 'ses_m')
+      await expect(
+        tool(hooks, 'hafiz_progress_append').execute(
+          { block: blocks[0], kind: 'found', text: 'x' },
+          ctx(`ses_${role}`, role),
+        ),
+      ).rejects.toThrow(/not available to the/)
+    }
+  })
+
+  it('report.capture is in no role’s tool list and is not a dispatchable command', async () => {
+    const { hooks } = await live()
+    const config = loadConfig()
+    for (const role of agentRoles(config)) {
+      expect(toolNamesForRole(config, role).join(' ')).not.toMatch(/report/)
+      expect(toolsForRole(config, role).map((t) => t.spec.command)).not.toContain('report.capture')
+    }
+    expect(Object.keys(hooks.tool ?? {}).join(' ')).not.toMatch(/report_capture/)
+  })
+
   it('daemon errors come back as tool errors the agent can act on', async () => {
     const { hooks } = await live()
     await session(hooks, 'ses_m', 'manager', 'go')
