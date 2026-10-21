@@ -44,7 +44,7 @@ workdir to inspect the repo and store). Exit code 1 means a turn failed or an ex
 repeats, then the expectation table), `report.json` (what `compare` reads), and per run
 `<task>-<n>/result.json` plus `turn-N.out.jsonl` / `turn-N.err.log` (Kilo's raw output).
 Metrics: decisions (standing), progress per worker, step events, threads opened/parked,
-request_done (+ with digest), reports captured, cap rejections and retries, compliance notices,
+done requests (+ with digest), reports captured, cap rejections and retries, compliance notices,
 proposals by source, protocol / all tool calls, view re-emits, tokens per view, cache read ratio,
 condensations. Expectations use `>=1`, `==3`, `1..3` against totals or `worker_…` per role.
 

@@ -173,6 +173,10 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     expect(hafizTools(first as RecordedRequest).sort()).toEqual(
       toolNamesForRole(config, 'manager').sort(),
     )
+    // the role agent's prompt is the rules (installed once, after the separator), no copy from the shaper
+    const sys = systemOf(first as RecordedRequest)
+    expect(sys.split('# Hafiz rules — manager')).toHaveLength(2)
+    expect(sys).toContain('<!-- Hafiz manager rules, appended by the Hafiz plugin')
     const read = daemon.service.core.backend.read
     const audit = (await read.readAudit()).filter((a) => a.command === 'decision.record')
     expect(audit).toHaveLength(1)
@@ -225,7 +229,8 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     const build = reqs.find((q) => roleOf(q) === 'manager')
     const worker = reqs.find((q) => roleOf(q) === 'worker')
     expect(build && hafizTools(build).sort()).toEqual(toolNamesForRole(config, 'manager').sort())
-    expect(systemOf(build as RecordedRequest)).toContain('# Hafiz rules — manager')
+    // build keeps Kilo's own prompt; the shaper adds the manager rules once
+    expect(systemOf(build as RecordedRequest).split('# Hafiz rules — manager')).toHaveLength(2)
     expect(worker && hafizTools(worker).sort()).toEqual(toolNamesForRole(config, 'worker').sort())
     const read = daemon.service.core.backend.read
     const log = await read.readLog(block, 'progress')

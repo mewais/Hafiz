@@ -1,17 +1,22 @@
 # A role is data: view, focus policy, command allowlist, rules file installed as the agent prompt
 # (after the role's file, rules/common.md is appended for every agent role).
+# The allowlist names Core commands (`command`, `command:qualifier`, `ns.*`); Core enforces it, and
+# the agent tools (commands/tools.ts) are narrowed to it: `thread.open` + `thread.park` leave
+# hafiz_thread with those two actions, `doc.patch:plan` leaves hafiz_doc with type plan and no
+# replace, `block.request_done` without `block.set_status:done` makes done a request. Edges are
+# derived from designs, so no agent role holds `edge.*` (the CLI user does).
 roles:
   manager:
     view: default
     focus_policy: all_active
-    tools: [context.*, block.*, tree.list, edge.*, doc.patch:plan, decision.record,
-            thread.*, progress.append, focus.set, proposal.*, session.status]
+    tools: [context.*, block.*, tree.list, doc.patch:plan, decision.record, thread.*,
+            progress.append, focus.set, proposal.*, session.status]
     rules: rules/manager.md
   designer:
     view: designer
     focus_policy: all_active
     tools: [context.*, block.read, tree.list, block.create, doc.write:design, doc.patch:design,
-            edge.*, decision.record, thread.*, progress.append:found, progress.append:question]
+            decision.record, thread.*, progress.append:found, progress.append:question]
     # block.create: external stubs, sub-components; progress: findings and questions only
     rules: rules/designer.md
   planner:
@@ -22,8 +27,9 @@ roles:
   worker:
     view: worker
     focus_policy: spawned_block
+    # the digest goes with the done request (hafiz_block_set_status), not through hafiz_doc
     tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
-            doc.write:digest, block.request_done]
+            block.request_done]
     rules: rules/worker.md
   user:
     view: default

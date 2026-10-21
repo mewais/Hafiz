@@ -10,17 +10,17 @@ checks:
     when: session_end
     cond: "files_written > 0 && progress == 0"
     action: [notice, proposal]
-    message: "This session wrote {files_written} files and recorded no progress. Record what was done (progress.append)."
+    message: "This session wrote {files_written} files and recorded no progress. Record what was done (hafiz_progress_append)."
   - id: silent_active_block
     when: counters
     cond: "turns_since_progress >= 25"
     action: [notice]
-    message: "{turns_since_progress} turns since the last progress entry on your focus block. Record what you have found or done so far (progress.append)."
+    message: "{turns_since_progress} turns since the last progress entry on your focus block. Record what you have found or done so far (hafiz_progress_append)."
   - id: open_threads_at_exit
     when: session_end
     cond: "threads_opened_open > 0"
     action: [notice, proposal]
-    message: "{threads_opened_open} thread(s) this session opened are still open. Park each with a gist (thread.park) or resolve it."
+    message: "{threads_opened_open} thread(s) this session opened are still open. Park each with a gist (hafiz_thread park) or resolve it."
   - id: done_with_empty_log
     when: request_done
     cond: "progress == 0"
@@ -35,7 +35,7 @@ checks:
     when: counters
     cond: "user_turns_on_focus_without_thread >= 12"
     action: [notice]
-    message: "{user_turns_on_focus_without_thread} user turns on the focus block without a thread. If this is a discussion worth keeping, open one (thread.open)."
+    message: "{user_turns_on_focus_without_thread} user turns on the focus block without a thread. If this is a discussion worth keeping, open one (hafiz_thread open)."
 report_capture:
   enabled: true
   cap_tokens: 1500            # verbatim up to this; remainder spilled to the store

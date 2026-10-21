@@ -284,7 +284,7 @@ function managedHooks(
   const out: Hooks = {
     async config(cfg) {
       const proxyBase = proxy ? await proxy.start() : undefined
-      installConfig(cfg, {
+      const prompted = installConfig(cfg, {
         config,
         worktree: project.worktree,
         storeDir: project.storeDir,
@@ -293,6 +293,7 @@ function managedHooks(
         env: passEnv(env),
         ...(proxy && proxyBase ? { wrap: (id: string, url: string) => proxy.wrap(id, url) } : {}),
       })
+      sessions.setPromptedAgents(prompted)
       if (kiloLlm) {
         const llm = config.hafiz.llm
         installCondenserAgent(

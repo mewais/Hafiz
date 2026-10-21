@@ -1,7 +1,7 @@
 // Metric collection (M6): everything is read back from the Hafiz store (logs, threads, proposals,
 // audit) and the session counters the cost instrumentation and compliance engine already keep.
 // Only agent sessions count; the seed and `hafiz` CLI calls run as role `user` and are ignored.
-import { costTotal, type ReadOps, type Session, TOOL_SPECS } from '@hafiz/core'
+import { COMMAND_SPECS, costTotal, type ReadOps, type Session } from '@hafiz/core'
 
 export type MetricValue = number | null
 export type MetricSet = Record<string, MetricValue>
@@ -14,8 +14,8 @@ export interface RunMetrics {
 }
 
 const REPORT = 'report'
-/** Commands that change the store (the catalogue's dispatch tools); audit also records reads. */
-const WRITES = new Set(TOOL_SPECS.filter((t) => t.kind === 'dispatch').map((t) => t.command))
+/** Commands that change the store (the catalogue's dispatch commands); audit also records reads. */
+const WRITES = new Set(COMMAND_SPECS.filter((t) => t.kind === 'dispatch').map((t) => t.command))
 const sum = (xs: Iterable<number>) => {
   let n = 0
   for (const x of xs) n += x
@@ -44,7 +44,8 @@ function metricsFor(
   const progress = mine(a.progress)
   const audit = mine(a.audit)
   const cmd = (c: string) => audit.filter((e) => e.command === c || e.command.startsWith(`${c}:`))
-  // `confirm_done: auto` turns request_done into set_status:done; `ask` queues a request.
+  // A request to finish a block: the worker's done is `request_done` (`confirm_done: auto` turns
+  // it into set_status:done, `ask` queues it); the manager's is set_status:done.
   const done = [...cmd('block.request_done'), ...cmd('block.set_status:done')]
   const tools = counter(sessions, 'tool_calls')
   const protocol = counter(sessions, 'tool_calls_hafiz')
@@ -59,8 +60,8 @@ function metricsFor(
     threads_opened: mine(a.threads).length,
     threads_parked: cmd('thread.park').length,
     threads_open_at_end: mine(a.threads).filter((t) => t.status === 'open').length,
-    request_done: done.length,
-    request_done_digest: done.filter((e) => a.digested.has(e.target)).length,
+    done_requests: done.length,
+    done_with_digest: done.filter((e) => a.digested.has(e.target)).length,
     blocks_created: cmd('block.create').length,
     docs_written: audit.filter((e) => /^doc\.(write|patch)/.test(e.command)).length,
     cap_rejections: counter(sessions, 'cap_rejections'),

@@ -14,7 +14,7 @@ expect:
   blocks_created: ">=4"
   manager_decisions: ">=1"
   worker_sessions: "==4"
-  worker_request_done: "==4"
+  worker_done_requests: "==4"
   worker_progress_min: ">=2"
   worker_reports: ">=4"
   subagents_spawned: "==4"
@@ -98,9 +98,10 @@ mock:
             - tool: hafiz_progress_append
               args: { block: "{block}", kind: done, text: "Implemented the part in its own module." }
         - calls:
-            - tool: hafiz_block_request_done
+            - tool: hafiz_block_set_status
               args:
                 id: "{block}"
+                status: done
                 digest:
                   outcome: The part is implemented in a new module under src/.
                   interface_delta: ["none"]

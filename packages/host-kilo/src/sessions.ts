@@ -73,15 +73,23 @@ export class SessionRegistry implements SessionSource {
   private serving: DaemonClient | undefined
   private readonly tok: Tokenizer
   private readonly roles: Set<string>
+  /** Agents whose prompt already ends with Hafiz's rules (install.ts); default: the role agents. */
+  private prompted: Set<string>
 
   constructor(private readonly opts: RegistryOptions) {
     this.tok = opts.tokenizer ?? estimatorTokenizer
     this.roles = new Set(agentRoleNames(opts.config))
+    this.prompted = new Set(this.roles)
   }
 
-  /** True when the Kilo agent is one of Hafiz's own role agents (its prompt is the rules). */
+  /** True when the Kilo agent is one of Hafiz's own role agents. */
   isRoleAgent(agent: string | undefined): boolean {
     return !!agent && this.roles.has(agent)
+  }
+
+  /** What `installConfig` reported: these agents' prompts carry the rules already. */
+  setPromptedAgents(agents: readonly string[]): void {
+    this.prompted = new Set([...this.roles, ...agents])
   }
 
   /**
@@ -270,10 +278,12 @@ export class SessionRegistry implements SessionSource {
       'context.for',
       model ? { model } : {},
     )
-    // Agents managed under a default role run Kilo's own prompt; give them the role's rules
-    // ahead of the envelope (constant text, so the cached prefix stays stable).
+    // An agent managed under a default role whose prompt does not carry the rules (Kilo's own
+    // prompt, e.g. `build` as shipped) gets them ahead of the envelope (constant text, so the
+    // cached prefix stays stable).
     const k = this.known.get(id)
-    const rules = k?.role && !this.isRoleAgent(k.agent) ? rulesFor(this.opts.config, k.role) : ''
+    const own = !!k?.agent && this.prompted.has(k.agent)
+    const rules = k?.role && !own ? rulesFor(this.opts.config, k.role) : ''
     return { envelope: rules ? `${rules}\n\n${v.text}` : v.text, floor: v.floorText }
   }
 

@@ -53,8 +53,8 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     expect(r.metrics.total).toMatchObject({
       blocks_created: 5,
       decisions: 1,
-      request_done: 4,
-      request_done_digest: 4,
+      done_requests: 4,
+      done_with_digest: 4,
       reports: 4,
       cap_rejections: 0,
     })
@@ -82,7 +82,7 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
       threads_opened: 1,
       threads_parked: 1,
       threads_open_at_end: 0,
-      request_done: 3,
+      done_requests: 3,
     })
     expect(r.metrics.roles.designer).toMatchObject({ docs_written: 1 })
     expect(r.metrics.roles.planner).toMatchObject({ docs_written: 2 })

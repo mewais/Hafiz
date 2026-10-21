@@ -1,6 +1,7 @@
 export * from './commands/authz.js'
 export * from './commands/catalogue.js'
 export * from './commands/core.js'
+export * from './commands/tools.js'
 export * from './condense/condenser.js'
 export * from './condense/drafter.js'
 export * from './config/load.js'

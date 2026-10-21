@@ -36,7 +36,7 @@ export const builtinGuards: Record<string, Guard> = {
     if (!c.digest && !c.args.digestProvided)
       return fail(
         'digest_present_and_fresh',
-        'a digest is required to mark a block done: pass `digest` or write it first (doc.write digest).',
+        'a digest is required to mark a block done: pass `digest` with the status.',
       )
     if (c.block.digestStale && !c.args.digestProvided)
       return fail(

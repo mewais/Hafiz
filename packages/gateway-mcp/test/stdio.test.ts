@@ -24,9 +24,14 @@ it('hafiz mcp serves a role over stdio and starts the daemon', async () => {
   const client = new Client({ name: 't', version: '0' })
   try {
     await client.connect(transport)
-    const tools = (await client.listTools()).tools.map((t) => t.name)
-    expect(tools).toContain('hafiz_block_request_done')
-    expect(tools).not.toContain('hafiz_block_set_status')
+    const listed = (await client.listTools()).tools
+    const tools = listed.map((t) => t.name)
+    expect(tools).toContain('hafiz_context_for')
+    expect(tools).not.toContain('hafiz_review')
+    // a worker's status tool offers only done, which is a request
+    const status = listed.find((t) => t.name === 'hafiz_block_set_status')
+    const props = (status?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>
+    expect(props.status?.enum).toEqual(['done'])
     const r = (await client.callTool({ name: 'hafiz_context_for', arguments: {} })) as {
       content: Array<{ text: string }>
     }

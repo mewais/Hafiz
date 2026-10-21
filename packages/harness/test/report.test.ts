@@ -10,12 +10,12 @@ const metrics = (over: Partial<Record<string, number | null>> = {}): RunMetrics 
   total: {
     sessions: 2,
     progress: 2,
-    request_done: 1,
+    done_requests: 1,
     tool_calls: 10,
     protocol_ratio: 0.5,
     ...over,
   },
-  roles: { worker: { sessions: 1, progress: 2, request_done: 1, ...over } },
+  roles: { worker: { sessions: 1, progress: 2, done_requests: 1, ...over } },
 })
 const result = (m: RunMetrics, repeat = 1): RunResult => ({
   task: 't',
@@ -27,7 +27,7 @@ const result = (m: RunMetrics, repeat = 1): RunResult => ({
   turns: [{ agent: 'build', code: 0, ms: 5 }],
   wallMs: 5000,
   metrics: m,
-  expectations: scoreExpectations({ progress: '>=2', request_done: '==1' }, m),
+  expectations: scoreExpectations({ progress: '>=2', done_requests: '==1' }, m),
 })
 
 describe('task files', () => {

@@ -1,7 +1,8 @@
 // Executes one catalogue tool against the daemon and renders the text the agent sees. Shared by
-// the MCP gateway and the Kilo plugin's native tools, so both answer the same way. The caller
-// supplies `call`, which carries the session's token (a DaemonClient holding it, or an explicit
-// per-session token on a shared connection).
+// the MCP gateway and the Kilo plugin's native tools, so both answer the same way. The tool's
+// catalogue entry routes the call to one Core command or query (`routeTool`); this file only
+// runs it. The caller supplies `call`, which carries the session's token (a DaemonClient holding
+// it, or an explicit per-session token on a shared connection).
 import type {
   CommandResult,
   ContextView,
@@ -10,7 +11,7 @@ import type {
   Proposal,
   RoleTool,
 } from '@hafiz/core'
-import { suggestedCommand, toCoreArgs } from '@hafiz/core'
+import { HafizError, routeTool, suggestedCommand } from '@hafiz/core'
 import { RpcError } from '../daemon/rpc.js'
 import type { QueuedNotice } from '../daemon/service.js'
 
@@ -47,8 +48,7 @@ async function body(
   args: Record<string, unknown>,
   opts: RunToolOptions,
 ): Promise<string> {
-  const { command } = rt.spec
-  const a = toCoreArgs(args)
+  const { command, args: a } = routeTool(rt, args)
   switch (command) {
     case 'context.for': {
       const v = await call<ContextView>('context.for', a)
@@ -62,7 +62,7 @@ async function body(
     case 'context.delta':
       return JSON.stringify(await call<DeltaResult>('context.delta'))
     case 'block.read':
-      return call<string>('block.read', a.zoom ? { id: a.id, zoom: a.zoom } : { id: a.id })
+      return call<string>('block.read', a)
     case 'tree.list':
       return (
         await call<
@@ -113,6 +113,8 @@ export async function runTool(
   } catch (e) {
     if (e instanceof RpcError)
       return { text: `${e.message}${e.data ? `\n${JSON.stringify(e.data)}` : ''}`, isError: true }
+    // the call did not fit the tool (routeTool): nothing reached the daemon
+    if (e instanceof HafizError) return { text: e.message, isError: true }
     throw e
   }
   await call('counters.add', { delta: { tool_calls_hafiz: 1 } }).catch(() => undefined)

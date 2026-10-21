@@ -96,8 +96,8 @@ describe('collectMetrics', () => {
       threads_opened: 2,
       threads_parked: 1,
       threads_open_at_end: 1,
-      request_done: 1,
-      request_done_digest: 1,
+      done_requests: 1,
+      done_with_digest: 1,
       blocks_created: 2,
       tool_calls: 20,
       hafiz_calls: 10,
@@ -116,13 +116,13 @@ describe('collectMetrics', () => {
     expect(metrics.roles.manager).toMatchObject({
       decisions: 2,
       threads_parked: 1,
-      request_done: 0,
+      done_requests: 0,
     })
     expect(metrics.roles.worker).toMatchObject({
       sessions: 2,
       progress: 3,
       reports: 1,
-      request_done: 1,
+      done_requests: 1,
       decisions: 0,
       progress_min: 1,
       progress_avg: 1.5,
@@ -156,7 +156,7 @@ describe('expectations', () => {
 
   it('looks metrics up in the total or by role (singular or plural)', () => {
     expect(lookup(metrics, 'decisions_standing')).toBe(1)
-    expect(lookup(metrics, 'workers_request_done')).toBe(1)
+    expect(lookup(metrics, 'workers_done_requests')).toBe(1)
     expect(lookup(metrics, 'worker_progress_min')).toBe(1)
     expect(lookup(metrics, 'manager_threads_parked')).toBe(1)
     expect(lookup(metrics, 'designer_sessions')).toBeUndefined()
@@ -165,12 +165,12 @@ describe('expectations', () => {
 
   it('scores expected against actual; unknown metrics fail', () => {
     const r = scoreExpectations(
-      { decisions_standing: '>=1', workers_request_done: '==3', nope: '==0', cap_rejections: 1 },
+      { decisions_standing: '>=1', workers_done_requests: '==3', nope: '==0', cap_rejections: 1 },
       metrics,
     )
     expect(r.map((x) => [x.metric, x.got, x.pass])).toEqual([
       ['decisions_standing', 1, true],
-      ['workers_request_done', 1, false],
+      ['workers_done_requests', 1, false],
       ['nope', undefined, false],
       ['cap_rejections', 1, true],
     ])

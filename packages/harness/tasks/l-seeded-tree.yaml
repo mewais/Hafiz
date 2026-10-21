@@ -50,7 +50,7 @@ expect:
   worker_sessions: "==3"
   designer_docs_written: ">=1"
   planner_docs_written: ">=2"
-  worker_request_done: "==3"
+  worker_done_requests: "==3"
   worker_progress_min: ">=2"
   decisions_standing: ">=1"
   threads_opened: "==1"
@@ -93,22 +93,23 @@ mock:
         - text: Design refined, plans written, and the three leaf blocks implemented.
       designer:
         - calls:
-            - tool: hafiz_doc_patch
+            - tool: hafiz_doc
               args:
                 block: "{b.checkout}"
                 type: design
+                expected_version: 1
                 sections: { constraints: ["Money is integer cents.", "No card data is stored."] }
         - text: Checkout design updated.
       planner:
         - calls:
-            - tool: hafiz_doc_write
+            - tool: hafiz_doc
               args:
                 block: "{b.pricing}"
                 type: plan
                 sections:
                   steps: [{ id: s1, title: Define rule shape }, { id: s2, title: Apply rules }]
                   acceptance: [tests pass]
-            - tool: hafiz_doc_write
+            - tool: hafiz_doc
               args:
                 block: "{b.orders}"
                 type: plan
@@ -134,9 +135,10 @@ mock:
             - tool: hafiz_progress_append
               args: { block: "{block}", kind: done, text: "Implemented the block in its own module." }
         - calls:
-            - tool: hafiz_block_request_done
+            - tool: hafiz_block_set_status
               args:
                 id: "{block}"
+                status: done
                 digest:
                   outcome: Implemented in a new module under src/.
                   interface_delta: ["none"]
@@ -157,15 +159,17 @@ mock:
     roles:
       manager:
         - calls:
-            - tool: hafiz_thread_open
+            - tool: hafiz_thread
               as: pg
               args:
+                action: open
                 block: "{b.orders}"
                 title: Move order storage to Postgres?
                 text: User wonders about Postgres for order storage some day.
         - calls:
-            - tool: hafiz_thread_park
+            - tool: hafiz_thread
               args:
+                action: park
                 id: "{b.pg}"
                 gist: Considered moving order storage to Postgres; deferred, nothing to do now.
         - text: Parked the Postgres discussion on Orders.

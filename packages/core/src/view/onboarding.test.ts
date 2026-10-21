@@ -41,10 +41,12 @@ describe('brownfield onboarding', () => {
       .join('legacy')
       .replace(/hash="[0-9a-f]{12}"/, 'hash="<hash>"')
     expectGolden('onboarding-manager-pending.md', golden)
-    expect(v.text).toContain(`spawn the designer once with hafiz:block=${root.id}`)
-    expect(v.text).toContain('Import what you touch, stub what you call')
+    // one line pointing at the rules, which hold what to do
+    expect(v.text).toContain(
+      "Onboarding pending: this repo had code before Hafiz started tracking it; follow your rules' Onboarding",
+    )
     for (const role of ['designer', 'worker', 'planner'])
-      expect((await view(role)).text).not.toContain('Onboarding:')
+      expect((await view(role)).text).not.toContain('Onboarding pending')
   })
 
   it('the first root design completes it: flag cleared, progress entry (no decision), directive gone', async () => {
@@ -63,7 +65,7 @@ describe('brownfield onboarding', () => {
       ['changed', expect.stringContaining('Onboarded existing codebase')],
     ])
     expect(progress[0]?.entry.by).toMatchObject({ role: 'designer' })
-    expect((await view('manager')).text).not.toContain('Onboarding:')
+    expect((await view('manager')).text).not.toContain('Onboarding pending')
     // later root designs record nothing more
     await core.docPatch(des, {
       block: root.id,
@@ -77,7 +79,7 @@ describe('brownfield onboarding', () => {
   it('greenfield: no flag, no directive, nothing recorded on the first root design', async () => {
     const { core, root, view } = await project(false)
     expect((await core.backend.read.getProject())?.onboarding).toBeUndefined()
-    expect((await view('manager')).text).not.toContain('Onboarding:')
+    expect((await view('manager')).text).not.toContain('Onboarding pending')
     await core.docWrite(des, {
       block: root.id,
       type: 'design',
