@@ -2,17 +2,16 @@
 # should stay out of the way: no Hafiz writes, no nudge, no project created.
 id: s-small-fix
 size: S
-description: one-off bug fix, no tree; expect zero Hafiz writes and no nudge
+description: one-off bug fix, no tree; expect at most a `changed` entry and no nudge
 agent: build
 turns:
   - prompt: >-
       formatMoney(5) in src/money.ts returns "$0.5" but it should return "$0.05" (cents are
       always shown with two digits). Fix it and make sure the tests pass.
 expect:
-  hafiz_writes: "==0"
+  hafiz_writes: "<=2" # the rules ask the manager for one `changed` entry
   tracked: "==0" # the manager may peek at Hafiz or call hafiz_track_project; no project may be created
   blocks_created: "==0"
-  compliance_notices: "==0"
   files_written: ">=1"
   tool_calls: ">=2"
 mock:

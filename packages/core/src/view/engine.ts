@@ -356,11 +356,11 @@ export function buildView(
 
 // ───────────────────────────── explain ─────────────────────────────
 
-/** `hafiz.yaml onboarding.directive` while a brownfield project's onboarding is pending. */
+/** `hafiz.yaml onboarding.directive` once tracked work has started on a brownfield project (`onboarding: due`). */
 export function onboardingDirective(snap: Snapshot, config: Config, role: string): string {
   const o = config.hafiz.onboarding
   const p = snap.project
-  if (p?.onboarding !== 'pending' || !o.directive || !o.roles.includes(role)) return ''
+  if (p?.onboarding !== 'due' || !o.directive || !o.roles.includes(role)) return ''
   return o.directive.trim().replace(/\{root\}/g, p.rootBlockId)
 }
 

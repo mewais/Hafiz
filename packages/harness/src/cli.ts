@@ -9,7 +9,7 @@ import { DEFAULT_TASKS_DIR, loadTasks } from './tasks.js'
 const USAGE = `hafiz-harness — compliance harness for Hafiz on Kilo
 
   run      --model provider/model [--model …] [--tasks dir|file[,…]] [--only S,M,<id>]
-           [--repeat N] [--kilo-bin path] [--out dir] [--shaper proxy|hooks|auto] [--keep]
+           [--repeat N] [--kilo-bin path] [--out dir] [--shaper proxy|hooks|auto] [--keep] [--isolate]
            [--turn-timeout seconds]      (per Kilo turn; default 1800)
            [--mock]                      (scripted mock LLM instead of a model; no --model needed)
   compare  a.json b.json                 diff a baseline run against a tuned one
@@ -80,6 +80,7 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
       shaper: { type: 'string' },
       mock: { type: 'boolean' },
       keep: { type: 'boolean' },
+      isolate: { type: 'boolean' },
       'turn-timeout': { type: 'string' },
     },
   })
@@ -112,6 +113,7 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
           outDir: runDir,
           shaper: values.shaper,
           keep: values.keep,
+          isolate: values.isolate,
           ...(timeout ? { turnTimeoutMs: timeout * 1000 } : {}),
           log: (l) => io.err(l),
         })

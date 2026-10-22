@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -17,6 +18,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run as hafiz, type Io } from '@hafiz/cli'
 import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
+import { stringify } from 'yaml'
 import { writeFixture } from './fixture.js'
 import { collectMetrics, type Delegation, type RunMetrics } from './metrics.js'
 import { type MockLlm, startMockLlm } from './mock-llm.js'
@@ -36,10 +38,23 @@ export interface RunOptions {
   shaper?: string | undefined
   /** Keep the temp workdir (repo, store) for inspection. */
   keep?: boolean | undefined
+  /**
+   * Run Kilo with an empty private config dir (XDG_CONFIG_HOME), so only the harness plugin (and
+   * the agents it generates) is loaded: none of the owner's own plugins, agents or providers.
+   */
+  isolate?: boolean | undefined
   turnTimeoutMs?: number | undefined
   /** Milliseconds to wait after the last turn for report capture and session-end checks. */
   settleMs?: number | undefined
   log?: ((line: string) => void) | undefined
+}
+
+/** A review proposal the runner resolved between turns. */
+export interface ReviewRecord {
+  id: string
+  kind: string
+  block: string
+  action: 'accept' | 'reject'
 }
 
 export interface TurnResult {
@@ -60,6 +75,8 @@ export interface RunResult {
   /** Every turn exited 0 and every expectation holds. */
   passed: boolean
   turns: TurnResult[]
+  /** Review proposals resolved as `user` between turns (task `review:`), in order. */
+  reviews: ReviewRecord[]
   wallMs: number
   metrics: RunMetrics
   /** Files changed or added in the task repo against the seed commit. */
@@ -84,6 +101,40 @@ function readDelegations(file: string): Delegation[] {
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l) as Delegation)
+}
+
+/**
+ * Resolve every pending review proposal as the `user` role, through the daemon. Rejections carry
+ * `note`, which reaches the manager.
+ */
+export async function resolveReviews(
+  socketPath: string,
+  action: 'accept' | 'reject',
+  note?: string,
+): Promise<ReviewRecord[]> {
+  const user = await DaemonClient.connect(socketPath)
+  try {
+    await user.openSession({ id: 'harness-review', host: 'harness', role: 'user' })
+    const done: ReviewRecord[] = []
+    for (const p of await user.reviewList()) {
+      if (action === 'accept') await user.reviewAccept(p.id)
+      else await user.reviewReject(p.id, note)
+      done.push({ id: p.id, kind: p.kind, block: p.blockId ?? '', action })
+    }
+    return done
+  } finally {
+    user.close()
+  }
+}
+
+/** Write a task's `policies:` override into the (single) store under `storesRoot`. */
+export function writePolicies(storesRoot: string, policies: Record<string, unknown>): void {
+  const stores = readdirSync(storesRoot, { withFileTypes: true }).filter((d) => d.isDirectory())
+  const store = stores[0]
+  if (stores.length !== 1 || !store) throw new Error(`expected one store in ${storesRoot}`)
+  const dir = join(storesRoot, store.name, 'config')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'policies.yaml'), stringify(policies))
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -213,10 +264,18 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     mkdirSync(join(home, '.config'), { recursive: true })
     Object.assign(env, { HOME: home, KILO_DISABLE_MODELS_FETCH: '1' })
   }
+  if (opts.isolate) {
+    // Kilo reads its global config (plugins, agents, providers) from $XDG_CONFIG_HOME/kilo;
+    // auth stays where it is (XDG_DATA_HOME), so built-in providers still work.
+    const xdg = join(work, 'kilo-config')
+    mkdirSync(xdg, { recursive: true })
+    env.XDG_CONFIG_HOME = xdg
+  }
 
   let daemon: DaemonHandle | undefined
   let mock: MockLlm | undefined
   const turns: TurnResult[] = []
+  const reviews: ReviewRecord[] = []
   const t0 = Date.now()
   let error: string | undefined
   let metrics: RunMetrics = { total: {}, roles: {} }
@@ -226,6 +285,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     const io: Io = { cwd: repo, env, out: () => undefined, err: (l) => log(l) }
     if ((await hafiz(['init', task.setup.project_name], io)) !== 0)
       throw new Error('hafiz init failed')
+    if (task.policies) writePolicies(env.HAFIZ_STORE_ROOT as string, task.policies)
     daemon = await startDaemon({ projectDir: repo, env, idleShutdownMs: 0 })
     // `{b.root}` and the seeded blocks' `as` names are available to mock scripts
     const vars: Record<string, string> = {}
@@ -272,6 +332,8 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
         error = `turn ${i + 1} ${how} (see ${runDir}/turn-${i + 1}.err.log)`
         break
       }
+      if (turn.review !== 'none')
+        reviews.push(...(await resolveReviews(daemon.socketPath, turn.review, turn.note)))
     }
     await sleep(opts.settleMs ?? 3000)
     // What the run changed in the repo, whoever changed it (managed workers or not)
@@ -299,6 +361,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     mock: opts.mock,
     passed: !error && turns.every((t) => t.code === 0) && expectations.every((x) => x.pass),
     turns,
+    reviews,
     wallMs: Date.now() - t0,
     metrics,
     filesChanged,

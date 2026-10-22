@@ -1,0 +1,112 @@
+# M, gated: the same feature with design and plan reviews set to `gate`, so the pipeline
+# designer -> planner -> workers runs across turns. After turns 1 and 2 the runner accepts the
+# pending reviews as the user (what the review overlay or `hafiz review --accept` does).
+id: m-feature-gated
+size: M
+description: order discounts with gated design and plan reviews; designer, planner and workers across three turns
+agent: build
+policies:
+  review: { design: gate, plan: gate }
+turns:
+  - prompt: >-
+      Add order discounts to the shop: percentage coupon codes, a bulk-quantity discount rule,
+      applying discounts in the cart total, and showing them in the order summary. This is a
+      multi-part feature, so plan it as tracked work: one block for the feature, one child block
+      per part, and a worker subagent implementing each part (spawned on its block). Keep the
+      work in src/. Discounts apply before tax, always.
+    review: accept
+  - prompt: Design approved; plan and implement it.
+    review: accept
+  - prompt: Plans approved; proceed.
+expect:
+  designer_sessions: ">=1"
+  planner_sessions: ">=1"
+  worker_sessions: ">=1"
+  worker_done_requests: ">=1"
+  cap_rejections: "<=2"
+  spawns_rejected: "<=2"
+mock:
+  # the smallest pipeline: one feature block, designed (turn 1), planned (turn 2), built (turn 3)
+  - turn: 1
+    roles:
+      manager:
+        - calls:
+            - tool: hafiz_block_create
+              as: feat
+              args: { parent: "{b.root}", title: Order discounts, kind: feature }
+        - calls:
+            - tool: hafiz_block_set_status
+              args: { id: "{b.feat}", status: active }
+        - calls:
+            - tool: task
+              args:
+                description: Design order discounts
+                subagent_type: designer
+                block: "{b.feat}"
+                prompt: "[[turn:{turn}]] Design order discounts (block {b.feat})."
+        - text: The design is written and awaits your review.
+      designer:
+        - calls:
+            - tool: hafiz_doc
+              args:
+                block: "{block}"
+                type: design
+                sections:
+                  purpose: Let shoppers pay less through coupon codes and bulk-quantity rules.
+                  scope: ["in: coupons, bulk rule, cart and order integration", "out: payment"]
+                  interface: { provides: [{ name: applyDiscounts(cart), type: fn }], consumes: [] }
+        - text: Design written.
+  - turn: 2
+    roles:
+      manager:
+        - calls:
+            - tool: task
+              args:
+                description: Plan order discounts
+                subagent_type: planner
+                block: "{b.feat}"
+                prompt: "[[turn:{turn}]] Plan order discounts (block {b.feat})."
+        - text: The plan is written and awaits your review.
+      planner:
+        - calls:
+            - tool: hafiz_doc
+              args:
+                block: "{block}"
+                type: plan
+                sections:
+                  steps: [{ id: s1, title: Model and apply discounts }]
+                  acceptance: [tests pass]
+        - text: Plan written.
+  - turn: 3
+    roles:
+      manager:
+        - calls:
+            - tool: task
+              args:
+                description: Implement order discounts
+                subagent_type: worker
+                block: "{b.feat}"
+                prompt: "[[turn:{turn}]] Implement order discounts in src/."
+        - text: Order discounts are implemented and reported.
+      worker:
+        - calls:
+            - tool: hafiz_step_set
+              args: { block: "{block}", step_id: s1, status: doing }
+        - calls:
+            - tool: write
+              args:
+                filePath: "{repo}/src/discount-{block}.ts"
+                content: "export const part = '{block}'\n"
+        - calls:
+            - tool: hafiz_step_set
+              args: { block: "{block}", step_id: s1, status: done }
+        - calls:
+            - tool: hafiz_block_set_status
+              args:
+                id: "{block}"
+                status: done
+                digest:
+                  outcome: Discounts are implemented in a new module under src/.
+                  interface_delta: ["none"]
+                  pointers: [{ label: file, ref: "src/discount-{block}.ts" }]
+        - text: "Implemented.\n```hafiz-report\noutcome: done\n```"

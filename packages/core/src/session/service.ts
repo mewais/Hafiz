@@ -6,6 +6,7 @@ import {
   type CommandResult,
   type CoreContext,
   mustBlock,
+  onboardingDue,
   runAs,
   runSystem,
 } from '../commands/tx.js'
@@ -88,6 +89,8 @@ export async function sessionOpen(ctx: CoreContext, args: SessionOpenArgs): Prom
       updatedAt: now,
     }
     await t.putSession(s)
+    // a spawn on a block is tracked work
+    if (args.spawnedBlock && args.role !== 'user') await onboardingDue(t)
     return s
   })
   return result

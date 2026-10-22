@@ -40,10 +40,12 @@ export interface Project {
   /** Increments on major writes only. Internal invalidation signal, never a wire attribute. */
   epoch: number
   /**
-   * `pending`: tracked in a repo that already had code; the manager is told to have the
-   * designer describe it. Cleared when the root design is first written.
+   * `pending`: tracked in a repo that already had code; nothing is asked yet, so a one-off fix
+   * costs no designer. `due`: tracked work has started (first block, first spawn on a block, or
+   * a root doc write), so the manager is told to have the designer describe the code first.
+   * Cleared when the root design is first written.
    */
-  onboarding?: 'pending'
+  onboarding?: 'pending' | 'due'
   createdAt: string
 }
 

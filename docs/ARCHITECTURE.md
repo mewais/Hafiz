@@ -595,8 +595,11 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   fingerprint but are separate projects; linking them is out of scope.
 - **Starting**: `hafiz init` and the Kilo plugin's `hafiz_track_project` run the same
   `initProject` (gateway-mcp). A repo with commits and at least `onboarding.min_source_files`
-  tracked source files starts with `Project.onboarding: pending`: the roles in
-  `onboarding.roles` (manager) get `onboarding.directive` at the top of their view (spawn the
+  tracked source files starts with `Project.onboarding: pending`, which asks nothing yet (a
+  one-off fix spawns no designer). The first tracked work (`block.create`, a session opened on a
+  block by a non-user role, or a non-design doc write on the root) sets it to `due` in the same
+  transaction. While `due`, the roles in `onboarding.roles` (manager) get `onboarding.directive`
+  at the top of their view (spawn the
   designer once on the root to describe the codebase as it is), and the first root design write
   clears the flag and writes a `changed` progress entry "Onboarded existing codebase" (Hafiz never records decisions).
 
@@ -702,7 +705,11 @@ docs/ ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
 - Backend conformance suite (fs and sqlite), including crash-mid-command recovery via the journal.
 - **Protocol compliance harness**: scripted multi-agent tasks on Kilo with each role; measures
   decisions recorded / progress appended / threads parked / reports captured per role, *before*
-  tuning. This number decides how much the condenser and drafters must carry.
+  tuning. This number decides how much the condenser and drafters must carry. Tasks can resolve
+  review proposals as the user between turns (`review: accept | reject`) and override
+  `policies.yaml` for a run (e.g. `review.design: gate`), so the gated pipeline designer →
+  planner → workers is exercised across turns; `--isolate` runs Kilo without the owner's own
+  config. A `task` call is logged and counted once, even when Kilo fires its hooks twice for it.
 - Shaper tests: recorded Kilo requests → byte-identical prefix when the hash is unchanged; exact
   replacement when it changed; tail/delta/unfiled placement.
 - Cost tests: re-emits/hour and cache ratio on a simulated 8-worker hour.

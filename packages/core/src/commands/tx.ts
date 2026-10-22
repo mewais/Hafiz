@@ -181,7 +181,10 @@ export async function writeDoc(
   Object.assign(block, updated)
   if (type === 'digest') delete block.digestStale // Object.assign cannot remove keys
   if (type === 'design') await deriveDependencies(t, block, schema, v.sections, notices)
-  if (type === 'design' && block.parentId === null) await finishOnboarding(ctx, t, by, block)
+  if (block.parentId === null) {
+    if (type === 'design') await finishOnboarding(ctx, t, by, block)
+    else await onboardingDue(t)
+  }
   return doc
 }
 
@@ -231,6 +234,12 @@ async function deriveDependencies(
     })
 }
 
+/** Tracked work has started: a pending onboarding becomes due (the manager's view asks for it). */
+export async function onboardingDue(t: Pick<WriteOps, 'getProject' | 'putProject'>): Promise<void> {
+  const project = await t.getProject()
+  if (project?.onboarding === 'pending') await t.putProject({ ...project, onboarding: 'due' })
+}
+
 /** The first root design of a brownfield project completes its onboarding. */
 async function finishOnboarding(
   ctx: CoreContext,
@@ -239,7 +248,7 @@ async function finishOnboarding(
   root: Block,
 ): Promise<void> {
   const project = await t.getProject()
-  if (project?.onboarding !== 'pending') return
+  if (!project?.onboarding) return
   const { onboarding: _done, ...rest } = project
   await t.putProject(rest)
   // Hafiz is not a decision-maker: onboarding is a progress entry, never a decision.

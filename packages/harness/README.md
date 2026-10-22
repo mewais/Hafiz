@@ -10,7 +10,27 @@ continue the same Kilo session). Afterwards it reads the store (logs, threads, p
 and the session counters. Tasks (`tasks/*.yaml`): **S** one-off fix, no tree (expect zero Hafiz
 writes, no nudge); **M** feature → block + 4 children + a worker each; **L** seeded 3-level tree,
 designer + planner + 3 parallel workers, a side discussion that becomes a standing decision and
-one that gets parked.
+one that gets parked. **M gated** (`m-feature-gated`) is the feature with design and plan reviews
+set to `gate`, run as designer, then planner, then workers across three turns.
+
+## Review step and policies
+A turn may name a review for the moment after it. Before the next turn the runner resolves every
+pending review proposal as the `user` role, through the daemon (`reviewList`, `reviewAccept`,
+`reviewReject`), as the review overlay or `hafiz review` would:
+```yaml
+policies:                  # optional: written to <store>/config/policies.yaml before the daemon starts
+  review: { design: gate, plan: gate }
+turns:
+  - prompt: Add order discounts ...
+    review: accept         # accept | reject | none (default)
+  - prompt: Design approved; plan and implement it.
+    review: reject
+    note: Cover coupon stacking.   # reaches the manager with the rejection
+  - prompt: Plans approved; proceed.
+```
+`result.json` records what was resolved: `reviews: [{id, kind, block, action}]`. `policies:` is a
+partial `policies.yaml` merged over the defaults for that run only. Expectations are scored once,
+at the end.
 
 ## Prerequisites
 - Node >= 22, pnpm, and Kilo CLI >= 7.8 (`npm i -g @kilocode/cli`, or point at any binary).
@@ -35,10 +55,15 @@ $H run --repeat 3 --out results/baseline \
 # after tuning rules/descriptions (pnpm build), re-run into results/tuned, then:
 $H compare results/baseline/<a>/report.json results/tuned/<a>/report.json
 ```
-Options: `--tasks dir|file` (custom task files), `--only S,M,<task id>`, `--shaper proxy|hooks`
+Options: `--isolate` (see below), `--tasks dir|file` (custom task files), `--only S,M,<task id>`, `--shaper proxy|hooks`
 (default: the project's setting; `proxy` gives exact wire cache numbers), `--keep` (keep the
 workdir to inspect the repo and store), `--turn-timeout <seconds>` (per Kilo turn, default 1800;
 a turn killed by it is reported as "harness timeout (SIGKILL)", not as a Kilo failure).
+`--isolate` (default off) runs Kilo with an empty private config dir (`XDG_CONFIG_HOME`), so
+only the harness plugin and the agents it generates are loaded; your own plugins, agents and
+providers do not leak in (auth in `XDG_DATA_HOME` is kept, so built-in providers still work; a
+custom provider defined only in your Kilo config is not available). Use it to measure Hafiz alone,
+for comparable numbers across machines. Leave it off to measure your own setup with Hafiz.
 Exit code 1 means a turn failed or an expectation missed.
 
 ## Results
@@ -56,7 +81,11 @@ is the Hafiz session counter (workers running unmanaged do not count). `spawns_r
 Other metrics: decisions (standing), progress per worker, step events, threads opened/parked,
 done requests (+ with digest), reports captured, cap rejections and retries, compliance notices,
 proposals by source, protocol / all tool calls, view re-emits, tokens per view, cache read ratio,
-condensations. Expectations use `>=1`, `==3`, `1..3` against totals or `worker_…` per role.
+condensations. Expectations use `>=1`, `<=2`, `==3`, `1..3` against totals or `worker_…` per role.
+Defaults are deliberately loose where models legitimately vary: S allows `hafiz_writes <=2` (the
+rules ask for one `changed` entry); M and L allow `cap_rejections <=2`, L `threads_opened <=2`;
+M's prompt states a decision ("Discounts apply before tax, always.") so `manager_decisions >=1`.
+`subagents_spawned` counts each `task` call once and `delegations.jsonl` logs it once.
 
 ## Sending results back
 Paste the contents of each `report.md` (the tables are compact) into the chat, with the Kilo

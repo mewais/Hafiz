@@ -45,7 +45,7 @@ export interface InitProjectResult {
   storeDir: string
   pointerFile: string
   rootBlockId: string
-  /** The repo already had code: the project starts with `onboarding: pending`. */
+  /** The repo already had code: the project starts with `onboarding: pending` (due once tracked work starts). */
   onboarding: boolean
   notices: Notice[]
 }

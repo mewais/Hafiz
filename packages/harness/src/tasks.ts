@@ -72,7 +72,25 @@ export const taskSchema = z.object({
       seed: z.array(seedNode).default([]),
     })
     .default({ project_name: 'Toy Shop', seed: [] }),
-  turns: z.array(z.object({ prompt: z.string(), agent: z.string().optional() })).min(1),
+  /**
+   * Overrides for the run's `policies.yaml` (written to `<store>/config/policies.yaml` before the
+   * daemon starts), e.g. `review: { design: gate, plan: gate }`.
+   */
+  policies: z.record(z.string(), z.unknown()).optional(),
+  turns: z
+    .array(
+      z.object({
+        prompt: z.string(),
+        agent: z.string().optional(),
+        /**
+         * After the turn, resolve every pending review proposal as the `user` role (through the
+         * daemon) before the next turn: accept or reject (with `note`); default `none`.
+         */
+        review: z.enum(['accept', 'reject', 'none']).default('none'),
+        note: z.string().optional(),
+      }),
+    )
+    .min(1),
   /** metric -> ">=1" | "==3" | "1..3" | 3. See score.ts for the metric names. */
   expect: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
   /** Mock mode only: the model's replies per turn and role. */

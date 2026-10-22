@@ -20,6 +20,7 @@ import {
   type CoreContext,
   checkVersion,
   mustBlock,
+  onboardingDue,
   type Runner,
   recordDecision,
   runAs,
@@ -73,6 +74,7 @@ export async function blockCreate(
       updatedAt: now,
     }
     await t.putBlock(block, -1)
+    await onboardingDue(t)
     if (args.design) await writeDoc(ctx, t, by, block, 'design', args.design, 0, notices)
     if (args.plan) await writeDoc(ctx, t, by, block, 'plan', args.plan, 0, notices)
     return block

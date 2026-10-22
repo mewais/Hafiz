@@ -12,6 +12,7 @@ import { loadSnapshot } from './snapshot.js'
 
 const config = loadConfig()
 const mgr: Actor = { sessionId: 'm1', role: 'manager', agent: 'build' }
+const pln: Actor = { sessionId: 'p1', role: 'planner', agent: 'planner' }
 const des: Actor = { sessionId: 'd1', role: 'designer', agent: 'designer' }
 
 async function project(onboarding: boolean) {
@@ -31,9 +32,47 @@ async function project(onboarding: boolean) {
 }
 
 describe('brownfield onboarding', () => {
-  it('pending: the manager view carries the directive, other roles do not', async () => {
-    const { core, root, view } = await project(true)
+  it('pending until tracked work starts: no directive for a one-off fix', async () => {
+    const { core, view } = await project(true)
     expect((await core.backend.read.getProject())?.onboarding).toBe('pending')
+    expect((await view('manager')).text).not.toContain('Onboarding pending')
+    // sessions without a spawn block, and a user-opened one, are not tracked work
+    await core.sessionOpen({ id: 'm1', host: 'test', role: 'manager' })
+    await core.sessionOpen({ id: 'u1', host: 'test', role: 'user', spawnedBlock: 'whatever' })
+    expect((await core.backend.read.getProject())?.onboarding).toBe('pending')
+  })
+
+  it('block.create makes it due', async () => {
+    const { core, root, view } = await project(true)
+    await core.blockCreate(mgr, { parent: root.id, title: 'Payments' })
+    expect((await core.backend.read.getProject())?.onboarding).toBe('due')
+    expect((await view('manager')).text).toContain('Onboarding pending')
+  })
+
+  it('a session opened on a block by a non-user role makes it due', async () => {
+    const { core, root, view } = await project(true)
+    await core.sessionOpen({ id: 'd1', host: 'test', role: 'designer', spawnedBlock: root.id })
+    expect((await core.backend.read.getProject())?.onboarding).toBe('due')
+    expect((await view('manager')).text).toContain('Onboarding pending')
+  })
+
+  it('a non-design doc write on the root makes it due', async () => {
+    const { core, root } = await project(true)
+    await core.docWrite(pln, {
+      block: root.id,
+      type: 'plan',
+      sections: { steps: [{ id: 's1', title: 'x' }], acceptance: ['y'] },
+    })
+    expect((await core.backend.read.getProject())?.onboarding).toBe('due')
+  })
+
+  it('due: the manager view carries the directive, other roles do not', async () => {
+    const { core, root, view } = await project(true)
+    await core.docWrite(pln, {
+      block: root.id,
+      type: 'plan',
+      sections: { steps: [{ id: 's1', title: 'x' }], acceptance: ['y'] },
+    })
     const v = await view('manager')
     // the root id is random: pin it (and the hash it feeds) for the golden
     const golden = viewGolden(v)
@@ -51,6 +90,8 @@ describe('brownfield onboarding', () => {
 
   it('the first root design completes it: flag cleared, progress entry (no decision), directive gone', async () => {
     const { core, root, view } = await project(true)
+    await core.blockCreate(mgr, { parent: root.id, title: 'Payments' })
+    expect((await view('manager')).text).toContain('Onboarding pending')
     await core.docWrite(des, {
       block: root.id,
       type: 'design',

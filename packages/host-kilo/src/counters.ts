@@ -15,3 +15,12 @@ export function toolCounters(tool: string): Record<string, number> {
 
 /** Counters for one user message. `turns` counts exchanges, `user_turns` the user's side. */
 export const USER_TURN_COUNTERS: Record<string, number> = { turns: 1, user_turns: 1 }
+
+/** True the first time `callID` is seen for `kind`: dedupes hooks Kilo fires twice for one call. */
+export function firstCall(seen: Set<string>, kind: string, callID: string | undefined): boolean {
+  if (!callID) return true
+  const key = `${kind}:${callID}`
+  if (seen.has(key)) return false
+  seen.add(key)
+  return true
+}
