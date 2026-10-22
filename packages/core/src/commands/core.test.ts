@@ -43,7 +43,7 @@ async function setup() {
 
 function autoConfig() {
   const config = loadConfig()
-  config.hafiz.confirm_done = 'auto'
+  config.policies.review.done = 'queue'
   return config
 }
 
@@ -143,7 +143,7 @@ describe('core scenario', () => {
     )
     await expect(core.threadPark(w1, { id: th.id, gist: '' })).rejects.toThrow(/gist/)
     await core.threadPark(w1, { id: th.id, gist: 'undecided between 3 and 5 retries; lean 3' })
-    // worker's request_done under confirm_done: auto applies the transition and enqueues a review item
+    // worker's request_done under review.done: queue applies the transition and enqueues a review item
     const done = (await core.blockRequestDone(w1, { id: payments.id, digest })).result as Block
     expect(done.status).toBe('done')
     expect(done.doneAt).toBeTruthy()

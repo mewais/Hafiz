@@ -23,7 +23,7 @@ export type DaemonCall = <T = unknown>(
 export interface RunToolOptions {
   /**
    * Asked when a command answers `needsConfirmation` (e.g. marking done under
-   * `confirm_done: ask`). Resolve true to retry with `confirmed: true`; undefined → the message
+   * `review.done: gate`). Resolve true to retry with `confirmed: true`; undefined → the message
    * is returned to the agent, which asks the user itself.
    */
   confirm?: (message: string) => Promise<boolean | undefined>

@@ -252,6 +252,17 @@ export async function doctor(
           detail: `${docs.length} doc(s) satisfy schema set ${want}`,
         })
 
+      const retired = core.config.deprecations
+      checks.push(
+        retired.length
+          ? {
+              name: 'config',
+              level: 'warn',
+              detail: `${retired.length} retired setting(s) mapped onto their successors`,
+              items: retired,
+            }
+          : { name: 'config', level: 'ok', detail: 'no retired settings' },
+      )
       checks.push(driftChecks(project.worktree, blocks, docs))
       checks.push(await checkCondenser(core, !!opts.online))
     })

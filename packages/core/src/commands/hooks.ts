@@ -4,7 +4,8 @@
 // sessions or a session's notice queue goes to the gateway through the `DispatchSink`.
 
 import { ValidationError } from '../domain/errors.js'
-import type { Actor, SectionValue } from '../domain/types.js'
+import { reviewVersion } from '../domain/review.js'
+import { type Actor, type Block, REVIEW_TYPES, type SectionValue } from '../domain/types.js'
 import type { Notice } from '../schema/validate.js'
 import type { AfterHook, BeforeHook } from './catalogue.js'
 import type { Core } from './core.js'
@@ -15,11 +16,14 @@ export interface DispatchSink {
   proposalsAdded(): Promise<void>
   /** A notice for the caller's queue (its next tool reply), not for this reply. */
   enqueue(n: Notice, event: string): void
+  /** A notice for the sessions that run the review queue (the manager), other than the caller. */
+  notifyReviewers(n: Notice, event: string): Promise<void>
 }
 
 export const NO_SINK: DispatchSink = {
   proposalsAdded: async () => undefined,
   enqueue: () => undefined,
+  notifyReviewers: async () => undefined,
 }
 
 export interface HookCall {
@@ -27,6 +31,8 @@ export interface HookCall {
   command: string
   args: Record<string, unknown>
   sink: DispatchSink
+  /** The command's result (after-hooks only). */
+  result?: unknown
 }
 
 type HookHost = Pick<
@@ -37,6 +43,8 @@ type HookHost = Pick<
   | 'draftDigest'
   | 'complianceRun'
   | 'refreshAgentFocus'
+  | 'reviewFileCreated'
+  | 'backend'
 >
 
 /** `request_done`, or `set_status` to done: a request to finish a block. */
@@ -71,6 +79,37 @@ export const AFTER_HOOKS: Record<
 
   async announce_proposals(_core, { sink }) {
     await sink.proposalsAdded()
+    return undefined
+  },
+
+  /** `block.create` with an inline design or plan by a non-approver: file their reviews. */
+  async file_reviews(core, c) {
+    const block = (c.result as Block | undefined)?.id
+    const types = REVIEW_TYPES.filter((t) => c.args[t] !== undefined)
+    if (!block || !types.length) return undefined
+    if ((await core.reviewFileCreated(c.by, block, types)).length) await c.sink.proposalsAdded()
+    return undefined
+  },
+
+  /** A design/plan review resolved, or any proposal rejected with a note: tell the reviewers. */
+  async announce_resolution(core, c) {
+    const p = (await core.backend.read.listProposals()).find((x) => x.id === c.args.id)
+    if (!p || p.status === 'pending' || (p.source !== 'review' && !p.resolutionNote))
+      return undefined
+    const b = p.blockId ? await core.backend.read.getBlock(p.blockId) : null
+    const what =
+      p.source === 'review'
+        ? `${p.kind} v${reviewVersion(p)} of '${b?.title ?? p.blockId}' [${p.blockId}]`
+        : `proposal ${p.id} (${p.kind}${b ? ` on '${b.title}'` : ''})`
+    const verdict = p.status === 'accepted' ? 'approved' : 'rejected'
+    const why = p.resolutionNote ? `: ${p.resolutionNote}` : ''
+    await c.sink.notifyReviewers(
+      {
+        level: p.status === 'accepted' ? 'info' : 'warn',
+        text: `${what} ${verdict} by ${c.by.role}${why}`,
+      },
+      'review',
+    )
     return undefined
   },
 

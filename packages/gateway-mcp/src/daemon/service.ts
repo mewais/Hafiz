@@ -16,6 +16,7 @@ import {
   type LLMRequest,
   type LLMResult,
   type LLMSettings,
+  mayApprove,
   type Notice,
   type Session,
   ValidationError,
@@ -151,6 +152,17 @@ const schemas = {
     ...token,
     status: z.enum(['pending', 'accepted', 'rejected']).optional(),
   }),
+  /**
+   * The review queue as `hafiz review` and the TUI list it: each proposal with its
+   * `policies.yaml review` row (`mode`), block title and, for design/plan reviews, the version.
+   * Default: pending.
+   */
+  'review.list': z.object({
+    ...token,
+    status: z.enum(['pending', 'accepted', 'rejected', 'all']).optional(),
+  }),
+  /** One proposal and the doc it is about, at the version under review (`hafiz review --show`). */
+  'review.show': z.object({ ...token, id: z.string().min(1) }),
   'notices.drain': z.object(token),
   /** Recent notices of a session (own by default), without draining its queue. */
   'notices.peek': z.object({ ...token, session: optStr }),
@@ -331,8 +343,9 @@ export class DaemonService {
       case 'session.end': {
         // Last chance to say something: a resumed session finds these in its queue.
         await this.compliance(session.id, 'session_end')
-        await core.sessionEnd(session.id)
-        return { ended: true }
+        const { proposals } = await core.sessionEnd(session.id)
+        if (proposals.length) await this.announceNewProposals(session.id)
+        return { ended: true, reviews: proposals.map((x) => x.id) }
       }
       case 'system.progress':
         return core.systemProgress(by, {
@@ -363,6 +376,10 @@ export class DaemonService {
         const status = p.status as 'pending' | 'accepted' | 'rejected' | undefined
         return core.backend.read.listProposals(status ? { status } : undefined)
       }
+      case 'review.list':
+        return core.reviewList(by, p.status as Params<'review.list'>['status'])
+      case 'review.show':
+        return core.reviewShow(by, p.id as string)
       case 'notices.drain':
         return this.drainFor(session.id)
       case 'notices.peek': {
@@ -402,6 +419,7 @@ export class DaemonService {
     const sink: DispatchSink = {
       proposalsAdded: () => this.announceNewProposals(sid),
       enqueue: (n, event) => this.enqueue(sid, n, event),
+      notifyReviewers: (n, event) => this.notifyReviewers(sid, n, event),
     }
     try {
       return await core.dispatch(by, command, args, sink)
@@ -497,22 +515,38 @@ export class DaemonService {
     this.recent.set(sessionId, r)
   }
 
-  /** Tell sessions that can review proposals when a new one lands. */
+  /** Live agents that run the review queue (they may list proposals), other than `caller`. */
+  private async reviewers(caller: string): Promise<Session[]> {
+    return (await this.core.activeAgents()).filter(
+      (s) =>
+        s.id !== caller &&
+        isAllowed(this.core.config.roles.roles[s.role]?.tools ?? [], 'proposal.list'),
+    )
+  }
+
+  /** A notice for the reviewers' queues (a review resolved, a rejection's note). */
+  private async notifyReviewers(caller: string, n: Notice, event: string): Promise<void> {
+    for (const s of await this.reviewers(caller)) this.enqueue(s.id, n, event)
+  }
+
+  /**
+   * Tell sessions that can review proposals when a new one lands. Design and plan reviews go
+   * only to roles that may approve them (`policies.yaml review.approver`).
+   */
   private async announceNewProposals(caller: string): Promise<void> {
     const r = this.core.backend.read
     const seen = this.seenProposals
     const fresh = (await r.listProposals({ status: 'pending' })).filter((p) => !seen.has(p.id))
     if (!fresh.length) return
     for (const p of fresh) seen.add(p.id)
-    for (const s of await this.core.activeAgents()) {
-      const patterns = this.core.config.roles.roles[s.role]?.tools ?? []
-      if (s.id === caller || !isAllowed(patterns, 'proposal.list')) continue
+    const policy = this.core.config.policies.review
+    for (const s of await this.reviewers(caller))
       for (const p of fresh)
-        this.enqueue(
-          s.id,
-          { level: 'info', text: `proposal ${p.id} pending review: ${p.note ?? p.kind}` },
-          'proposal',
-        )
-    }
+        if (p.source !== 'review' || mayApprove(policy, s.role))
+          this.enqueue(
+            s.id,
+            { level: 'info', text: `proposal ${p.id} pending review: ${p.note ?? p.kind}` },
+            'proposal',
+          )
   }
 }

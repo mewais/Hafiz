@@ -107,6 +107,33 @@ describe('cli: daemon-backed commands', () => {
     expect(await run(['review', '--accept', 'a', '--reject', 'b'], io)).toBe(1)
   })
 
+  it('review: a design review lists kind, version, row and note; --show prints it; --reject takes a note', async () => {
+    const { io, out, err, d } = await setup()
+    const core = d.service.core
+    const root = (await core.backend.read.getProject())?.rootBlockId as string
+    const user = { sessionId: 'cli', role: 'user' }
+    const block = (await core.blockCreate(user, { parent: root, title: 'Billing' })).result.id
+    await core.sessionOpen({ id: 'ds', host: 't', role: 'designer', spawnedBlock: block })
+    const sections = { purpose: 'money in', scope: ['in: invoices'], interface: {} }
+    await core.docWrite({ sessionId: 'ds', role: 'designer' }, { block, type: 'design', sections })
+    const [p] = (await core.sessionEnd('ds')).proposals
+    const id = p?.id as string
+
+    out.length = 0
+    expect(await run(['review'], io)).toBe(0)
+    expect(out[0]).toBe(`${id}  design v1  from review  on ${block} 'Billing'  queue`)
+    expect(out[1]).toBe("    design v1 of 'Billing': new: purpose, scope, interface")
+    expect(out[2]).toContain(`hafiz review --accept ${id}`)
+    out.length = 0
+    expect(await run(['review', '--show', id], io)).toBe(0)
+    expect(out.join('\n')).toContain('Purpose: money in')
+    expect(await run(['review', '--note', 'x'], io)).toBe(1)
+    expect(err.join('\n')).toContain('--note goes with --reject')
+    expect(await run(['review', '--reject', id, '--note', 'name the refunds owner'], io)).toBe(0)
+    const [rejected] = await core.reviewList(user, 'rejected')
+    expect(rejected).toMatchObject({ id, resolutionNote: 'name the refunds owner' })
+  })
+
   it('status shows a cost table; review lists source, note and the command; checkpoint flags sessions', async () => {
     const { io, out, d } = await setup()
     const core = d.service.core

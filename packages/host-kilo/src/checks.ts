@@ -3,7 +3,8 @@
 // (`tool.execute.before`), so a rule that can be checked is a check, not a sentence in a prompt:
 // - `task` takes a required `block` (a block id, or `none` for a helper outside Hafiz); the id is
 //   resolved and carried to the child as the `hafiz:block=<id>` marker (sessions.ts);
-// - the spawned role must fit the block's state (`policies.yaml spawn.roles_by_state`);
+// - the spawned role must fit the block's state (`policies.yaml spawn.roles_by_state`), where a
+//   design or plan held by a `gate` review (`policies.yaml review`) counts as not there yet;
 // - the prompt passes the block, not its contents (no `<hafiz…>`, at most
 //   `host.kilo.delegation_prompt_cap` tokens);
 // - only the child's `hafiz-report` reaches the parent (its full text is in the store), plus a
@@ -15,8 +16,10 @@ import {
   blockList,
   type Config,
   estimatorTokenizer,
+  gatingReview,
   isAllowed,
   matchBlock,
+  type ReviewType,
   type SpawnState,
   type Tokenizer,
   type TreeSummary,
@@ -69,11 +72,30 @@ const STATE_SAYS: Record<SpawnState, string> = {
   dropped: 'it is dropped',
 }
 
-export function spawnState(node: Pick<TreeSummaryNode, 'status' | 'docs'>): SpawnState {
+/**
+ * The block's state for spawning. `held`: the doc a `gate` review holds (design or plan); until
+ * it is accepted the block counts as not having it, so only the roles before it may be spawned.
+ */
+export function spawnState(
+  node: Pick<TreeSummaryNode, 'status' | 'docs'>,
+  held?: ReviewType,
+): SpawnState {
   if (node.status === 'done' || node.status === 'dropped') return node.status
-  if (!node.docs.design) return 'no_design'
-  if (!node.docs.plan) return 'no_plan'
+  if (!node.docs.design || held === 'design') return 'no_design'
+  if (!node.docs.plan || held === 'plan') return 'no_plan'
   return 'has_plan'
+}
+
+/** What a refused spawn says about a gated review: what waits, and the fix. */
+function reviewSays(
+  node: TreeSummaryNode,
+  g: NonNullable<ReturnType<typeof gatingReview>>,
+): string {
+  const doc = `${g.type} of ${node.title} (v${g.review.version})`
+  if (g.review.status === 'pending')
+    return `${doc} awaits review: hafiz review --accept ${g.review.proposal}`
+  const why = g.review.resolutionNote ? `: ${g.review.resolutionNote}` : ''
+  return `${doc} was rejected${why}; revise it (it is filed for review again)`
 }
 
 type Fields = Record<string, { annotate?: (a: Record<string, unknown>) => unknown }>
@@ -175,11 +197,13 @@ export function createChecks(o: ChecksOptions) {
         `task: '${agent}' is not managed by Hafiz here, so it cannot work on a block; pass ${BLOCK_ARG}: "${NO_BLOCK}".`,
       )
     const node = await resolve(parent, ref)
-    const state = spawnState(node)
+    const gate = gatingReview(config.policies.review, node.review)
+    const state = spawnState(node, gate?.type)
     const allowed = config.policies.spawn.roles_by_state[state] ?? []
+    const says = gate && state !== spawnState(node) ? reviewSays(node, gate) : STATE_SAYS[state]
     if (!allowed.includes('*') && !allowed.includes(role as string))
       refuse(
-        `task: no ${role} on ${node.title} [${node.id}]: ${STATE_SAYS[state]}. ${
+        `task: no ${role} on ${node.title} [${node.id}]: ${says}. ${
           allowed.length
             ? `Can be spawned on it now: ${allowed.join(', ')}.`
             : 'Nobody can be spawned on it.'

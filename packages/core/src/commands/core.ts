@@ -14,7 +14,15 @@ import type { Config } from '../config/schema.js'
 import { type Clock, systemClock } from '../domain/clock.js'
 import { ValidationError } from '../domain/errors.js'
 import { StatusMachine } from '../domain/status.js'
-import type { Actor, BlockId, DocType, SectionValue, Session } from '../domain/types.js'
+import type {
+  Actor,
+  BlockId,
+  DocType,
+  Proposal,
+  ReviewType,
+  SectionValue,
+  Session,
+} from '../domain/types.js'
 import { createProvider, NoneProvider } from '../llm/providers.js'
 import type { LLMProvider, LLMRelay } from '../llm/types.js'
 import { ComplianceEngine, type ComplianceWhen } from '../session/compliance.js'
@@ -85,7 +93,12 @@ import {
   type SchemaMigrateArgs,
   schemaMigrate,
 } from './project.js'
-import { type NewProposal, proposalAdd, proposalResolve } from './proposals.js'
+import {
+  type NewProposal,
+  type ProposalResolveArgs,
+  proposalAdd,
+  proposalResolve,
+} from './proposals.js'
 import {
   blockDetail,
   blockDetailRaw,
@@ -94,6 +107,7 @@ import {
   treeListRaw,
   treeSummary,
 } from './reads.js'
+import { fileCreated, fileSessionReviews, reviewList, reviewShow } from './review.js'
 import type { CommandResult, CoreContext } from './tx.js'
 
 export { focusFromPolicy } from '../session/service.js'
@@ -101,6 +115,7 @@ export type { ContextOptions, ContextView } from '../view/service.js'
 export type { NeedsConfirmation } from './blocks.js'
 export type { DispatchSink } from './hooks.js'
 export type { BlockDetail, DecisionBrief, TreeSummary, TreeSummaryNode } from './reads.js'
+export { changedSince, docAtVersion, type ReviewItem, type ReviewShow } from './review.js'
 export type { CommandResult, CoreContext } from './tx.js'
 
 export interface CoreDeps {
@@ -138,8 +153,8 @@ export interface CommandArgs {
   'thread.resolve': ThreadResolveArgs
   'thread.append': ThreadAppendArgs
   'focus.set': FocusSetArgs
-  'proposal.accept': { id: string }
-  'proposal.reject': { id: string }
+  'proposal.accept': { id: string; note?: string }
+  'proposal.reject': { id: string; note?: string }
 }
 
 export type CommandName = keyof CommandArgs
@@ -282,8 +297,14 @@ export class Core {
   sessionOpen(args: SessionOpenArgs) {
     return sessionOpen(this.ctx, args)
   }
-  sessionEnd(sessionId: string) {
-    return sessionEnd(this.ctx, sessionId)
+  /**
+   * End a session. First the designs and plans it wrote go up for review (`policies.yaml
+   * review`); the proposals filed are returned for the gateway to announce.
+   */
+  async sessionEnd(sessionId: string): Promise<{ proposals: Proposal[] }> {
+    const proposals = await fileSessionReviews(this.ctx, sessionId)
+    await sessionEnd(this.ctx, sessionId)
+    return { proposals }
   }
   countersAdd(sessionId: string, delta: Record<string, number>) {
     return countersAdd(this.ctx, sessionId, delta)
@@ -330,7 +351,7 @@ export class Core {
 
   // ───────────────────────────── proposals ─────────────────────────────
 
-  proposalResolve(by: Actor, args: { id: string; accept: boolean }) {
+  proposalResolve(by: Actor, args: ProposalResolveArgs) {
     return proposalResolve(this.ctx, by, args, (b, command, a) => {
       const h = this.handlers.get(command)
       if (!h) throw new ValidationError(`proposal command '${command}' is not executable`)
@@ -339,6 +360,18 @@ export class Core {
   }
   proposalAdd(p: NewProposal, by: Actor) {
     return proposalAdd(this.ctx, p, by)
+  }
+  /** Pending proposals (or those of `status`, or `all`) with their review-table row. */
+  reviewList(by: Actor, status: Proposal['status'] | 'all' = 'pending') {
+    return reviewList(this.ctx, by, status)
+  }
+  /** A proposal and the doc it is about, at the version under review. */
+  reviewShow(by: Actor, id: string) {
+    return reviewShow(this.ctx, by, id)
+  }
+  /** File the reviews of a block created with an inline design or plan (`block.create` hook). */
+  reviewFileCreated(by: Actor, block: BlockId, types: readonly ReviewType[]) {
+    return fileCreated(this.ctx, by, block, types)
   }
 
   // ───────────────────────────── reads & views ─────────────────────────────
@@ -400,8 +433,8 @@ export class Core {
       'thread.resolve': (b, a) => this.threadResolve(b, a),
       'thread.append': (b, a) => this.threadAppend(b, a),
       'focus.set': (b, a) => this.focusSet(b, a),
-      'proposal.accept': (b, a) => this.proposalResolve(b, { id: String(a.id), accept: true }),
-      'proposal.reject': (b, a) => this.proposalResolve(b, { id: String(a.id), accept: false }),
+      'proposal.accept': (b, a) => this.proposalResolve(b, { ...a, accept: true }),
+      'proposal.reject': (b, a) => this.proposalResolve(b, { ...a, accept: false }),
     }
     // The one untyped seam: wire args are not checked against `CommandArgs` here; each command
     // validates what it reads (as it did before the table was typed).
@@ -425,8 +458,9 @@ export class Core {
     const call: HookCall = { by, command, args, sink }
     for (const name of spec?.before ?? []) await BEFORE_HOOKS[name](this, call)
     let out = await h(by, args)
+    const after: HookCall = { ...call, result: out.result }
     for (const name of spec?.after ?? []) {
-      const extra = await AFTER_HOOKS[name](this, call)
+      const extra = await AFTER_HOOKS[name](this, after)
       if (extra?.length) out = { ...out, notices: [...out.notices, ...extra] }
     }
     return out

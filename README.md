@@ -74,9 +74,11 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
   block (a worker before there is a plan, anyone on a done block) or that copies the block into
   the prompt. A worker's final message ends with a `hafiz-report` block; Hafiz stores the whole
   reply in the block's progress log and hands the manager only that block.
-- Anything agents want to change that needs a human (marking a block done, a proposed digest,
-  a missing protocol call) lands in the **review queue**: `hafiz review`, then
-  `hafiz review --accept ID` or `--reject ID`.
+- Anything agents want to change that needs a human (a finished design or plan, marking a block
+  done, a proposed digest, a missing protocol call) lands in the **review queue**: `hafiz review`
+  lists it, `hafiz review --show ID` prints the design or plan under review,
+  `hafiz review --accept ID` or `--reject ID --note "why"` resolves it. Which events file a
+  proposal, and which hold the block until you accept, is the review policy (below).
 - `hafiz status` shows the epoch, live sessions, token cost and re-emits, and pending
   proposals. In Kilo the same is `/hafiz-status`; `/hafiz-checkpoint` records unrecorded work.
 - Record a rule for every agent with `hafiz direct "Never touch the billing schema." --kind never`.
@@ -102,7 +104,7 @@ Agents reach Hafiz through twelve tools; each role sees only its own, narrowed t
 | `hafiz_progress_append` | one finding on a block's progress log | manager, designer (found, question), worker |
 | `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
 | `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
-| `hafiz_review` | list, accept or reject proposals in the review queue | manager |
+| `hafiz_review` | list, accept or reject (with a note) proposals in the review queue; design and plan reviews only under `approver: manager` | manager |
 | `hafiz_focus_set` | centre the context on chosen blocks | manager |
 | `hafiz_track_project` | start tracking an untracked repo | primary agents, untracked repos only |
 
@@ -155,6 +157,28 @@ llm:
 ```
 
 `hafiz doctor --online` sends a tiny request to check a direct provider is reachable.
+
+## Review policy
+
+`policies.yaml` (`~/.hafiz/config/` or `<store>/config/`) decides per event whether a proposal is
+filed and whether it holds the next stage on that block until accepted. `off`: no proposal;
+`queue`: a proposal, work goes on; `gate`: a proposal, and the block waits (siblings and
+parents do not). The defaults are `queue` everywhere, approved by the user; this setting gates
+designs:
+
+```yaml
+review:
+  design: gate       # no planner or worker on the block until its design is accepted
+  plan:   queue      # gate: no worker until the plan is accepted
+  done:   queue      # gate: done waits for confirmation / the manager
+  drafts: queue      # condenser and drafter proposals (off | queue; never gate)
+  approver: user     # user | manager: who accepts or rejects design and plan reviews
+```
+
+A design or plan is filed when the agent session that wrote it ends (or when a block is created
+with one); a newer version replaces the pending proposal. Accepting pins the version on the
+block; the next review says which sections changed since it. `hafiz doctor` warns about the
+retired `hafiz.yaml confirm_done` (`ask` reads as `done: gate`, `auto` as `done: queue`).
 
 ## Where data lives
 

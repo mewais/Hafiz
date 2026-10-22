@@ -120,7 +120,9 @@ export async function sessionCondense(
       text: `${out.dropped} malformed condenser proposal(s) dropped`,
     })
   const drafts: NewProposal[] = []
-  for (const p of out.proposals) {
+  // `policies.yaml review.drafts: off`: the summary is kept, the proposals are not filed.
+  const filed = ctx.config.policies.review.drafts !== 'off'
+  for (const p of filed ? out.proposals : []) {
     const block = p.block ?? s.focus.blocks[0]
     if (!block || !(await ctx.backend.read.getBlock(block))) {
       notices.push({

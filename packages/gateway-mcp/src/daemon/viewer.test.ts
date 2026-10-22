@@ -131,6 +131,80 @@ describe('viewer (the TUI panel)', () => {
   })
 })
 
+describe('review queue over the daemon (CLI and TUI)', () => {
+  const design = (purpose: string) => ({
+    purpose,
+    scope: ['in: invoices'],
+    interface: { provides: [{ name: 'charge()' }] },
+  })
+
+  it('list, show, accept and reject: reads for the viewer, resolving for the approver only', async () => {
+    const config = loadConfig()
+    config.policies.review.design = 'gate'
+    const d = await boot({ config })
+    const u = await as(d, 'cli', 'user')
+    const { block } = await seed(u)
+    const m = await as(d, 'mgr', 'manager')
+    const v = await as(d, 'kilo-tui', 'viewer')
+    let n = 0
+    /** A designer session on the block writes its design and ends: the review ids it filed. */
+    const designer = async (purpose: string) => {
+      const ds = await as(d, `ds${++n}`, 'designer', block)
+      await ds.dispatch('doc.patch', { block, type: 'design', sections: design(purpose) })
+      return (await ds.sessionEnd()).reviews
+    }
+
+    const [id] = await designer('money in')
+    expect(id).toBeTruthy()
+    const [item] = await v.reviewList()
+    expect(item).toMatchObject({
+      id,
+      kind: 'design',
+      source: 'review',
+      version: 1,
+      mode: 'gate',
+      blockId: block,
+      blockTitle: 'Billing',
+    })
+    const shown = await v.reviewShow(id as string)
+    expect(shown.doc?.version).toBe(1)
+    expect(shown.text).toContain('Purpose: money in')
+    // approver user: the manager hears nothing about it and may not resolve it; the viewer reads only
+    expect((await m.noticesDrain()).map((x) => x.text).join()).not.toMatch(/pending review/)
+    expect(await code(m.reviewAccept(id as string))).toBe('forbidden')
+    expect(await code(v.reviewAccept(id as string))).toBe('forbidden')
+    expect((await v.treeSummary()).nodes.find((x) => x.id === block)?.review?.design).toMatchObject(
+      { proposal: id, version: 1, status: 'pending', mode: 'gate' },
+    )
+
+    // a new version replaces the pending one's payload
+    expect(await designer('money in, in cents')).toEqual([id])
+    expect((await u.reviewList()).map((x) => [x.id, x.version])).toEqual([[id, 2]])
+
+    // rejected with a note: stored, and the manager hears it
+    await u.reviewReject(id as string, 'say who refunds')
+    expect((await m.noticesDrain()).map((x) => x.text)).toEqual([
+      `design v2 of 'Billing' [${block}] rejected by user: say who refunds`,
+    ])
+    expect((await u.reviewList('rejected'))[0]?.resolutionNote).toBe('say who refunds')
+    expect((await v.treeSummary()).nodes.find((x) => x.id === block)?.review?.design?.status).toBe(
+      'rejected',
+    )
+
+    // the revision goes up again; the rejected version is still shown from the history
+    const [next] = await designer('money in, in cents; refunds by support')
+    expect(next).not.toBe(id)
+    expect((await u.reviewShow(id as string)).text).toContain('Purpose: money in, in cents')
+    await u.reviewAccept(next as string)
+    expect((await m.noticesDrain()).map((x) => x.text)).toEqual([
+      `design v3 of 'Billing' [${block}] approved by user`,
+    ])
+    const node = (await v.treeSummary()).nodes.find((x) => x.id === block)
+    expect(node?.reviewed).toEqual({ design: 3 })
+    expect(node?.review).toBeUndefined()
+  })
+})
+
 describe('llm relay (provider kilo)', () => {
   it('runs relayed calls in the connection that owns the session; fails cleanly without one', async () => {
     const config = loadConfig()

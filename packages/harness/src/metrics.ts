@@ -57,8 +57,8 @@ function metricsFor(
   const progress = mine(a.progress)
   const audit = mine(a.audit)
   const cmd = (c: string) => audit.filter((e) => e.command === c || e.command.startsWith(`${c}:`))
-  // A request to finish a block: the worker's done is `request_done` (`confirm_done: auto` turns
-  // it into set_status:done, `ask` queues it); the manager's is set_status:done.
+  // A request to finish a block: the worker's done is `request_done` (`review.done` off or queue
+  // turns it into set_status:done, `gate` queues it); the manager's is set_status:done.
   const done = [...cmd('block.request_done'), ...cmd('block.set_status:done')]
   const tools = counter(sessions, 'tool_calls')
   const protocol = counter(sessions, 'tool_calls_hafiz')

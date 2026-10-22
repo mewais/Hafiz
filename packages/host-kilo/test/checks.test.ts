@@ -41,7 +41,9 @@ const NODES = [
 ]
 
 /** `ses_m` is a managed manager; children are known by id with their role. */
-function fakeSessions(o: { commands?: string[]; children?: Record<string, string> } = {}) {
+function fakeSessions(
+  o: { commands?: string[]; children?: Record<string, string>; nodes?: TreeSummaryNode[] } = {},
+) {
   const calls: Array<{ id: string; method: string }> = []
   const children = o.children ?? {}
   const s: CheckSessions & { calls: typeof calls } = {
@@ -57,7 +59,8 @@ function fakeSessions(o: { commands?: string[]; children?: Record<string, string
     roleFor: (a, w) => (a && ROLES.has(a) ? a : w.subagent && w.block ? 'worker' : undefined),
     call: async <T>(id: string, method: string) => {
       calls.push({ id, method })
-      if (method === 'tree.summary') return { project: null, nodes: NODES, standing: [] } as T
+      if (method === 'tree.summary')
+        return { project: null, nodes: o.nodes ?? NODES, standing: [] } as T
       if (method === 'session.activity') return { commands: o.commands ?? [] } as T
       throw new Error(`unexpected ${method}`)
     },
@@ -219,6 +222,70 @@ describe('task: the spawn fits the block', () => {
     config.policies.spawn.roles_by_state.no_design = ['designer', 'worker']
     const { checks } = setup({}, config)
     await task(checks, { subagent_type: 'worker', block: 'blk_new' })
+  })
+})
+
+describe('task: a gated review holds the next stage on its block', () => {
+  const review = (
+    status: 'pending' | 'rejected',
+    version: number,
+    extra: { resolutionNote?: string } = {},
+  ) => ({ proposal: `prop_${status}`, version, status, mode: 'gate' as const, ...extra })
+  const NODES_REVIEW = [
+    {
+      ...node('blk_d', 'Payments', 'active', { design: 3, plan: 1 }),
+      review: { design: review('pending', 3) },
+    },
+    {
+      ...node('blk_p', 'Refunds', 'active', { design: 1, plan: 2 }),
+      review: { plan: review('pending', 2) },
+    },
+    {
+      ...node('blk_x', 'Search', 'active', { design: 2, plan: 1 }),
+      review: { design: review('rejected', 2, { resolutionNote: 'split the index' }) },
+    },
+    node('blk_s', 'Shipping', 'active', { design: 1, plan: 1 }),
+  ]
+  const gated = (row: 'gate' | 'queue' = 'gate') => {
+    const config = loadConfig()
+    config.policies.review.design = row
+    config.policies.review.plan = row
+    return setup({ nodes: NODES_REVIEW }, config)
+  }
+
+  it('design under review: no planner or worker until accepted; the designer may revise', async () => {
+    const { checks } = gated()
+    await refused(
+      task(checks, { subagent_type: 'planner', block: 'blk_d' }),
+      /no planner on Payments \[blk_d\]: design of Payments \(v3\) awaits review: hafiz review --accept prop_pending/,
+    )
+    await refused(task(checks, { subagent_type: 'worker', block: 'blk_d' }), /awaits review/)
+    await task(checks, { subagent_type: 'designer', block: 'blk_d' })
+  })
+
+  it('plan under review: no worker; designer and planner may go on', async () => {
+    const { checks } = gated()
+    await refused(
+      task(checks, { subagent_type: 'worker', block: 'blk_p' }),
+      /plan of Refunds \(v2\) awaits review: hafiz review --accept prop_pending/,
+    )
+    for (const r of ['designer', 'planner'])
+      await task(checks, { subagent_type: r, block: 'blk_p' })
+  })
+
+  it('a rejected design holds until revised, and says why', async () => {
+    const { checks } = gated()
+    await refused(
+      task(checks, { subagent_type: 'worker', block: 'blk_x' }),
+      /design of Search \(v2\) was rejected: split the index; revise it/,
+    )
+  })
+
+  it('holds one block only, and nothing under queue', async () => {
+    await task(gated().checks, { subagent_type: 'worker', block: 'blk_s' })
+    const { checks } = gated('queue')
+    for (const b of ['blk_d', 'blk_p', 'blk_x'])
+      await task(checks, { subagent_type: 'worker', block: b })
   })
 })
 

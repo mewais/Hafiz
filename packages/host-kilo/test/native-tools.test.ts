@@ -1,11 +1,18 @@
 // Plugin-native Hafiz tools: one catalogue shared with the MCP gateway, per-call resolution of the
 // calling Kilo session, default roles for non-Hafiz agents, and the generated permission config.
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
-import { type Config, estimatorTokenizer, loadConfig, toolsForRole, toolTokens } from '@hafiz/core'
+import {
+  type Config,
+  estimatorTokenizer,
+  loadConfig,
+  resolveProject,
+  toolsForRole,
+  toolTokens,
+} from '@hafiz/core'
 import { createMcpServer, DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -34,7 +41,8 @@ const ctx = (sessionID: string, agent: string): KiloToolContext => ({
   messageID: 'msg_1',
 })
 
-async function live() {
+/** A tracked repo, its daemon and the plugin; `policies` is the project's policies.yaml override. */
+async function live(policies?: string) {
   const cwd = tmp('hafiz-repo-')
   execFileSync('git', ['init', '-q'], { cwd })
   const env = {
@@ -44,6 +52,11 @@ async function live() {
   }
   const io: Io = { cwd, env, out: () => undefined, err: () => undefined }
   expect(await run(['init', 'Shop'], io)).toBe(0)
+  if (policies) {
+    const dir = join(resolveProject(cwd, env).storeDir, 'config')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'policies.yaml'), policies)
+  }
   const d: DaemonHandle = await startDaemon({ projectDir: cwd, env, idleShutdownMs: 0 })
   cleanup.push(() => d.close())
   const user = await DaemonClient.connect(d.socketPath)
@@ -116,10 +129,12 @@ describe('shared tool catalogue', () => {
   it('what Kilo sends each role stays within its budget', () => {
     const config = loadConfig()
     const shared = new Map(registeredTools(config).map((t) => [t.spec.name, t]))
+    // Shared definitions describe every role's path; hafiz_doc and hafiz_block_create carry the
+    // section caps per kind for design and plan.
     const budget: Record<string, number> = {
-      manager: 1000,
-      designer: 1000,
-      planner: 1000,
+      manager: 1150,
+      designer: 1150,
+      planner: 1150,
       worker: 500,
     }
     for (const [role, max] of Object.entries(budget)) {
@@ -244,12 +259,12 @@ describe('native tools resolve the calling Kilo session', () => {
   })
 
   it('routes done by role: the worker requests it, the manager closes the block', async () => {
-    const { hooks, read, blocks } = await live()
+    const { hooks, read, blocks } = await live('review: { done: gate }\n')
     const digest = { outcome: 'Built.', interface_delta: ['none'], pointers: [] }
     await session(hooks, 'ses_m', 'manager', 'go')
     await session(hooks, 'ses_w', 'worker', `hafiz:block=${blocks[0]}`, 'ses_m')
     const status = tool(hooks, 'hafiz_block_set_status')
-    // confirm_done: ask (the default) queues the worker's request for review
+    // review.done: gate queues the worker's request for review
     const w = await status.execute(
       { id: blocks[0], status: 'done', digest },
       ctx('ses_w', 'worker'),

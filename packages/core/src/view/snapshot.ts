@@ -1,5 +1,6 @@
 // Snapshot: everything the view engine needs, loaded once through ReadOps into plain immutable
 // data. Everything downstream of `loadSnapshot` is a pure function of the snapshot.
+import { type BlockReviews, reviewStates } from '../domain/review.js'
 import {
   type Block,
   type BlockId,
@@ -10,6 +11,7 @@ import {
   type Edge,
   type ProgressEntry,
   type Project,
+  type Proposal,
   type Step,
   type StepStatus,
   type Thread,
@@ -47,6 +49,8 @@ export interface Snapshot {
   readonly dependsOn: ReadonlyMap<BlockId, readonly BlockId[]>
   readonly dependents: ReadonlyMap<BlockId, readonly BlockId[]>
   readonly edges: readonly Edge[]
+  /** Open design/plan reviews per block (pending, or rejected and not yet revised). */
+  readonly reviews: ReadonlyMap<BlockId, BlockReviews>
 }
 
 export const DEPENDS_ON = 'depends_on'
@@ -80,6 +84,8 @@ export function buildSnapshot(parts: {
   blocks: Block[]
   edges: Edge[]
   per: Map<BlockId, Omit<BlockSnap, 'block'>>
+  /** The review queue; only design/plan reviews are kept (as `reviews`). */
+  proposals?: readonly Proposal[]
 }): Snapshot {
   const blocks = new Map<BlockId, BlockSnap>()
   const sorted = [...parts.blocks].sort(byOrder)
@@ -135,6 +141,7 @@ export function buildSnapshot(parts: {
     dependsOn,
     dependents,
     edges,
+    reviews: reviewStates(parts.blocks, parts.proposals ?? []),
   })
 }
 
@@ -144,11 +151,12 @@ export async function loadSnapshot(
   opts: { progressLast?: number } = {},
 ): Promise<Snapshot> {
   const progressLast = opts.progressLast ?? 10
-  const [project, blocks, edges, threads] = await Promise.all([
+  const [project, blocks, edges, threads, proposals] = await Promise.all([
     read.getProject(),
     read.listBlocks(),
     read.listEdges(),
     read.listThreads(),
+    read.listProposals(),
   ])
   const threadsBy = new Map<BlockId, Thread[]>()
   for (const t of threads) threadsBy.set(t.blockId, [...(threadsBy.get(t.blockId) ?? []), t])
@@ -177,5 +185,5 @@ export async function loadSnapshot(
       ),
     })
   }
-  return buildSnapshot({ project, blocks, edges, per })
+  return buildSnapshot({ project, blocks, edges, per, proposals })
 }

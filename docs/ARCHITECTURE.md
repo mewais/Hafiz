@@ -75,14 +75,14 @@ Identifiers are stable human-readable slugs with a random suffix (`billing-7f2a`
 | Entity | Fields (abridged) | Mutability |
 |---|---|---|
 | `Project` | id, name, origin_fingerprint, root_block_id, schema_set_version, epoch | epoch on major writes |
-| `Block` | id, parent_id, title, **kind**, status, blocked_on?, order, version, done_at{commit?, ts}? | CAS on `version` |
+| `Block` | id, parent_id, title, **kind**, status, blocked_on?, order, version, done_at{commit?, ts}?, reviewed{design?, plan?}? (approved doc versions, §7) | CAS on `version` |
 | `Edge` | from, to, kind (`depends_on` default; extensible) | add/remove |
 | `Doc` | block_id, type (`design`\|`plan`\|`digest`\|…), version, sections{} | CAS; validated against the schema selected by block kind |
 | `StepEvent` | block_id, step_id, status, session_id, ts | append-only; folded into the rendered plan |
 | `ProgressEntry` | block_id, ts, session_id, role, kind (`done`\|`blocked`\|`found`\|`changed`\|`question`\|`report`), text, refs[] | append-only |
 | `Decision` | id, block_id, ts, title, decision, rationale, **standing?** (`never`\|`always`\|`prefer`), status (`active`\|`superseded`), supersedes?, by | append-only; supersede, never edit |
 | `Thread` | id, block_id, title, gist, status (`open`\|`parked`\|`resolved`), entries[] | append-only entries |
-| `Proposal` | id, kind (`decision`\|`thread`\|`progress`\|`digest`\|`gist`\|`status`), payload, source (`condenser`\|`drafter`\|`compliance`), status (`pending`\|`accepted`\|`rejected`) | the review queue |
+| `Proposal` | id, kind (`decision`\|`thread`\|`progress`\|`digest`\|`gist`\|`status`\|`design`\|`plan`), payload, source (`condenser`\|`drafter`\|`compliance`\|`auto_done`\|`review`), status (`pending`\|`accepted`\|`rejected`), resolution_note? | the review queue (§7) |
 | `Session` | id (= host session id, persisted), project_id, host, role, token, focus{blocks[], order?, computed: bool}, counters, last_view_hash, unfiled_summary | persisted; reconnects re-attach |
 | `AuditEntry` | ts, session_id, role, command, target, version_before/after, commit | append-only, mirrors git log |
 
@@ -112,11 +112,13 @@ dropped  ◀── (any, reason recorded as a decision)
 Guards are config (`policies.status`), composed from registered predicates. Defaults:
 
 - `→ done`: a `digest` present and not stale; no `open` threads; children `done`/`dropped`;
-  `confirm_done` policy (default **`ask`** — uses elicitation where the host has it, else returns
-  `needs_confirmation`; `auto` proceeds and enqueues a `status` proposal for review).
+  `review_done`: the review table's `done` row (§7, default **`queue`**). `gate` holds the
+  transition — elicitation where the host has it, else `needs_confirmation`; `queue` proceeds and
+  enqueues a `status` proposal for review; `off` proceeds without one.
   Records `done_at.commit` (repo HEAD) for later drift detection.
-- A worker may `block.request_done(id, digest)`: writes the digest and enqueues the transition for
-  the manager (or auto-applies under `auto` if the role policy allows).
+- A worker may `block.request_done(id, digest)`: writes the digest and, under `done: gate`,
+  enqueues the transition for the manager; otherwise it applies `done` (`queue` also enqueues the
+  review item).
 - `→ blocked` requires `blocked_on`. `→ active` from `blocked` clears it.
 - `→ active` on a block whose parent is `planned` activates the parent (configurable).
 
@@ -190,7 +192,7 @@ sections:
 | `decision.record(block, {title, decision, rationale, standing?, supersedes?})` | append-only; epoch |
 | `thread.open / park(gist) / resume / resolve` | minor |
 | `focus.set(session, blocks, order?)` | overrides computed focus |
-| `proposal.accept / reject(id)` | review queue; `accept` performs the proposed command as the accepting session |
+| `proposal.accept / reject(id, note?)` | review queue; `accept` performs the proposed command as the accepting session (a design/plan review pins the version instead, §7); `note` is stored on the proposal and told to the reviewers. Design/plan reviews: only the user and `review.approver` |
 
 Stale `expected_version` → `Conflict{current}`. All commands are journaled transactions; every
 successful command produces an `AuditEntry` and (major writes) a git commit authored as
@@ -213,10 +215,12 @@ rules say when to use them.
 A command catalogue entry (`commands/catalogue.ts`, `COMMAND_SPECS`) may declare hooks Core runs
 around the command when it is dispatched (`commands/hooks.ts`): `before: [draft_gist]` on `thread.park`; `after:
 [refresh_focus, announce_proposals]` on every `block.*` and `proposal.*` write, plus
-`done_compliance, draft_digest` on `block.request_done` and `block.set_status` (to `done`).
+`done_compliance, draft_digest` on `block.request_done` and `block.set_status` (to `done`),
+`file_reviews` on `block.create` and `announce_resolution` on `proposal.accept/reject` (§7).
 What a hook has for other sessions or the caller's notice queue goes to the gateway through a
-`DispatchSink`; the daemon keeps only gateway concerns (queues, cap-rejection counters,
-announcing proposals to reviewers).
+`DispatchSink` (`proposalsAdded`, `enqueue` for the caller, `notifyReviewers` for the sessions
+that run the review queue); the daemon keeps only gateway concerns (queues, cap-rejection
+counters, announcing proposals to reviewers).
 
 ### 5.2 Queries
 
@@ -226,6 +230,7 @@ announcing proposals to reviewers).
 | `context.delta(session)` | minor events on focus + dependencies since last delivery (§6.5) |
 | `context.explain(session, block)` | which rule fired, which degrade steps applied, why |
 | `block.read(id, zoom)` / `tree.list(…)` / `thread.list(…)` / `proposal.list(…)` | |
+| `review.list(status?)` / `review.show(id)` | the queue with each proposal's table row, block title and reviewed version; one proposal with the doc at that version (§7) |
 | `history(block, type)` | git log/diff of a doc |
 | `session.status(session)` | counters, compliance flags, hash, unfiled size |
 
@@ -243,8 +248,9 @@ tx → epoch bump → audit) with two entry points. `runAs(ctx, actor, {command,
 actor's role against the allowlist first; it backs every command `dispatch` serves.
 `runSystem(ctx, actor, {command, …}, fn)` skips the role check and is Hafiz's own bookkeeping (session
 open/end, counters, compliance state, focus refresh, condensation, checkpoint requests, queued
-proposals, view-hash and delta-cursor updates, `system.progress`, `project.init`,
-`schema.migrate`, and `done` applied by `request_done` under `confirm_done: auto`). No
+proposals, filed reviews (`review.file`), view-hash and delta-cursor updates, `system.progress`,
+`project.init`, `schema.migrate`, and `done` applied by `request_done` under `review.done` `off`
+or `queue`). No
 `runSystem` write is reachable through `dispatch` or the tool catalogue; grep for it to see every
 write that bypasses roles.
 
@@ -390,7 +396,9 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 - **Connectors**: a block at `NONE` with a visible descendant is shown at the next-to-least zoom
   (`LINE`) so every visible block's path stays intact.
 - **Rendering**: one heading per visible block, depth-based level, `Title [id] status · marks`
-  (marks: `focus`, `dependency`, non-default kind); sections are labelled lines, never headings;
+  (marks: `review design` / `review plan` while a gated review holds the block, `design rejected`
+  / `plan rejected` until revised (§7), non-default kind, `focus`, `dependency`); sections are
+  labelled lines, never headings;
   missing docs and empty sections render nothing; superseded decisions render nowhere and standing
   ones only in the floor; runs of heading-only blocks are not blank-line separated.
 - **Wire**: `<hafiz hash="…" role="…">` wraps notices (`> warn: …`) and the view;
@@ -434,8 +442,48 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 - **Drafters** (opt-in, default off): at `request_done` (digest draft from the progress log) and at
   `thread.park` without a gist (gist draft). Event-triggered, cheap model, output is a proposal or a
   pre-filled argument the agent must submit, never a direct write.
-- **Review queue**: `hafiz review` (CLI) and `proposal.list` (MCP) show pending proposals;
-  non-blocking by design — `auto` statuses proceed, the queue is for the user's later pass.
+- **Review queue**: `hafiz review` (CLI), the TUI's Review tab and `hafiz_review` (manager) show
+  pending proposals. Whether an event files one and whether it holds work is a table
+  (`policies.yaml review`, `domain/review.ts`, `commands/review.ts`):
+
+  ```yaml
+  review:
+    design: queue      # off | queue | gate
+    plan:   queue
+    done:   queue      # the status guard `review_done` (§3.2)
+    drafts: queue      # condenser/drafter proposals; off | queue (gate is a config error)
+    approver: user     # user | manager: who may accept/reject design and plan reviews
+  ```
+
+  `off`: no proposal. `queue`: a proposal, work proceeds. `gate`: a proposal, and the next stage
+  **on that block** waits until it is accepted (siblings and parents are unaffected): a design
+  gate refuses spawning the planner or a worker on the block, a plan gate refuses workers (§12.1),
+  a done gate is the status guard. Compliance proposals are outside the table (always queued).
+  - *Filing* (Core, mechanical, never rules text). When a session ends, every design and plan
+    whose current version it wrote is filed (`fileSessionReviews`, from `Core.sessionEnd`;
+    the daemon announces them); `block.create` with an inline design or plan files them at once
+    (`file_reviews` hook). Writes by a role that may approve reviews are not filed. The proposal
+    is `{kind: design|plan, source: review, blockId, payload: review.approve {block, type,
+    version}, note}`; `note` is one line, e.g. `design v3 of 'Billing': changed since v1: scope,
+    interface (+1 provides, -1 consumes)` (sections whose value changed between the approved
+    version and this one, read from the doc history; `new: …` before any approval). One pending
+    proposal per block and doc: a newer version replaces its payload and note; a version that was
+    rejected is never filed again.
+  - *Approval* pins the version on the block (`reviewed: {design: 3}`) and writes a `changed`
+    progress entry "design v3 approved by user" — never a decision. If the doc moved on while
+    waiting, the newer version is filed at once. *Rejection* takes a `note`, stored on the
+    proposal (`resolution_note`); a rejected version keeps holding a gate until a new version is
+    filed. Both reach the reviewers (the manager) as a notice through the `DispatchSink`.
+  - *Who resolves*: design/plan reviews only the user and `approver` (`authorizeResolve`); other
+    proposals as before (the `proposal.*` allowlist). The daemon announces new review proposals
+    only to sessions whose role may approve them.
+  - *Reads* the CLI and the TUI share (daemon RPC): `review.list {status?: pending|accepted|
+    rejected|all}` → proposals plus `mode` (their row), `blockTitle`, `version`; `review.show
+    {id}` → `{item, doc, text}`, the doc at the version under review (from the history when it
+    moved on); accept and reject are `dispatch proposal.accept {id}` / `proposal.reject {id,
+    note?}`. `tree.summary` nodes carry `review` (open reviews: proposal, version, `pending` or
+    `rejected`, note, `mode`) and `reviewed`. The `viewer` role reads them; resolving needs a
+    `user` session (or the manager under `approver: manager`).
 - **Events**: `ViewChanged{session, hash}`, `DeltaAvailable{session}`, `Notice{session}`,
   `ProposalAdded`, `CondensationDue{session}`. The adapter subscribes.
 - **Cost instrumentation**: per session and project — view re-emits, tokens per rebuild, delta
@@ -451,10 +499,13 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 ## 8. Configuration
 
 Layered: built-in → user (`~/.hafiz/config/`) → project (store `config/`). Files: `hafiz.yaml`
-(backend, window sizes per model, `confirm_done`, LLM provider for condenser/drafters), `roles.yaml`,
+(backend, window sizes per model, LLM provider for condenser/drafters), `roles.yaml`,
 `views.yaml`, `zooms.yaml`, `kinds.yaml`, `schemas/`, `policies.yaml` (status guards, epoch
-minor paths, caps soft zone), `compliance.yaml`, `nudge.yaml`, `tail.yaml`, `rules/` (per-role
-Markdown the adapter installs as agent prompts).
+minor paths, caps soft zone, spawn table, review table), `compliance.yaml`, `nudge.yaml`,
+`tail.yaml`, `rules/` (per-role Markdown the adapter installs as agent prompts). Retired settings
+in an override layer are mapped onto their successors at load and listed by `hafiz doctor`
+(`hafiz.yaml confirm_done: ask` → `review.done: gate`, `auto` → `queue`; the `confirm_done`
+guard → `review_done`).
 
 ```yaml
 roles:
@@ -571,14 +622,15 @@ One server process per role per host agent; exposes that role's tools only (**ro
 instance**, universal across hosts). The agent tool catalogue (names, descriptions, zod schemas,
 routing to commands; §5.1) lives in core (`commands/tools.ts`) and is shared with host-native tool
 registrations such as Kilo's (§12.1); the server lists the `hosts: [mcp]` context reads unless it
-serves Kilo (`HAFIZ_HOST=kilo`). Tool descriptions carry the mechanics. Elicitation is used for
-`confirm_done: ask` where supported; otherwise `needs_confirmation`. Resources: `hafiz://block/<id>`;
+serves Kilo (`HAFIZ_HOST=kilo`). Tool descriptions carry the mechanics (`hafiz_doc` and
+`hafiz_block_create` list the sections per kind with their token caps). Elicitation is used for
+`review.done: gate` where supported; otherwise `needs_confirmation`. Resources: `hafiz://block/<id>`;
 prompts: one per role. Session: token from env → session; project from roots/cwd.
 
 ### 11.2 CLI (`hafiz …`)
 
 `init [--adopt] [--backend]`, `migrate-pointer`, `tree`, `show <block> [--zoom]`, `history <block> [type]`, `revert`, `status`,
-`review`, `checkpoint`, `direct` (record a standing decision), `focus`, `explain`, `doctor`
+`review [--accept ID | --reject ID --note T | --show ID]`, `checkpoint`, `direct` (record a standing decision), `focus`, `explain`, `doctor`
 (wiring, drift: files under a done block changed since `done_at.commit`), `migrate`,
 `export/import`, `install <host>`, `daemon`.
 
@@ -597,7 +649,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |
-| `done` confirmation | `needs_confirmation` (no elicitation on Kilo); default `auto` makes it rare |
+| `done` confirmation | `needs_confirmation` (no elicitation on Kilo) under `review.done: gate`; the default `queue` never asks |
 
 #### Mechanical checks
 
@@ -611,6 +663,7 @@ the condenser's helper sessions pass through.
 |---|---|
 | Spawn on a block | Kilo's `task` gets a required `block`: a block id (exact, unique prefix or unique title, `matchBlock`), or `none` for a helper outside Hafiz, never for a role agent. Unknown ids are refused with the valid ones; a valid one becomes the `hafiz:block=<id>` marker in the prompt, so `session.open` is unchanged |
 | Spawn fits the block | the spawned role must be listed for the block's state in `policies.yaml spawn.roles_by_state` (`no_design` → designer, `no_plan` → designer, planner, `has_plan` → any, `done`/`dropped` → nobody); the refusal names the missing step |
+| A gated review holds its block | a design or plan whose `policies.yaml review` row is `gate` and whose review is open (`tree.summary` node `review`: pending, or rejected and not yet revised) counts as not there yet, so a design under review admits only the designer and a plan under review no worker. The refusal names the proposal and the fix: "design of Payments (v3) awaits review: hafiz review --accept prop_…" (a rejection: its note, "revise it"). One block only |
 | Pass the block, not its contents | a `task` prompt that quotes `<hafiz…>` or exceeds `host.kilo.delegation_prompt_cap` tokens is refused: the subagent sees its block in its own view |
 | Only the report reaches the parent | `tool.execute.after`: the child's full text is captured to the store and the parent gets its fenced `hafiz-report` (or the text and a line saying there is none); a child whose role may finish its block and whose session ran neither a done request nor a blocked entry (`session.activity`) gets "ended without a done request or a blocked entry" |
 | No blind overwrites | `hafiz_doc` sends `require_version`: writing an existing doc needs its `expected_version` (Core) |
@@ -630,7 +683,7 @@ prefix, retro-stubbing, condensation ownership. See HOST-MATRIX §3.
 
 ```
 packages/ core · storage-fs · storage-sqlite · gateway-mcp · cli · host-kilo · (host-claude-code, host-codex: later)
-packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · hooks · blocks · docs · logs · project · proposals · reads · authz · catalogue: commands · tools: agent tools)
+packages/core/src/ commands/ (core.ts facade + dispatch · tx.ts · hooks · blocks · docs · logs · project · proposals · review · reads · authz · catalogue: commands · tools: agent tools)
                   session/ (service: sessions, counters, focus · compliance + compliance-run · cost · nudge · review)
                   condense/ (condenser · service: checkpoint, condense · drafter + drafting) · view/ (engine … · service: context.*, block.read)
                   domain/ · config/ · schema/ · store/ · llm/ · project/

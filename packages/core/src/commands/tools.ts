@@ -78,9 +78,16 @@ const FORMATS: Record<string, string> = {
 
 /**
  * The sections a document type takes, grouped by format, from the configured schemas (every
- * kind): `steps: [{id, title, notes?}]; acceptance, risks: [string]`.
+ * kind): `steps: [{id, title, notes?}]; acceptance, risks: [string]`. With `caps: 'all'`, first
+ * the sections per kind (kinds sharing a schema together) with their token caps, `*` = required:
+ * `component, feature: purpose* 150, scope* 200 | …`; `caps: 'required'` lists only the required
+ * sections and caps, without the value shapes.
  */
-export function sectionsHint(config: Config, types: readonly string[]): string {
+export function sectionsHint(
+  config: Config,
+  types: readonly string[],
+  opts: { caps?: 'all' | 'required' } = {},
+): string {
   const byFormat = new Map<string, Set<string>>()
   for (const s of Object.values(config.schemas))
     if (types.includes(s.type))
@@ -89,10 +96,36 @@ export function sectionsHint(config: Config, types: readonly string[]): string {
         names.add(sec.name)
         byFormat.set(sec.format, names)
       }
-  return Object.keys(FORMATS)
+  const formats = Object.keys(FORMATS)
     .filter((f) => byFormat.has(f))
     .map((f) => `${[...(byFormat.get(f) ?? [])].join(', ')}: ${FORMATS[f]}`)
     .join('; ')
+  if (!opts.caps) return formats
+  const required = opts.caps === 'required'
+  const per = types.map((t) => [t, capsHint(config, t, required)] as const)
+  const caps = per.length === 1 ? per[0]?.[1] : per.map(([t, h]) => `${t} [${h}]`).join('; ')
+  return required
+    ? `required sections (cap in tokens): ${caps}`
+    : `Sections (* required, cap in tokens): ${caps}. Values: ${formats}`
+}
+
+/** `kind, kind: name* cap, … | kind: …` for one doc type; one schema for all kinds drops the kinds. */
+function capsHint(config: Config, type: string, requiredOnly: boolean): string {
+  const kindsBySchema = new Map<string, string[]>()
+  for (const [kind, k] of Object.entries(config.kinds.kinds)) {
+    const name = k.schemas[type]
+    if (name && config.schemas[name])
+      kindsBySchema.set(name, [...(kindsBySchema.get(name) ?? []), kind])
+  }
+  return [...kindsBySchema]
+    .map(([name, kinds]) => {
+      const secs = (config.schemas[name]?.sections ?? [])
+        .filter((x) => !requiredOnly || x.required)
+        .map((x) => `${x.name}${x.required && !requiredOnly ? '*' : ''} ${x.cap}`)
+        .join(', ')
+      return kindsBySchema.size > 1 ? `${kinds.join(', ')}: ${secs}` : secs
+    })
+    .join(' | ')
 }
 
 /** Zooms that render something (not `NONE`). */
@@ -195,7 +228,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     name: 'hafiz_block_create',
     commands: ['block.create'],
     description: (cfg) =>
-      `New planned block under parent. kind: ${Object.keys(cfg.kinds.kinds).join(', ')} (default ${cfg.kinds.default_kind}). design, plan: sections as in hafiz_doc.`,
+      `New planned block under parent; kind (default ${cfg.kinds.default_kind}) picks its doc sections. design, plan: {section: value} as in hafiz_doc; ${sectionsHint(cfg, ['design', 'plan'], { caps: 'required' })}.`,
     shape: () => ({
       parent: z.string(),
       title: z.string(),
@@ -295,7 +328,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       sentences(
         `Patch a block's ${t.choices.join(' or ')}: only the sections given change.`,
         t.choices.some((d) => t.can('doc.write', d)) && 'replace: true rewrites it whole.',
-        `Sections: ${sectionsHint(cfg, t.choices)}.`,
+        `${sectionsHint(cfg, t.choices, { caps: 'all' })}.`,
         t.choices.includes('design') &&
           'Each consumes entry names its provider id in block; dependencies follow.',
         'Once it exists, pass expected_version (from your last write or the rejection); on conflict re-read, merge, retry.',
@@ -413,11 +446,16 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       param: 'action',
       options: () => Object.entries(REVIEW_ACTIONS).map(([x, c]) => option(x, c)),
     },
-    description: () =>
-      'Review queue. list: pending proposals and what accepting runs. accept: id, runs it. reject: id.',
+    description: (cfg, t) =>
+      sentences(
+        'Review queue. list: pending proposals and what accepting runs. accept: id, runs it. reject: id, note (why).',
+        t.choices.includes('accept') &&
+          `Design and plan reviews: ${cfg.policies.review.approver === 'user' ? 'the user only' : 'you or the user'}.`,
+      ),
     shape: (_cfg, t) => ({
       action: enumOf(t.choices),
       ...(t.choices.some((x) => x !== 'list') ? { id: z.string().optional() } : {}),
+      ...(t.choices.includes('reject') ? { note: z.string().optional() } : {}),
     }),
     route: (a) => {
       const action = String(a.action) as keyof typeof REVIEW_ACTIONS
@@ -425,7 +463,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       if (!command) throw new ValidationError(`unknown review action '${String(a.action)}'`)
       if (action === 'list') return { command, args: { status: 'pending' } }
       need(a, ['id'], `review ${action}`)
-      return { command, args: { id: a.id } }
+      return { command, args: pick(a, action === 'reject' ? ['id', 'note'] : ['id']) }
     },
   },
   {
