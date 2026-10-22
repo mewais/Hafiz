@@ -163,14 +163,14 @@ llm:
 `policies.yaml` (`~/.hafiz/config/` or `<store>/config/`) decides per event whether a proposal is
 filed and whether it holds the next stage on that block until accepted. `off`: no proposal;
 `queue`: a proposal, work goes on; `gate`: a proposal, and the block waits (siblings and
-parents do not). The defaults are `queue` everywhere, approved by the user; this setting gates
-designs:
+parents do not). The defaults are `queue`, except `done: gate` (as before), approved by the user; this
+setting also gates designs:
 
 ```yaml
 review:
   design: gate       # no planner or worker on the block until its design is accepted
   plan:   queue      # gate: no worker until the plan is accepted
-  done:   queue      # gate: done waits for confirmation / the manager
+  done:   gate       # default: done waits for confirmation / the manager
   drafts: queue      # condenser and drafter proposals (off | queue; never gate)
   approver: user     # user | manager: who accepts or rejects design and plan reviews
 ```

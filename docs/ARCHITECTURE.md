@@ -112,7 +112,7 @@ dropped  ◀── (any, reason recorded as a decision)
 Guards are config (`policies.status`), composed from registered predicates. Defaults:
 
 - `→ done`: a `digest` present and not stale; no `open` threads; children `done`/`dropped`;
-  `review_done`: the review table's `done` row (§7, default **`queue`**). `gate` holds the
+  `review_done`: the review table's `done` row (§7, default **`gate`**, the former `confirm_done: ask`). `gate` holds the
   transition — elicitation where the host has it, else `needs_confirmation`; `queue` proceeds and
   enqueues a `status` proposal for review; `off` proceeds without one.
   Records `done_at.commit` (repo HEAD) for later drift detection.
@@ -450,7 +450,7 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   review:
     design: queue      # off | queue | gate
     plan:   queue
-    done:   queue      # the status guard `review_done` (§3.2)
+    done:   gate       # the status guard `review_done` (§3.2); as confirm_done: ask did
     drafts: queue      # condenser/drafter proposals; off | queue (gate is a config error)
     approver: user     # user | manager: who may accept/reject design and plan reviews
   ```
@@ -649,7 +649,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |
-| `done` confirmation | `needs_confirmation` (no elicitation on Kilo) under `review.done: gate`; the default `queue` never asks |
+| `done` confirmation | `needs_confirmation` (no elicitation on Kilo) under `review.done: gate` (the default); `queue` never asks |
 
 #### Mechanical checks
 

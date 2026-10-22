@@ -34,6 +34,6 @@ review:
   # confirmation, a worker's done request waits for the manager).
   design: queue      # filed when the session that wrote the design ends, or on block.create
   plan:   queue
-  done:   queue
+  done:   gate       # default holds done for confirmation (previously confirm_done: ask)
   drafts: queue      # condenser/drafter proposals; off | queue (drafts never gate)
   approver: user     # user | manager: who may accept or reject design/plan reviews

@@ -223,7 +223,7 @@ export const reviewPolicy = z
   .object({
     design: reviewMode.default('queue'),
     plan: reviewMode.default('queue'),
-    done: reviewMode.default('queue'),
+    done: reviewMode.default('gate'),
     // Condenser and drafter proposals: suggestions about what was not recorded, never a hold.
     drafts: reviewMode.default('queue').refine((m) => m !== 'gate', {
       message: 'review.drafts cannot be gate: drafts never hold work (off | queue)',

@@ -37,11 +37,11 @@ describe('config', () => {
     expect(c.roles.roles.manager).toBeDefined() // existing roles kept
   })
 
-  it('ships every review row as queue, approved by the user', () => {
+  it('ships queue for design, plan and drafts, gate for done (the former default), approved by the user', () => {
     expect(loadConfig().policies.review).toEqual({
       design: 'queue',
       plan: 'queue',
-      done: 'queue',
+      done: 'gate',
       drafts: 'queue',
       approver: 'user',
     })
