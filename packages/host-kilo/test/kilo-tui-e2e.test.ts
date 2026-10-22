@@ -96,8 +96,22 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
       },
     })
     await u.dispatch('step.set', { block: payments, stepId: 's1', status: 'done' })
-    await mk(root, 'Reporting')
+    const reporting = await mk(root, 'Reporting')
     u.close()
+    // a designer session writes Reporting's design and ends: one review in the queue
+    const ds = await DaemonClient.connect(daemon.socketPath)
+    await ds.openSession({ id: 'ds1', host: 'test', role: 'designer', spawnedBlock: reporting })
+    await ds.dispatch('doc.patch', {
+      block: reporting,
+      type: 'design',
+      sections: {
+        purpose: 'monthly sales',
+        scope: ['in: csv export'],
+        interface: { provides: [{ name: 'report()' }] },
+      },
+    })
+    await ds.sessionEnd()
+    ds.close()
     mock = await startMockLlm({ fallback: (req) => responder(req) })
     // The TUI half is registered the way `hafiz install kilo --global` does: tui.json.
     writeFileSync(join(home, '.config', 'kilo', 'tui.json'), JSON.stringify({ plugin: [PKG] }))
@@ -170,15 +184,17 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     return { frame, keys, until }
   }
 
-  it('the sidebar shows the Hafiz tree and the /hafiz route opens', async () => {
+  it('the sidebar shows the Hafiz tree, the /hafiz route opens, the review overlay accepts', async () => {
     responder = () => ({ text: 'All good.' })
     const t = tui(['--agent', 'manager', '--prompt', 'hello from the tui test'])
-    const f1 = await t.until((f) => f.includes('manager · focus') && f.includes('Payments'))
+    const f1 = await t.until((f) => f.includes('manager · on') && f.includes('Payments'))
     console.log(`── TUI frame ──\n${f1}`)
     expect(f1).toContain('Hafiz · Shop')
-    expect(f1).toContain('manager · focus')
+    expect(f1).toContain('manager · on')
     expect(f1).toMatch(/◆ Shop/)
-    expect(f1).toMatch(/▶ Payments\s+1\/3/)
+    expect(f1).toMatch(/▶ Payments\s+1\/3 steps/)
+    expect(f1).toContain('review  design Reporting')
+    expect(f1).toContain('? legend')
     // status chip next to the prompt: first focus block (+ the others) of this manager session
     expect(f1).toMatch(/◆ Auth \+2/)
 
@@ -195,7 +211,45 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     const f3 = await t.until((f) => f.includes('[3 decisions]'), 10000)
     expect(f3).toContain('standing (the floor every view carries)')
     t.keys('Escape')
-    expect(await t.until((f) => f.includes('manager · focus'), 10000)).toContain('Hafiz · Shop')
+    expect(await t.until((f) => f.includes('manager · on'), 10000)).toContain('Hafiz · Shop')
+
+    // the review overlay: <leader>v (ctrl+x v) opens the list over the session
+    t.keys('C-x')
+    await sleep(200)
+    t.keys('v')
+    const r1 = await t.until((f) => f.includes('Hafiz review · 1 pending'), 10000)
+    console.log(`── review list ──\n${r1}`)
+    expect(r1).toMatch(/› design {2}Reporting v1 {2}· {2}review · \w+ {2}· {2}queue/)
+    t.keys('Enter')
+    const r2 = await t.until((f) => f.includes('design review · Reporting'), 10000)
+    console.log(`── review detail ──\n${r2}`)
+    expect(r2).toContain('Purpose: monthly sales')
+    expect(r2).toContain('by designer')
+    expect(r2).toContain('Open questions')
+    t.keys('r')
+    const r3 = await t.until((f) => f.includes('reject design · Reporting v1'), 10000)
+    console.log(`── reject prompt ──\n${r3}`)
+    expect(r3).toContain('Why? One or two lines.')
+    // esc steps back one view at a time, typing in the prompt never triggers a/r
+    t.keys('Escape')
+    expect(await t.until((f) => f.includes('design review · Reporting'), 10000)).toContain(
+      'd previous version',
+    )
+    t.keys('Escape')
+    expect(await t.until((f) => f.includes('Hafiz review · 1 pending'), 10000)).toContain(
+      '⏎ open · a accept',
+    )
+    // accept as the user: a toast, and the list redraws empty from the store
+    t.keys('a')
+    const r4 = await t.until((f) => f.includes('Hafiz review · 0 pending'), 10000)
+    console.log(`── after accept ──\n${r4}`)
+    expect(r4).toContain('nothing pending review')
+    expect(r4).toContain('design Reporting v1 accepted')
+    t.keys('Escape')
+    expect(await t.until((f) => !f.includes('Hafiz review ·'), 10000)).not.toContain(
+      'review  design Reporting',
+    )
+
     // the keybind: <leader>f (ctrl+x f)
     t.keys('C-x')
     await sleep(200)

@@ -131,6 +131,14 @@ describe('review table: design and plan rows', () => {
     expect(old.doc?.version).toBe(2)
     expect(old.text).not.toContain('refund()')
     expect(old.text).toContain('out: refunds')
+    // show: what changed since the approved version, and that version as text
+    const shown = await core.reviewShow(user, third?.id as string)
+    expect(shown.changed).toEqual({ since: 2, sections: ['interface'], removed: [] })
+    expect(shown.previous?.version).toBe(2)
+    expect(shown.previous?.text).not.toContain('refund()')
+    // a first version has nothing before it; an unapproved v2 compares with nothing approved
+    expect((await core.reviewShow(user, first?.id as string)).previous?.version).toBe(1)
+    expect((await core.reviewShow(user, first?.id as string)).changed).toBeUndefined()
   })
 
   it('accepting an older version files the newer one at once', async () => {

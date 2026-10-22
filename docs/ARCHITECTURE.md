@@ -442,8 +442,8 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 - **Drafters** (opt-in, default off): at `request_done` (digest draft from the progress log) and at
   `thread.park` without a gist (gist draft). Event-triggered, cheap model, output is a proposal or a
   pre-filled argument the agent must submit, never a direct write.
-- **Review queue**: `hafiz review` (CLI), the TUI's Review tab and `hafiz_review` (manager) show
-  pending proposals. Whether an event files one and whether it holds work is a table
+- **Review queue**: `hafiz review` (CLI), the Kilo TUI's review overlay (§12.1) and
+  `hafiz_review` (manager) show pending proposals. Whether an event files one and whether it holds work is a table
   (`policies.yaml review`, `domain/review.ts`, `commands/review.ts`):
 
   ```yaml
@@ -479,8 +479,10 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
     only to sessions whose role may approve them.
   - *Reads* the CLI and the TUI share (daemon RPC): `review.list {status?: pending|accepted|
     rejected|all}` → proposals plus `mode` (their row), `blockTitle`, `version`; `review.show
-    {id}` → `{item, doc, text}`, the doc at the version under review (from the history when it
-    moved on); accept and reject are `dispatch proposal.accept {id}` / `proposal.reject {id,
+    {id}` → `{item, doc, text, changed?, previous?}`, the doc at the version under review (from
+    the history when it moved on), the sections changed since the approved version
+    (`changedSections`, the same diff the note is written from) and the version before it as
+    text (the approved one, else the one just before); accept and reject are `dispatch proposal.accept {id}` / `proposal.reject {id,
     note?}`. `tree.summary` nodes carry `review` (open reviews: proposal, version, `pending` or
     `rejected`, note, `mode`) and `reviewed`. The `viewer` role reads them; resolving needs a
     `user` session (or the manager under `approver: manager`).
@@ -650,6 +652,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |
 | `done` confirmation | `needs_confirmation` (no elicitation on Kilo) under `review.done: gate` (the default); `queue` never asks |
+| TUI panel (`hafiz-kilo/tui`) | a separate TUI plugin (HOST-MATRIX §3.3), event-driven, no timers. Sidebar: `manager · on Checkout, Pricing`, the tree (`▸ Orders  +2 hidden`, `2/5 steps`, `waits on user`, `(review)` / `(rejected)` on a block whose gated design or plan review is open; queue-mode reviews leave the tree alone), `open questions` on the focus blocks, `review  design Orders · done Cart totals`, notices, and a footer `? legend · /hafiz tree · ctrl+x v review` whose click (or the palette command) opens a glyph legend. The `/hafiz` route keeps Tree / Review / Decisions / Notices (the session's cost heads Notices). **Review overlay** (`<leader>v`, `/hafiz-review`, a click on the review line, ⏎ on the route's Review tab): Kilo dialogs over the screen: the list (each item's kind, block, version, source, age, gate or queue, and its note; ⏎ detail, `a` accept, `r` reject), the detail (`review.show`: the doc with `(changed since vM)` on changed headings, `d` the previous version, the block's decisions and open questions), and a reject prompt whose note reaches the manager. Reads stay on the `viewer` session; accept and reject are the panel's only writes, sent as a `user` session (`kilo-tui-user`) opened on first use; a refusal (`approver`, already resolved) is an error toast |
 
 #### Mechanical checks
 

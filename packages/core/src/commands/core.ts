@@ -115,7 +115,14 @@ export type { ContextOptions, ContextView } from '../view/service.js'
 export type { NeedsConfirmation } from './blocks.js'
 export type { DispatchSink } from './hooks.js'
 export type { BlockDetail, DecisionBrief, TreeSummary, TreeSummaryNode } from './reads.js'
-export { changedSince, docAtVersion, type ReviewItem, type ReviewShow } from './review.js'
+export {
+  changedSections,
+  changedSince,
+  docAtVersion,
+  type ReviewItem,
+  type ReviewShow,
+  type SectionChange,
+} from './review.js'
 export type { CommandResult, CoreContext } from './tx.js'
 
 export interface CoreDeps {

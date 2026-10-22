@@ -46,6 +46,39 @@ function interfaceDelta(old: SectionValue | undefined, cur: SectionValue | undef
   return parts.join(', ')
 }
 
+/** A section that differs between two versions of a doc. */
+export interface SectionChange {
+  name: string
+  /** In the older version, not in the newer one. */
+  removed: boolean
+  /** Interface sections: `+1 provides, -1 consumes`; empty otherwise. */
+  delta: string
+}
+
+/** The sections that differ between two versions of a doc, in schema order then by name. */
+export function changedSections(
+  schema: DocSchema | undefined,
+  old: Pick<Doc, 'sections'> | null,
+  cur: Pick<Doc, 'sections'>,
+): SectionChange[] {
+  const known = schema?.sections.map((s) => s.name) ?? []
+  const names = [...new Set([...Object.keys(old?.sections ?? {}), ...Object.keys(cur.sections)])]
+  const ordered = [
+    ...known.filter((n) => names.includes(n)),
+    ...names.filter((n) => !known.includes(n)).sort(),
+  ]
+  const structured = new Set(
+    schema?.sections.filter((s) => s.format === 'structured').map((s) => s.name),
+  )
+  return ordered
+    .filter((n) => !same(old?.sections[n], cur.sections[n]))
+    .map((n) => ({
+      name: n,
+      removed: !!old && n in old.sections && !(n in cur.sections),
+      delta: structured.has(n) ? interfaceDelta(old?.sections[n], cur.sections[n]) : '',
+    }))
+}
+
 /**
  * One line naming what changed between two versions of a doc: the sections (schema order) and,
  * for interface sections, how many provides/consumes were added or removed.
@@ -56,22 +89,9 @@ export function changedSince(
   old: Pick<Doc, 'version' | 'sections'> | null,
   cur: Pick<Doc, 'sections'>,
 ): string {
-  const known = schema?.sections.map((s) => s.name) ?? []
-  const names = [...new Set([...Object.keys(old?.sections ?? {}), ...Object.keys(cur.sections)])]
-  const ordered = [
-    ...known.filter((n) => names.includes(n)),
-    ...names.filter((n) => !known.includes(n)).sort(),
-  ]
-  const structured = new Set(
-    schema?.sections.filter((s) => s.format === 'structured').map((s) => s.name),
+  const changed = changedSections(schema, old, cur).map(
+    (c) => `${c.name}${c.removed ? ' removed' : ''}${c.delta ? ` (${c.delta})` : ''}`,
   )
-  const changed = ordered
-    .filter((n) => !same(old?.sections[n], cur.sections[n]))
-    .map((n) => {
-      const d = structured.has(n) ? interfaceDelta(old?.sections[n], cur.sections[n]) : ''
-      const gone = old && n in old.sections && !(n in cur.sections) ? ' removed' : ''
-      return `${n}${gone}${d ? ` (${d})` : ''}`
-    })
   if (!old) return `new: ${changed.join(', ') || 'empty'}`
   return changed.length
     ? `changed since v${old.version}: ${changed.join(', ')}`
@@ -260,6 +280,16 @@ export interface ReviewShow {
   doc: Doc | null
   /** The doc rendered as labelled sections. */
   text: string
+  /**
+   * Design/plan reviews over an approved version: the sections that differ from it (names as in
+   * the schema; `removed` ones are absent from `text`).
+   */
+  changed?: { since: number; sections: string[]; removed: string[] }
+  /**
+   * Design/plan reviews: the version before this one as text: the approved version if there is
+   * one, else the version just before (absent for a first version or when the history lost it).
+   */
+  previous?: { version: number; text: string }
 }
 
 /**
@@ -273,11 +303,25 @@ export async function reviewShow(ctx: CoreContext, by: Actor, id: string): Promi
   if (item.source === 'review') {
     const b = await mustBlock(read, item.blockId as BlockId)
     const type = item.kind as ReviewType
-    const doc = await docAtVersion(read, b.id, type, item.version ?? 0)
+    const version = item.version ?? 0
+    const doc = await docAtVersion(read, b.id, type, version)
     const text = doc
       ? renderDoc(ctx.config, b.kind, doc)
       : `${type} v${item.version} is no longer in the history (current: v${b.docVersions[type]})`
-    return { item, doc, text }
+    const approved = b.reviewed?.[type] ?? 0
+    const base = approved && approved < version ? approved : version - 1
+    const old = base > 0 ? await docAtVersion(read, b.id, type, base) : null
+    const out: ReviewShow = { item, doc, text }
+    if (old) out.previous = { version: old.version, text: renderDoc(ctx.config, b.kind, old) }
+    if (doc && old && base === approved) {
+      const changes = changedSections(schemaFor(ctx.config, b.kind, type), old, doc)
+      out.changed = {
+        since: approved,
+        sections: changes.filter((c) => !c.removed).map((c) => c.name),
+        removed: changes.filter((c) => c.removed).map((c) => c.name),
+      }
+    }
+    return out
   }
   // Any other proposal: the doc its command would write, else the command itself.
   const args = item.payload.args

@@ -116,19 +116,28 @@ The MCP gateway (`hafiz mcp --role <r>`) serves the same tools plus `hafiz_conte
 ## The Kilo TUI panel
 
 In the Kilo TUI the session sidebar gets a **Hafiz** section: the project, this session's role
-and focus, the block tree (◆ root, ✓ done, ▶ active, ◐ active with children, ○ planned,
-⧗ blocked, ✗ dropped; `3/5` plan steps; `●` on this session's focus blocks), open threads,
-pending review items, the latest notices and the session's Hafiz cost. Paths to focus and active
-blocks are open, finished and planned subtrees are folded to `▸ Billing (4)`; click a row to open
-or close it. The prompt shows a chip such as `◆ Payments · 2 pending`, and new review items and
-compliance notices pop up as toasts.
+and the blocks it is on (`manager · on Checkout, Pricing`), the block tree (◆ root, ✓ done,
+▶ active, ◐ active with children, ○ planned, ⧗ blocked, ✗ dropped; `3/5 steps`; `waits on user`;
+`(review)` or `(rejected)` on a block a gated design or plan review holds; `●` on this session's
+focus blocks), open questions on the focus blocks, the pending review items
+(`review  design Orders · done Cart totals`) and the latest notices. Paths to focus and active
+blocks are open, finished and planned subtrees are folded to `▸ Billing  +4 hidden`; click a row
+to open or close it. Click the footer (`? legend · …`) for a legend of the glyphs. The prompt
+shows a chip such as `◆ Payments · 2 pending`, and new review items and compliance notices pop up
+as toasts.
 
-`/hafiz` (or `ctrl+x f`) opens a full-screen view with three tabs: **Tree** (↑↓ move, ⏎/→ open,
+`ctrl+x v` (or `/hafiz-review`, or a click on the review line) opens the **review overlay**: the
+pending items (⏎ opens one: the doc at the version under review, with the sections changed since
+the approved version marked, `d` for the previous version, and the block's decisions and open
+questions), `a` accepts, `r` rejects with a note the manager sees, esc steps back. These are the
+panel's only writes, made as the `user`; everything else it reads as a `viewer` session the
+daemon refuses all writes for.
+
+`/hafiz` (or `ctrl+x f`) opens a full-screen view with four tabs: **Tree** (↑↓ move, ⏎/→ open,
 ← close, `z` cycles the zoom of the selected block, `h` its doc history), **Review** (pending
-proposals with what they would run) and **Decisions** (standing rules and recent decisions per
-block). Esc goes back. The panel is strictly read-only: it opens a `viewer` session the daemon
-refuses all writes for. Accept or reject with `hafiz review --accept <id>`; everything else goes
-through agents or the CLI.
+proposals with what they would run; ⏎ opens one in the overlay), **Decisions** (standing rules
+and recent decisions per block) and **Notices** (the session's Hafiz cost, then every notice).
+Esc goes back.
 
 ## Condenser model
 
