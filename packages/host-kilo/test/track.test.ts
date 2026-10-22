@@ -213,6 +213,13 @@ describe('untracked git repo', () => {
     expect(outputOf(res as KiloToolResult)).toContain('onboarding is pending')
     const p = await daemon().service.core.backend.read.getProject()
     expect(p?.onboarding).toBe('pending')
+    // a one-off fix needs no designer: nothing is asked until tracked work starts
+    expect((await system(hooks, 'ses_b')).join('\n')).not.toContain('Onboarding pending')
+    const core = daemon().service.core
+    await core.blockCreate(
+      { sessionId: 'ses_b', role: 'manager' },
+      { parent: p?.rootBlockId as string, title: 'Payments' },
+    )
     const sys = (await system(hooks, 'ses_b')).join('\n')
     expect(sys).toContain('Onboarding pending')
     // the rules (injected: the agent's prompt predates tracking) say what onboarding means

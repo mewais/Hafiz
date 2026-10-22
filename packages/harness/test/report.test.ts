@@ -25,6 +25,7 @@ const result = (m: RunMetrics, repeat = 1): RunResult => ({
   mock: false,
   passed: true,
   turns: [{ agent: 'build', code: 0, ms: 5 }],
+  reviews: [],
   wallMs: 5000,
   metrics: m,
   filesChanged: [],
@@ -35,7 +36,7 @@ const result = (m: RunMetrics, repeat = 1): RunResult => ({
 describe('task files', () => {
   it('ships S, M and L tasks that parse', () => {
     const tasks = loadTasks()
-    expect(tasks.map((t) => t.size).sort()).toEqual(['L', 'M', 'S'])
+    expect(tasks.map((t) => t.size).sort()).toEqual(['L', 'M', 'M', 'S'])
     for (const t of tasks) {
       expect(t.turns.length).toBeGreaterThan(0)
       expect(Object.keys(t.expect).length).toBeGreaterThan(0)

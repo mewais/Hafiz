@@ -1,7 +1,8 @@
-// The Hafiz panel in Kilo's TUI (a separate module: `hafiz-kilo/tui`). Strictly
-// view-only: a sidebar section with the block tree, a status chip next to the prompt, toasts for
-// new review items and compliance notices, and a full-screen `/hafiz` route (Tree / Review /
-// Decisions / Notices). Nothing here writes; changes go through agents or the `hafiz` CLI.
+// The Hafiz panel in Kilo's TUI (a separate module: `hafiz-kilo/tui`): a sidebar section with
+// the block tree, a status chip next to the prompt, toasts for new review items and compliance
+// notices, a full-screen `/hafiz` route (Tree / Review / Decisions / Notices) and the review
+// overlay (review.tsx). The panel reads as a `viewer`; its only writes are the overlay's accept
+// and reject, as the `user` role. Everything else goes through agents or the `hafiz` CLI.
 //
 // Kilo loads this file in its TUI thread (the server plugin runs in a worker), compiled from Solid
 // JSX with `generate: universal` against `@opentui/solid`; Kilo maps `solid-js` and `@opentui/*`
@@ -10,9 +11,9 @@
 // shows its state instead: `off` (not git), `untracked` (a hint), `connecting`, or the full tree.
 // Everything is registered at startup; `TuiPanel` (state.ts) switches on Kilo events, no timers.
 import { basename } from 'node:path'
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { projectLocator, type TuiSnapshot, TuiSource } from './data.js'
-import type { Colour, TuiApi, TuiPlugin, TuiTheme } from './kilo-tui.js'
+import type { TuiApi, TuiPlugin } from './kilo-tui.js'
 import {
   connectingLines,
   decisionLines,
@@ -21,6 +22,7 @@ import {
   type Line,
   nextDetail,
   noticeLines,
+  REVIEW_KEY_LABEL,
   reviewDetail,
   reviewList,
   routeTree,
@@ -30,60 +32,15 @@ import {
   type Tone,
   treeKey,
 } from './model.js'
+import { ReviewOverlay } from './review.js'
+import { ReviewFlow } from './review-flow.js'
 import { PANEL_EVENTS, TuiPanel } from './state.js'
 import { TuiStore } from './store.js'
+import { Lines, usePanel, useStore } from './view.js'
 
 const ROUTE = 'hafiz'
-
-function colour(theme: TuiTheme, tone: Tone): Colour {
-  const t = theme.current
-  switch (tone) {
-    case 'title':
-      return t.text
-    case 'muted':
-      return t.textMuted
-    case 'accent':
-      return t.accent
-    case 'success':
-      return t.success
-    case 'warning':
-      return t.warning
-    case 'error':
-      return t.error
-    default:
-      return t.text
-  }
-}
-
-/** Re-render on every store change (the store is plain JS; this is the bridge to Solid). */
-function useStore(store: TuiStore, sessionId?: () => string | undefined) {
-  const [tick, setTick] = createSignal(0)
-  onMount(() => {
-    const off = store.subscribe(() => setTick((n) => n + 1))
-    const release = store.watch(sessionId?.())
-    onCleanup(() => {
-      off()
-      release()
-    })
-  })
-  return () => {
-    tick()
-    return store.snapshot
-  }
-}
-
-/** Re-render when the panel switches state (untracked -> tracked, daemon reached). */
-function usePanel(panel: TuiPanel) {
-  const [tick, setTick] = createSignal(0)
-  onMount(() => {
-    const off = panel.subscribe(() => setTick((n) => n + 1))
-    onCleanup(off)
-  })
-  return () => {
-    tick()
-    return panel
-  }
-}
+/** The review overlay's default key: Kilo's defaults leave `<leader>v` free (7.8.x). */
+const REVIEW_KEY = '<leader>v'
 
 function sidebarData(snap: TuiSnapshot, store: TuiStore, sessionId: string) {
   const s = snap.sessions.get(sessionId)
@@ -92,29 +49,9 @@ function sidebarData(snap: TuiSnapshot, store: TuiStore, sessionId: string) {
     role: s && !s.endedAt ? s.role : undefined,
     focus: s?.focus.blocks ?? [],
     nodes: snap.nodes,
-    pending: snap.pending.length,
+    pending: snap.pending,
     notices: store.sessionNotices(sessionId),
-    counters: s?.counters,
   }
-}
-
-function Lines(props: { theme: TuiTheme; lines: Line[]; onToggle?: (id: string) => void }) {
-  return (
-    <For each={props.lines}>
-      {(l) => (
-        <box
-          flexShrink={0}
-          onMouseDown={() => {
-            if (l.toggle && l.id) props.onToggle?.(l.id)
-          }}
-        >
-          <text fg={colour(props.theme, l.tone)} wrapMode="none">
-            {l.tone === 'title' ? <b>{l.text}</b> : l.text}
-          </text>
-        </box>
-      )}
-    </For>
-  )
 }
 
 interface PanelState {
@@ -122,6 +59,11 @@ interface PanelState {
   setDetail: (d: SidebarDetail) => void
   /** Sidebar rows opened/closed by click, per Kilo session. */
   toggled: Map<string, Map<string, boolean>>
+  legend: () => boolean
+  setLegend: (on: boolean) => void
+  /** The review overlay's key as hints show it (`ctrl+x v`). */
+  reviewKey: string
+  openReview: (id?: string) => void
 }
 
 function Sidebar(props: {
@@ -186,6 +128,8 @@ function TrackedSidebar(props: {
       detail: props.panel.detail(),
       toggled: toggles(),
       maxRows: props.maxRows,
+      legend: props.panel.legend(),
+      reviewKey: props.panel.reviewKey,
     })
   })
   // Clicking a row with children opens or closes it (opentui delivers mouse events to boxes).
@@ -199,7 +143,14 @@ function TrackedSidebar(props: {
   return (
     <Show when={lines().length}>
       <box flexShrink={0}>
-        <Lines theme={props.api.theme} lines={lines()} onToggle={toggle} />
+        <Lines
+          theme={props.api.theme}
+          lines={lines()}
+          onToggle={toggle}
+          onAction={(a) =>
+            a === 'review' ? props.panel.openReview() : props.panel.setLegend(!props.panel.legend())
+          }
+        />
       </box>
     </Show>
   )
@@ -237,6 +188,7 @@ function RouteView(props: {
   api: TuiApi
   store: TuiStore
   source: TuiSource
+  panel: PanelState
   zooms: string[]
   params?: Record<string, unknown> | undefined
 }) {
@@ -299,6 +251,7 @@ function RouteView(props: {
       const n = snap()?.pending.length ?? 0
       if (k === 'up') setReview((i) => Math.max(0, i - 1))
       if (k === 'down') setReview((i) => Math.min(Math.max(0, n - 1), i + 1))
+      if (k === 'expand') props.panel.openReview(pending()[review()]?.id)
       return
     }
     if (tab() !== 'tree') return
@@ -321,6 +274,8 @@ function RouteView(props: {
     process.stdout.on?.('resize', onResize)
     const cmd = (name: string, run: () => void) => ({ name: `hafiz.view.${name}`, run })
     const off = props.api.keymap.registerLayer({
+      // off while a dialog (the review overlay) is open over the route
+      enabled: () => !props.api.ui.dialog.open,
       commands: [
         cmd('up', () => move('up')),
         cmd('down', () => move('down')),
@@ -357,13 +312,18 @@ function RouteView(props: {
   })
 
   const titles = () => new Map((snap()?.nodes ?? []).map((n) => [n.id, n.title]))
+  /** The route's Kilo session as Hafiz knows it, if Hafiz manages it. */
+  const managed = () => {
+    const s = sessionId() ? snap()?.sessions.get(sessionId() as string) : undefined
+    return s && !s.endedAt ? s : undefined
+  }
   const pending = () => snap()?.pending ?? []
   const tabLabel = (t: Tab, i: number) => (tab() === t ? `[${i + 1} ${t}]` : ` ${i + 1} ${t} `)
   const footer = () => {
     if (tab() === 'tree')
       return `↑↓ move · ⏎/→ open · ← close · z zoom (${props.zooms[zoom() % props.zooms.length] ?? 'FULL'}) · h ${history() ? 'render' : 'history'} · tab · esc back`
     if (tab() === 'review')
-      return '↑↓ move · accept/reject with: hafiz review --accept <id> · tab · esc back'
+      return `↑↓ move · ⏎ or ${props.panel.reviewKey} review overlay: accept, reject · tab · esc back`
     if (tab() === 'notices') return 'newest first · read-only · tab · esc back'
     return 'read-only · change decisions through agents or the hafiz CLI · tab · esc back'
   }
@@ -415,7 +375,12 @@ function RouteView(props: {
           <scrollbox flexGrow={1}>
             <Lines
               theme={theme}
-              lines={reviewDetail(pending()[review()], titles(), rightWidth())}
+              lines={reviewDetail(
+                pending()[review()],
+                titles(),
+                rightWidth(),
+                props.panel.reviewKey,
+              )}
             />
           </scrollbox>
         </Show>
@@ -431,7 +396,11 @@ function RouteView(props: {
           <scrollbox flexGrow={1}>
             <Lines
               theme={theme}
-              lines={noticeLines(props.store.sessionNotices(sessionId()), cols() - 6)}
+              lines={noticeLines(
+                props.store.sessionNotices(sessionId()),
+                cols() - 6,
+                managed()?.counters,
+              )}
             />
           </scrollbox>
         </Show>
@@ -490,6 +459,7 @@ function InactiveRoute(props: {
 function Route(props: {
   api: TuiApi
   hub: TuiPanel
+  panel: PanelState
   source: () => TuiSource | undefined
   params?: Record<string, unknown> | undefined
 }) {
@@ -509,6 +479,7 @@ function Route(props: {
         api={props.api}
         store={view().store as TuiStore}
         source={props.source() as TuiSource}
+        panel={props.panel}
         zooms={view().project?.zooms ?? []}
         params={props.params}
       />
@@ -518,6 +489,17 @@ function Route(props: {
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && v > 0 ? v : d)
 
+/** A key binding as Kilo's own hints print it (`<leader>v` -> `ctrl+x v`), else a fallback. */
+function keyLabel(api: TuiApi, key: string, fallback: string): string {
+  try {
+    const parts = api.keymap.parseKeySequence?.(key)
+    const label = parts && api.keys?.formatSequence(Array.from(parts))
+    return label || fallback
+  } catch {
+    return fallback
+  }
+}
+
 const tui: TuiPlugin = async (api, options) => {
   const dir = api.state.path.directory || process.cwd()
   const locate = projectLocator(dir, process.env) // resolves the git dir once
@@ -526,6 +508,12 @@ const tui: TuiPlugin = async (api, options) => {
     const id = r.params?.sessionID
     return typeof id === 'string' ? id : undefined
   }
+  const reviewBinding =
+    typeof options?.review_keybind === 'string' ? options.review_keybind : REVIEW_KEY
+  const reviewKey =
+    reviewBinding === REVIEW_KEY
+      ? keyLabel(api, reviewBinding, REVIEW_KEY_LABEL)
+      : keyLabel(api, reviewBinding, reviewBinding)
   let source: TuiSource | undefined
   const hub = new TuiPanel({
     locate,
@@ -534,11 +522,55 @@ const tui: TuiPlugin = async (api, options) => {
       return new TuiStore(source, {
         current: currentSession,
         toast: (t) => api.ui.toast({ ...t, duration: 5000 }),
+        reviewHint: `${reviewKey} review`,
       })
     },
   })
+  // The review overlay: Kilo dialogs over whatever is on screen, drawn from the live store.
+  const flow: ReviewFlow<ReturnType<typeof ReviewOverlay>> = new ReviewFlow({
+    dialog: api.ui.dialog,
+    render: (view) => (
+      <ReviewOverlay
+        api={api}
+        store={hub.store as TuiStore}
+        source={source as TuiSource}
+        flow={flow}
+        view={view}
+      />
+    ),
+    toast: (t) => api.ui.toast({ ...t, duration: 4000 }),
+    source: {
+      accept: (id) => (source ? source.accept(id) : Promise.reject(new Error('not tracked'))),
+      reject: (id, note) =>
+        source ? source.reject(id, note) : Promise.reject(new Error('not tracked')),
+    },
+    refresh: () => hub.store?.refresh(),
+  })
+  /** Open the overlay: the list, or one item's detail. */
+  const openReview = (id?: string) => {
+    if (!hub.store?.snapshot || !source) {
+      api.ui.toast({
+        variant: 'info',
+        message:
+          hub.kind === 'connecting' ? 'Hafiz: daemon not reachable yet' : 'Hafiz: not tracked here',
+        duration: 2500,
+      })
+      return
+    }
+    const item = id ? hub.store.snapshot.pending.find((p) => p.id === id) : undefined
+    flow.open(item ? { kind: 'detail', item } : { kind: 'list' })
+  }
   const [detail, setDetail] = createSignal<SidebarDetail>('active')
-  const panel: PanelState = { detail, setDetail, toggled: new Map() }
+  const [legend, setLegend] = createSignal(false)
+  const panel: PanelState = {
+    detail,
+    setDetail,
+    toggled: new Map(),
+    legend,
+    setLegend,
+    reviewKey,
+    openReview,
+  }
   const width = num(options?.width, 36)
   const maxRows = num(options?.max_rows, 14)
 
@@ -563,7 +595,9 @@ const tui: TuiPlugin = async (api, options) => {
   api.route.register([
     {
       name: ROUTE,
-      render: (input) => <Route api={api} hub={hub} source={() => source} params={input.params} />,
+      render: (input) => (
+        <Route api={api} hub={hub} panel={panel} source={() => source} params={input.params} />
+      ),
     },
   ])
   const open = () => {
@@ -584,6 +618,21 @@ const tui: TuiPlugin = async (api, options) => {
         run: open,
       },
       {
+        name: 'hafiz.review.open',
+        title: 'Hafiz: review queue (accept, reject)',
+        category: 'Hafiz',
+        namespace: 'palette',
+        slashName: 'hafiz-review',
+        run: () => openReview(),
+      },
+      {
+        name: 'hafiz.sidebar.legend',
+        title: 'Hafiz: toggle the sidebar glyph legend',
+        category: 'Hafiz',
+        namespace: 'palette',
+        run: () => setLegend(!legend()),
+      },
+      {
         name: 'hafiz.sidebar.detail',
         title: 'Hafiz: cycle sidebar detail (active / full / focus path)',
         category: 'Hafiz',
@@ -600,6 +649,7 @@ const tui: TuiPlugin = async (api, options) => {
         key: typeof options?.keybind === 'string' ? options.keybind : '<leader>f',
         cmd: 'hafiz.open',
       },
+      { key: reviewBinding, cmd: 'hafiz.review.open' },
     ],
   })
   // Kilo's event stream drives every state change: a completed track tool starts the tracked

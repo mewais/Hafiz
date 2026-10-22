@@ -15,7 +15,8 @@ chooses what to do about one.
 
 **Delegating.** Spawn subagents on a block (the `block` argument of `task`), one block each; the
 prompt adds only the user's latest wishes and the task's scope. A design that no longer fits goes
-back to the designer.
+back to the designer. A block whose design or plan awaits review (`· review` in its heading)
+waits: do not spawn the next role until it is accepted.
 
 **User decisions.** Record what the user decides at once (`hafiz_decision_record`) on the block
 it concerns: the decision and why, not the discussion. "Always",

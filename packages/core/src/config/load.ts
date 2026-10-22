@@ -85,14 +85,59 @@ export function mergeLayers(base: RawLayer, over: RawLayer): RawLayer {
   return out
 }
 
+/** `confirm_done` (hafiz.yaml) before `policies.yaml review.done`: ask held the block, auto did not. */
+const CONFIRM_DONE: Record<string, string> = { ask: 'gate', auto: 'queue' }
+
+/**
+ * Map settings an override layer may still carry from earlier versions onto their successors,
+ * in place, and say what was mapped (`hafiz doctor` shows it). A layer that also sets the
+ * successor keeps its own value.
+ */
+export function migrateLayer(layer: RawLayer, where: string): string[] {
+  const notes: string[] = []
+  const hafiz = layer.hafiz
+  if (isPlainObject(hafiz) && 'confirm_done' in hafiz) {
+    const old = String(hafiz.confirm_done)
+    delete hafiz.confirm_done
+    const mode = CONFIRM_DONE[old]
+    if (!mode)
+      throw new Error(
+        `${where}/hafiz.yaml: confirm_done is retired; set policies.yaml review.done (off | queue | gate)`,
+      )
+    const policies = isPlainObject(layer.policies) ? layer.policies : {}
+    const review = isPlainObject(policies.review) ? policies.review : {}
+    if (review.done === undefined) review.done = mode
+    layer.policies = { ...policies, review }
+    notes.push(
+      `${where}/hafiz.yaml: confirm_done: ${old} is retired; read as policies.yaml review.done: ${String(review.done)}. Move it there.`,
+    )
+  }
+  const guards = isPlainObject(layer.policies) ? layer.policies.status : undefined
+  const lists = isPlainObject(guards) && isPlainObject(guards.guards) ? guards.guards : {}
+  for (const [k, v] of Object.entries(lists))
+    if (Array.isArray(v) && v.includes('confirm_done')) {
+      lists[k] = v.map((g) => (g === 'confirm_done' ? 'review_done' : g))
+      notes.push(
+        `${where}/policies.yaml: guard confirm_done is now review_done (status.guards.${k}).`,
+      )
+    }
+  return notes
+}
+
 /**
  * Load configuration from the built-in defaults plus any number of override directories
  * (user, then project). Later directories win.
  */
 export function loadConfig(overrideDirs: string[] = []): Config {
   let raw = readLayer(defaultConfigDir())
-  for (const d of overrideDirs) if (existsSync(d)) raw = mergeLayers(raw, readLayer(d))
-  return configSchema.parse(raw)
+  const deprecations: string[] = []
+  for (const d of overrideDirs) {
+    if (!existsSync(d)) continue
+    const layer = readLayer(d)
+    deprecations.push(...migrateLayer(layer, d))
+    raw = mergeLayers(raw, layer)
+  }
+  return configSchema.parse({ ...raw, deprecations })
 }
 
 /** The user-level override layer, `~/.hafiz/config` (`$HAFIZ_HOME/config`). */

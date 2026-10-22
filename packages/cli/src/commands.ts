@@ -51,7 +51,9 @@ const USAGE = `usage: hafiz <command> [options]
   revert <block> <type> <commit>             restore a doc from an earlier commit
   status [--json]                            project, epoch, sessions, cost, pending proposals
   checkpoint [--session ID]                  condense live sessions' conversation tails now
-  review [--accept ID | --reject ID]         list or resolve the proposal queue
+  review [--accept ID | --reject ID [--note T] | --show ID]
+                                             list the proposal queue, resolve one, or read
+                                             the doc a design/plan review is about
   direct "<text>" [--block ID] [--kind K]    record a standing decision (K: never|always|prefer)
   focus [--role R]                           live sessions' focus (or the focus a role would get)
   explain <block> [--role R] [--session ID]  why a block shows at its zoom
@@ -277,23 +279,35 @@ export async function direct(
 
 export async function review(
   io: Io,
-  opts: { accept?: string | undefined; reject?: string | undefined },
+  opts: {
+    accept?: string | undefined
+    reject?: string | undefined
+    note?: string | undefined
+    show?: string | undefined
+  },
 ): Promise<void> {
-  if (opts.accept && opts.reject) throw new CliError('use either --accept or --reject')
+  if ([opts.accept, opts.reject, opts.show].filter(Boolean).length > 1)
+    throw new CliError('use one of --accept, --reject or --show')
+  if (opts.note && !opts.reject) throw new CliError('--note goes with --reject')
+  if (opts.show) {
+    const shown = await withCore(io, (core) => core.reviewShow(userActor(), opts.show as string))
+    for (const line of describeProposal(shown.item)) io.out(line)
+    io.out('')
+    io.out(shown.text)
+    return
+  }
   const id = opts.accept ?? opts.reject
   if (id) {
     await withDaemon(io, async (c) => {
-      const { notices } = await c.dispatch(opts.accept ? 'proposal.accept' : 'proposal.reject', {
-        id,
-      })
+      const { notices } = opts.accept
+        ? await c.reviewAccept(id)
+        : await c.reviewReject(id, opts.note)
       printNotices(io, notices)
       io.out(`${opts.accept ? 'accepted' : 'rejected'} ${id}`)
     })
     return
   }
-  const pending = await withCore(io, (core) =>
-    core.backend.read.listProposals({ status: 'pending' }),
-  )
+  const pending = await withCore(io, (core) => core.reviewList(userActor()))
   if (!pending.length) return io.out('no pending proposals')
   for (const p of pending) for (const line of describeProposal(p)) io.out(line)
 }
@@ -431,6 +445,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         adopt: { type: 'boolean' },
         accept: { type: 'string' },
         reject: { type: 'string' },
+        note: { type: 'string' },
+        show: { type: 'string' },
         block: { type: 'string' },
         kind: { type: 'string' },
         project: { type: 'string' },

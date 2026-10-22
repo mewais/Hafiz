@@ -200,7 +200,7 @@ describe('mcp tool lists', () => {
 describe('mcp scenario', () => {
   it('manager, planner, designer and two workers drive a mini project', async () => {
     const config = loadConfig()
-    config.hafiz.confirm_done = 'auto'
+    config.policies.review.done = 'queue'
     const { d } = await boot(config)
     const mgr = await agent(
       d,
@@ -389,13 +389,13 @@ describe('mcp scenario', () => {
 })
 
 describe('mcp confirmation', () => {
-  const askConfig = () => {
+  const gateConfig = () => {
     const c = loadConfig()
-    c.hafiz.confirm_done = 'ask'
+    c.policies.review.done = 'gate'
     return c
   }
   async function setup(elicit: boolean) {
-    const config = askConfig()
+    const config = gateConfig()
     const { d } = await boot(config)
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { elicit, config })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
@@ -426,8 +426,8 @@ describe('mcp confirmation', () => {
     expect((await mgr.call('hafiz_block_read')).text).toContain(`[done] ${blk}`)
   })
 
-  it('queues a worker request for review under ask', async () => {
-    const config = askConfig()
+  it('queues a worker request for review under review.done: gate', async () => {
+    const config = gateConfig()
     const { d } = await boot(config)
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { config })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string

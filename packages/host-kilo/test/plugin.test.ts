@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
@@ -347,6 +347,31 @@ describe('plugin: sessions, report capture, shaping', () => {
       turns: 1,
     })
     expect((await read.getSession('ses_w'))?.endedAt).toBeDefined()
+  })
+
+  it('logs and counts a task call once even when Kilo fires its hooks twice', async () => {
+    const { r, d, hooks, block } = await live()
+    const file = join(tmp('hafiz-dlog-'), 'delegations.jsonl')
+    r.env.HAFIZ_DELEGATION_LOG = file
+    await hooks.event?.(ev('session.created', { sessionID: 'ses_m', info: { id: 'ses_m' } }))
+    await hooks['chat.message']?.(
+      { sessionID: 'ses_m' },
+      { message: { agent: 'manager' }, parts: text('Ship payments') },
+    )
+    const args = { subagent_type: 'designer', block, prompt: 'Design payments.' }
+    const call = { tool: 'task', sessionID: 'ses_m', callID: 'c9' }
+    for (let n = 0; n < 2; n++) {
+      await hooks['tool.execute.before']?.(call, { args })
+      await hooks['tool.execute.after']?.(
+        { ...call, args },
+        { title: 't', metadata: {}, output: 'no task result' },
+      )
+    }
+    const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean)
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0] as string)).toMatchObject({ block, agent: 'designer' })
+    const c = (await d.service.core.backend.read.getSession('ses_m'))?.counters
+    expect(c).toMatchObject({ subagents_spawned: 1, tool_calls: 1 })
   })
 
   it.each(['designer', 'planner', 'worker'])(

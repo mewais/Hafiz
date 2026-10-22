@@ -67,7 +67,6 @@ export const hafizFile = z.object({
     soft_zone: z.number().min(0).max(1).default(0.15),
   }),
   windows: z.record(z.string(), z.number().int().positive()).default({ default: 200000 }),
-  confirm_done: z.enum(['auto', 'ask']).default('ask'),
   llm: z
     .object({
       condenser: llmSettings,
@@ -82,7 +81,7 @@ export const hafizFile = z.object({
     .object({
       // A repo with commits and at least this many tracked source files is brownfield.
       min_source_files: z.number().int().nonnegative().default(5),
-      // Shown at the top of these roles' views while the project's onboarding is pending.
+      // Shown at the top of these roles' views once tracked work has started on a project whose onboarding is pending.
       directive: z.string().default(''),
       roles: z.array(z.string()).default(['manager']),
     })
@@ -214,6 +213,26 @@ export function isViewerSession(roles: z.infer<typeof rolesFile>, s: { role: str
 export const SPAWN_STATES = ['no_design', 'no_plan', 'has_plan', 'done', 'dropped'] as const
 export type SpawnState = (typeof SPAWN_STATES)[number]
 
+const reviewMode = z.enum(['off', 'queue', 'gate'])
+
+/**
+ * `policies.yaml review`: per event, whether a proposal is filed (`queue`) and whether it holds
+ * the next stage on that block until accepted (`gate`). `approver` may resolve review proposals.
+ */
+export const reviewPolicy = z
+  .object({
+    design: reviewMode.default('queue'),
+    plan: reviewMode.default('queue'),
+    done: reviewMode.default('gate'),
+    // Condenser and drafter proposals: suggestions about what was not recorded, never a hold.
+    drafts: reviewMode.default('queue').refine((m) => m !== 'gate', {
+      message: 'review.drafts cannot be gate: drafts never hold work (off | queue)',
+    }),
+    approver: z.enum(['user', 'manager']).default('user'),
+  })
+  .prefault({})
+export type ReviewPolicy = z.infer<typeof reviewPolicy>
+
 export const policiesFile = z.object({
   status: z.object({
     transitions: z.record(z.string(), z.array(z.string())),
@@ -227,6 +246,7 @@ export const policiesFile = z.object({
   }),
   // Roles a subagent may be spawned as on a block, by the block's state; `*` = any role.
   spawn: z.object({ roles_by_state: z.record(z.enum(SPAWN_STATES), z.array(z.string())) }),
+  review: reviewPolicy,
 })
 
 export const complianceFile = z.object({
@@ -282,5 +302,7 @@ export const configSchema = z.object({
   migrations: z.record(z.string(), migrationFile).default({}),
   logs: logsSchemaFile,
   rules: z.record(z.string(), z.string()),
+  /** Retired settings found in override layers and what they were mapped to (`hafiz doctor`). */
+  deprecations: z.array(z.string()).default([]),
 })
 export type Config = z.infer<typeof configSchema>

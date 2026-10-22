@@ -40,10 +40,12 @@ export interface Project {
   /** Increments on major writes only. Internal invalidation signal, never a wire attribute. */
   epoch: number
   /**
-   * `pending`: tracked in a repo that already had code; the manager is told to have the
-   * designer describe it. Cleared when the root design is first written.
+   * `pending`: tracked in a repo that already had code; nothing is asked yet, so a one-off fix
+   * costs no designer. `due`: tracked work has started (first block, first spawn on a block, or
+   * a root doc write), so the manager is told to have the designer describe the code first.
+   * Cleared when the root design is first written.
    */
-  onboarding?: 'pending'
+  onboarding?: 'pending' | 'due'
   createdAt: string
 }
 
@@ -62,6 +64,8 @@ export interface Block {
   docVersions: Record<DocType, number>
   /** Set on reopen; cleared when a fresh digest is written. */
   digestStale?: boolean
+  /** Doc versions approved through the review queue (§7), e.g. `{ design: 3, plan: 1 }`. */
+  reviewed?: Partial<Record<ReviewType, number>>
   doneAt?: { ts: string; commit?: string }
   createdAt: string
   updatedAt: string
@@ -164,8 +168,21 @@ export interface Thread {
   by: Actor
 }
 
-export type ProposalKind = 'decision' | 'thread' | 'progress' | 'digest' | 'gist' | 'status'
-export type ProposalSource = 'condenser' | 'drafter' | 'compliance' | 'auto_done'
+export type ProposalKind =
+  | 'decision'
+  | 'thread'
+  | 'progress'
+  | 'digest'
+  | 'gist'
+  | 'status'
+  | ReviewType
+export type ProposalSource = 'condenser' | 'drafter' | 'compliance' | 'auto_done' | 'review'
+
+/** Docs the review queue files for approval (`policies.yaml review`). */
+export type ReviewType = 'design' | 'plan'
+export const REVIEW_TYPES: readonly ReviewType[] = ['design', 'plan']
+/** A `policies.yaml review` row: no proposal, a proposal, or a proposal that holds the block. */
+export type ReviewMode = 'off' | 'queue' | 'gate'
 
 export interface Proposal {
   id: string
@@ -179,6 +196,8 @@ export interface Proposal {
   createdAt: string
   resolvedAt?: string
   resolvedBy?: Actor
+  /** Why it was rejected (`proposal.reject` with a note); the reviewers hear it. */
+  resolutionNote?: string
 }
 
 export interface Focus {

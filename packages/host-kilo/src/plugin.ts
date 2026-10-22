@@ -26,7 +26,7 @@ import {
 } from '@hafiz/core'
 import { type DaemonClient, ensureDaemon, initProject } from '@hafiz/gateway-mcp'
 import { createChecks, TASK_RESULT } from './checks.js'
-import { toolCounters, USER_TURN_COUNTERS } from './counters.js'
+import { firstCall, toolCounters, USER_TURN_COUNTERS } from './counters.js'
 import { installConfig } from './install.js'
 import type {
   Hooks,
@@ -358,6 +358,8 @@ function managedHooks(
     async 'tool.execute.before'(i, o) {
       const log = env.HAFIZ_DELEGATION_LOG
       if (!log || i.tool !== 'task') return checks.before(i, o)
+      // Kilo may run this hook again for the same call (args already shaped): log once per call.
+      if (!firstCall(seenCalls, 'log', i.callID)) return checks.before(i, o)
       // Harness sink: every delegation as the model wrote it, and the check's refusal if any.
       const a = (o.args ?? {}) as Record<string, unknown>
       const entry = {
@@ -385,7 +387,9 @@ function managedHooks(
 
     async 'tool.execute.after'(i, o) {
       if (!sessions.isManaged(i.sessionID)) return
-      await sessions.counters(i.sessionID, toolCounters(i.tool))
+      // One count per call, even when the hook fires twice for it.
+      if (i.tool !== 'task' || firstCall(seenCalls, 'count', i.callID))
+        await sessions.counters(i.sessionID, toolCounters(i.tool))
       if (i.tool !== 'task') return
       const m = TASK_RESULT.exec(o.output)
       if (!m) return
@@ -398,6 +402,7 @@ function managedHooks(
     },
   }
   const counted = new Set<string>()
+  const seenCalls = new Set<string>()
   if (toolsMode === 'native') out.tool = nativeTools({ config, sessions })
 
   if (proxy)
@@ -532,7 +537,9 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
           text: `Tracking with Hafiz: ${args.reason}`,
         })
         .catch((e) => log(`hafiz: could not record the tracking reason: ${String(e)}`))
-    const tail = r.onboarding ? ' Existing code: onboarding is pending (see your view).' : ''
+    const tail = r.onboarding
+      ? ' Existing code: onboarding is pending until tracked work starts (your view will say).'
+      : ''
     return {
       title: TRACK_TOOL,
       output: `Hafiz now tracks this repo as \`${r.name}\` (${r.id}); your Hafiz tools, rules and project view apply from your next step.${tail}`,

@@ -16,10 +16,11 @@ const enabled = process.env.HAFIZ_KILO_E2E === '1' && !!BIN
 describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', () => {
   const out = realpathSync(mkdtempSync(join(tmpdir(), 'hafiz-harness-out-')))
   afterAll(() => rmSync(out, { recursive: true, force: true }))
-  const tasks = Object.fromEntries(loadTasks().map((t) => [t.size, t]))
+  const ids = { S: 's-small-fix', M: 'm-feature', L: 'l-seeded-tree' }
+  const tasks = Object.fromEntries(loadTasks().map((t) => [t.id, t]))
 
   const run = (size: 'S' | 'M' | 'L', keep = false): Promise<RunResult> =>
-    runTask(tasks[size] as NonNullable<(typeof tasks)[string]>, 1, {
+    runTask(tasks[ids[size]] as NonNullable<(typeof tasks)[string]>, 1, {
       mock: true,
       kiloBin: BIN as string,
       outDir: out,

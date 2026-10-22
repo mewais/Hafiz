@@ -8,7 +8,13 @@ import { type Io, run } from '@hafiz/cli'
 import type { Proposal } from '@hafiz/core'
 import { DaemonClient, startDaemon } from '@hafiz/gateway-mcp'
 import { afterEach, describe, expect, it } from 'vitest'
-import { projectLocator, type TuiSnapshot, TuiSource, VIEWER_SESSION } from '../src/tui/data.js'
+import {
+  projectLocator,
+  type TuiSnapshot,
+  TuiSource,
+  USER_SESSION,
+  VIEWER_SESSION,
+} from '../src/tui/data.js'
 import { type ToastOut, TuiStore } from '../src/tui/store.js'
 
 const tmp = (p: string) => realpathSync(mkdtempSync(join(tmpdir(), p)))
@@ -71,6 +77,67 @@ describe('TUI data source', () => {
     await u.openSession({ id: VIEWER_SESSION, host: 'kilo-tui', role: 'viewer' })
     await u.sessionEnd()
     expect((await source.snapshot()).project).toBe('Shop')
+  })
+})
+
+describe('TUI review actions', () => {
+  it('reads the queue as the viewer; accepts and rejects as the user, nothing else', async () => {
+    const r = await repo(true)
+    const located = projectLocator(r.cwd, r.env)()
+    const found = located.kind === 'tracked' ? located.project : undefined
+    const d = await startDaemon({ projectDir: r.cwd, env: r.env, idleShutdownMs: 0 })
+    cleanup.push(() => d.close())
+    const source = new TuiSource({ project: found?.project as never, env: r.env })
+    cleanup.push(() => source.close())
+    const u = await DaemonClient.connect(d.socketPath)
+    cleanup.push(() => u.close())
+    await u.openSession({ id: 'cli', host: 'test', role: 'user' })
+    const root = (await u.treeList())[0]?.id as string
+    const block = (
+      await u.dispatch<{ id: string }>('block.create', { parent: root, title: 'Orders' })
+    ).result.id
+    /** A designer on the block writes a design and ends: one review filed (design: queue). */
+    const designer = async (id: string, purpose: string) => {
+      const ds = await DaemonClient.connect(d.socketPath)
+      cleanup.push(() => ds.close())
+      await ds.openSession({ id, host: 'test', role: 'designer', spawnedBlock: block })
+      await ds.dispatch('doc.patch', {
+        block,
+        type: 'design',
+        sections: {
+          purpose,
+          scope: ['in: orders'],
+          interface: { provides: [{ name: 'order()' }] },
+        },
+      })
+      return (await ds.sessionEnd()).reviews[0] as string
+    }
+    const first = await designer('ds1', 'orders as records')
+    const snap = await source.snapshot()
+    expect(snap.pending).toMatchObject([
+      { id: first, kind: 'design', version: 1, mode: 'queue', blockTitle: 'Orders' },
+    ])
+    expect((await source.reviewShow(first)).text).toContain('Purpose: orders as records')
+    // nothing opened as the user until the first write
+    expect(await d.service.core.backend.read.getSession(USER_SESSION)).toBeNull()
+    await source.accept(first)
+    expect(await d.service.core.backend.read.getSession(USER_SESSION)).toMatchObject({
+      role: 'user',
+      host: 'kilo-tui',
+    })
+    expect((await source.snapshot()).pending).toEqual([])
+    await expect(source.accept(first)).rejects.toThrow(/already accepted/)
+
+    const second = await designer('ds2', 'orders with lines')
+    const shown = await source.reviewShow(second)
+    expect(shown.changed).toEqual({ since: 1, sections: ['purpose'], removed: [] })
+    expect(shown.previous?.text).toContain('orders as records')
+    await source.reject(second, 'say who cancels')
+    const [rejected] = await u.reviewList('rejected')
+    expect(rejected).toMatchObject({ id: second, resolutionNote: 'say who cancels' })
+    // the viewer itself still cannot write
+    const viewer = await d.service.core.backend.read.getSession(VIEWER_SESSION)
+    expect(viewer?.role).toBe('viewer')
   })
 })
 

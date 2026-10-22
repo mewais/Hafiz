@@ -1,7 +1,8 @@
 // Live data for the panel, framework-free (the Solid components subscribe to it). Reads go
 // through TuiSource; nothing here writes. No timer polls: a refresh runs when something
-// on screen starts watching (sidebar, status chip, the /hafiz route) and when a Kilo event that
-// can change the data arrives (`kick`, debounced once; nothing is scheduled while idle).
+// on screen starts watching (sidebar, status chip, the /hafiz route, the review overlay), when a
+// Kilo event that can change the data arrives (`kick`, debounced once; nothing is scheduled
+// while idle), and right after the review overlay accepts or rejects (`refresh`).
 // A slow or absent daemon never blocks rendering: views draw the last snapshot (or nothing).
 import type { QueuedNotice } from '@hafiz/gateway-mcp/client'
 import type { TuiSnapshot, TuiSource } from './data.js'
@@ -21,6 +22,8 @@ export interface TuiStoreOptions {
   /** The Kilo session on screen; its compliance notices are toasted. */
   current?: () => string | undefined
   toast?: (t: ToastOut) => void
+  /** Where new review items are handled, appended to their toast (`ctrl+x v review`). */
+  reviewHint?: string
   log?: (line: string) => void
 }
 
@@ -125,14 +128,15 @@ export class TuiStore {
   private collectToasts(snap: TuiSnapshot, current: string | undefined): void {
     const props = fresh(this.seenProposals, this.primedProposals, snap.pending, (p) => p.id)
     this.primedProposals = true
+    const hint = this.opts.reviewHint ?? 'hafiz review'
     if (props.length)
       this.queueToast({
         variant: 'info',
         title: 'Hafiz review',
         message:
           props.length === 1
-            ? `new proposal: ${props[0]?.note ?? props[0]?.kind} · hafiz review`
-            : `${props.length} new proposals pending · hafiz review`,
+            ? `new proposal: ${props[0]?.note ?? props[0]?.kind} · ${hint}`
+            : `${props.length} new proposals pending · ${hint}`,
       })
     if (!current) return
     const notes = (this.notices.get(current) ?? []).filter((n) => n.event === 'compliance')

@@ -1,7 +1,13 @@
 // View models for the Kilo TUI panel: pure functions from daemon data to text rows. The Solid
 // components (plugin.tsx) only colour and lay these out, so everything that decides what the
 // sidebar, the status chip and the /hafiz route show is tested here as golden text.
-import type { DecisionBrief, Proposal, TreeSummaryNode } from '@hafiz/core'
+import {
+  type DecisionBrief,
+  type Proposal,
+  type ReviewItem,
+  sectionLabel,
+  type TreeSummaryNode,
+} from '@hafiz/core'
 
 export type TuiNode = TreeSummaryNode
 
@@ -25,6 +31,8 @@ export interface Line {
   toggle?: boolean
   /** For toggle rows: the subtree is open. */
   expanded?: boolean
+  /** Clicking the row opens the review overlay or toggles the glyph legend. */
+  action?: 'review' | 'legend'
 }
 
 // ─────────────────────────────── tree ───────────────────────────────
@@ -157,13 +165,26 @@ export function clip(s: string, w: number): string {
 }
 
 function blockedNote(n: TuiNode): string {
-  return n.status === 'blocked' && n.blockedOn ? `(${n.blockedOn.kind})` : ''
+  return n.status === 'blocked' && n.blockedOn ? `waits on ${n.blockedOn.kind}` : ''
 }
 
 /**
- * One tree row: `prefix [▸ ]glyph title  3/5  (user)` with the focus marker `●` at the right
- * edge. When the width is short the title is cut first, down to 8 cells; below that the extras
- * (hidden count, steps, blocked-on) are dropped so the title stays readable.
+ * `(review)` while a gated design or plan review is pending on the block, `(rejected)` while a
+ * gated one stands rejected; queue-mode reviews do not mark the tree.
+ */
+export function reviewMark(n: TuiNode): string {
+  for (const type of ['design', 'plan'] as const) {
+    const r = n.review?.[type]
+    if (r?.mode === 'gate') return r.status === 'rejected' ? '(rejected)' : '(review)'
+  }
+  return ''
+}
+
+/**
+ * One tree row: `prefix [▸ ]glyph title (review)  +2 hidden  3/5 steps  waits on user` with the
+ * focus marker `●` at the right edge. When the width is short the title is cut first, down to 8
+ * cells; below that the extras (hidden count, steps, blocked-on) are dropped so the title and its
+ * review mark stay readable.
  */
 export function treeRowText(
   t: Tree,
@@ -175,18 +196,24 @@ export function treeRowText(
   const closed = r.hasChildren && !r.expanded
   const head = `${r.prefix}${closed ? '▸ ' : ''}${glyph(t, n)} `
   const extras = [
-    closed ? `(${r.hidden})` : '',
-    n.steps ? `${n.steps.done}/${n.steps.total}` : '',
+    closed ? `+${r.hidden} hidden` : '',
+    n.steps ? `${n.steps.done}/${n.steps.total} steps` : '',
     blockedNote(n),
   ].filter(Boolean)
   const mark = o.focus ? '●' : ''
+  const gate = reviewMark(n)
   const tail = extras.join('  ')
   const room = width - head.length - (mark ? 2 : 0)
+  const titled = (w: number) =>
+    gate && w - gate.length - 1 >= Math.min(4, n.title.length)
+      ? `${clip(n.title, w - gate.length - 1)} ${gate}`
+      : clip(n.title, w)
+  const full = n.title.length + (gate ? gate.length + 1 : 0)
   let body: string
-  if (room - (tail ? tail.length + 2 : 0) >= Math.min(8, n.title.length)) {
+  if (room - (tail ? tail.length + 2 : 0) >= Math.min(8 + (gate ? gate.length + 1 : 0), full)) {
     const titleRoom = room - (tail ? tail.length + 2 : 0)
-    body = tail ? `${clip(n.title, titleRoom)}  ${tail}` : clip(n.title, titleRoom)
-  } else body = clip(n.title, room)
+    body = tail ? `${titled(titleRoom)}  ${tail}` : titled(titleRoom)
+  } else body = titled(room)
   if (!mark) return clip(head + body, width)
   const left = head + body
   const pad = Math.max(1, width - left.length - 1)
@@ -208,11 +235,17 @@ export interface SidebarData {
   role?: string | undefined
   focus: readonly string[]
   nodes: readonly TuiNode[]
-  pending: number
+  /** The review queue (pending), in queue order. */
+  pending: readonly ReviewRow[]
   /** This session's recent notices, oldest first. */
   notices: readonly SidebarNotice[]
-  counters?: Readonly<Record<string, number>> | undefined
 }
+
+/** What the panel needs of a review queue item (`review.list`). */
+export type ReviewRow = Pick<
+  ReviewItem,
+  'id' | 'kind' | 'source' | 'blockId' | 'note' | 'createdAt' | 'mode' | 'blockTitle' | 'version'
+>
 
 export interface SidebarOptions {
   width?: number
@@ -221,6 +254,10 @@ export interface SidebarOptions {
   toggled?: ReadonlyMap<string, boolean>
   /** Most tree rows shown before `… N more`. */
   maxRows?: number
+  /** The glyph legend is open under the footer. */
+  legend?: boolean
+  /** How the review overlay's key reads in the footer. */
+  reviewKey?: string
 }
 
 /** 1234 → 1.2k */
@@ -292,6 +329,53 @@ export function connectingLines(project: string, width = 40): Line[] {
   return [{ text: clip(`Hafiz · ${project} — connecting…`, width), tone: 'muted' }]
 }
 
+/** The review overlay's default key, as the footer shows it. */
+export const REVIEW_KEY_LABEL = 'ctrl+x v'
+
+/** What the legend under the sidebar footer explains, one line each. */
+export const LEGEND: readonly string[] = [
+  "◆ root  ● this session's focus",
+  '▶ active  ◐ active, has children',
+  '○ planned  ⧗ blocked  ✗ dropped',
+  '✓ done  ▸ folded (click to open)',
+  '(review) gated until accepted',
+  '(rejected) gated until revised',
+  '? open question on your focus',
+]
+
+/** How a queue item's kind reads: design, plan, done, or the drafted record (decision, digest…). */
+export function reviewKind(p: Pick<ReviewRow, 'kind' | 'source'>): string {
+  return p.source === 'auto_done' ? 'done' : p.kind
+}
+
+const reviewLabel = (p: ReviewRow) =>
+  [reviewKind(p), p.blockTitle ?? p.blockId ?? ''].filter(Boolean).join(' ')
+
+/**
+ * `review  design Orders · done Cart totals · 2 more`: pending items in queue order, as many as
+ * fit, the rest counted; the first item is clipped rather than dropped.
+ */
+export function reviewSummary(items: readonly ReviewRow[], width: number): string {
+  const head = 'review  '
+  const parts = items.map(reviewLabel)
+  for (let k = parts.length; k >= 1; k--) {
+    const more = parts.length - k
+    const line = `${head}${parts.slice(0, k).join(' · ')}${more ? ` · ${more} more` : ''}`
+    if (line.length <= width) return line
+  }
+  const more = parts.length > 1 ? ` · ${parts.length - 1} more` : ''
+  const room = width - head.length - more.length
+  return room >= 4 ? `${head}${clip(parts[0] ?? '', room)}${more}` : clip(head + parts[0], width)
+}
+
+/** The role line: `manager · on Checkout, Pricing` (focus block titles); `manager` without focus. */
+export function roleLine(data: Pick<SidebarData, 'role' | 'focus' | 'nodes'>): string {
+  if (!data.role) return 'not managed by Hafiz'
+  const byId = new Map(data.nodes.map((n) => [n.id, n.title]))
+  const titles = data.focus.map((id) => byId.get(id) ?? id)
+  return titles.length ? `${data.role} · on ${titles.join(', ')}` : data.role
+}
+
 /** Everything the sidebar slot shows, as lines. */
 export function sidebarLines(data: SidebarData, opts: SidebarOptions = {}): Line[] {
   const width = opts.width ?? 40
@@ -299,7 +383,7 @@ export function sidebarLines(data: SidebarData, opts: SidebarOptions = {}): Line
   const add = (text: string, tone: Tone, extra: Partial<Line> = {}) =>
     out.push({ text: clip(text, width), tone, ...extra })
   add(`Hafiz · ${data.project}`, 'title')
-  add(data.role ? `${data.role} · focus ${data.focus.length}` : 'not managed by Hafiz', 'muted')
+  add(roleLine(data), 'muted')
   if (data.nodes.length === 0) {
     add('no blocks yet', 'muted')
     return out
@@ -307,28 +391,41 @@ export function sidebarLines(data: SidebarData, opts: SidebarOptions = {}): Line
   out.push(...sidebarTree(data, opts))
 
   const byId = new Map(data.nodes.map((n) => [n.id, n]))
-  let open = 0
-  let parked = 0
-  for (const n of data.nodes) for (const th of n.threads) th.status === 'open' ? open++ : parked++
-  if (open || parked) {
-    add(`threads  ${open} open · ${parked} parked`, 'text')
-    const listed = data.focus.flatMap((id) =>
-      (byId.get(id)?.threads ?? [])
-        .filter((th) => th.status === 'open')
-        .map((th) => ({ th, block: byId.get(id)?.title ?? id })),
-    )
-    for (const { th, block } of listed.slice(0, 3)) add(` ? ${th.title} (${block})`, 'muted')
-    if (listed.length > 3) add(` … ${listed.length - 3} more open`, 'muted')
+  const open = data.focus.flatMap((id) =>
+    (byId.get(id)?.threads ?? [])
+      .filter((th) => th.status === 'open')
+      .map((th) => ({ th, block: byId.get(id)?.title ?? id })),
+  )
+  if (open.length) {
+    add('open questions', 'text')
+    for (const { th, block } of open.slice(0, 3)) add(` ? ${th.title} (${block})`, 'muted')
+    if (open.length > 3) add(` … ${open.length - 3} more`, 'muted')
   }
-  if (data.pending) add(`review  ${data.pending} pending · hafiz review`, 'warning')
+  if (data.pending.length)
+    out.push({ text: reviewSummary(data.pending, width), tone: 'warning', action: 'review' })
   for (const n of [...data.notices].reverse().slice(0, 3))
     for (const l of noticeWrap(n.text, width)) add(l, n.level === 'warn' ? 'warning' : 'muted')
-  const c = data.counters ?? {}
-  const emits = c.view_emits ?? 0
-  const cond = (c.condense_tokens_in ?? 0) + (c.condense_tokens_out ?? 0)
-  if (data.role)
-    add(`cost  ${emits} re-emit${emits === 1 ? '' : 's'} · cond ${compact(cond)} tok`, 'muted')
+  out.push({ text: footerLine(width, opts.reviewKey), tone: 'muted', action: 'legend' })
+  if (opts.legend) for (const l of LEGEND) add(l, 'muted', { action: 'legend' })
   return out
+}
+
+/** `? legend · /hafiz tree · ctrl+x v review`, shortened until it fits. */
+export function footerLine(width: number, reviewKey = REVIEW_KEY_LABEL): string {
+  const options = [
+    `? legend · /hafiz tree · ${reviewKey} review`,
+    `? legend · /hafiz · ${reviewKey} review`,
+    `? legend · ${reviewKey} review`,
+    `? · ${reviewKey} review`,
+  ]
+  return options.find((o) => o.length <= width) ?? clip(options.at(-1) as string, width)
+}
+
+/** `cost  7 re-emits · cond 13k tok`: what Hafiz cost this session. */
+export function costLine(counters: Readonly<Record<string, number>>): string {
+  const emits = counters.view_emits ?? 0
+  const cond = (counters.condense_tokens_in ?? 0) + (counters.condense_tokens_out ?? 0)
+  return `cost  ${emits} re-emit${emits === 1 ? '' : 's'} · cond ${compact(cond)} tok`
 }
 
 /** `◆ <first focus block> · N pending` for the prompt's right side; empty without a tree. */
@@ -338,7 +435,8 @@ export function statusChip(data: Pick<SidebarData, 'nodes' | 'focus' | 'pending'
   const first = data.focus.map((id) => byId.get(id)).find(Boolean)
   const more = first && data.focus.length > 1 ? ` +${data.focus.length - 1}` : ''
   const label = clip(first?.title ?? data.project, 24)
-  return `◆ ${label}${more}${data.pending ? ` · ${data.pending} pending` : ''}`
+  const n = data.pending.length
+  return `◆ ${label}${more}${n ? ` · ${n} pending` : ''}`
 }
 
 // ─────────────────────────────── route: tree tab ───────────────────────────────
@@ -445,6 +543,7 @@ export function reviewDetail(
   p: Proposal | undefined,
   blocks: ReadonlyMap<string, string>,
   width: number,
+  reviewKey = REVIEW_KEY_LABEL,
 ): Line[] {
   if (!p) return []
   const out: Line[] = []
@@ -463,8 +562,185 @@ export function reviewDetail(
   const cmd = `${p.payload.command} ${JSON.stringify(p.payload.args)}`
   for (const l of wrap(cmd, width - 2)) add(`  ${l}`, 'muted')
   add('', 'text')
-  add(`accept/reject with: hafiz review --accept ${p.id}`, 'warning')
+  add(`accept or reject in the review overlay: ${reviewKey}`, 'warning')
   return out
+}
+
+// ─────────────────────────────── review overlay ───────────────────────────────
+
+/** `now`, `5m`, `3h`, `2d`: how long ago `iso` was. */
+export function age(iso: string, now: number): string {
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000))
+  if (!Number.isFinite(s) || s < 60) return 'now'
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 48 * 3600) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
+
+const versionOf = (p: Pick<ReviewRow, 'version'>) => (p.version ? ` v${p.version}` : '')
+
+export function reviewOverlayTitle(n: number): string {
+  return `Hafiz review · ${n} pending`
+}
+
+/** `design  Orders v2  ·  review · 5m  ·  gate`: one queue item in the list overlay. */
+export function reviewOptionText(p: ReviewRow, now: number): string {
+  const block = p.blockTitle ?? p.blockId
+  const what = `${reviewKind(p)}  ${block ? `${block}${versionOf(p)}` : p.id}`
+  return `${what}  ·  ${p.source} · ${age(p.createdAt, now)}  ·  ${p.mode === 'gate' ? 'gate' : 'queue'}`
+}
+
+/** The list overlay: each item and, under it, its note; `›` marks the selected one. */
+export function reviewOverlayRows(
+  items: readonly ReviewRow[],
+  selected: number,
+  width: number,
+  now: number,
+): Line[] {
+  if (!items.length) return [{ text: 'nothing pending review', tone: 'muted' }]
+  const out: Line[] = []
+  for (const [i, p] of items.entries()) {
+    const on = i === selected
+    out.push({
+      text: clip(`${on ? '›' : ' '} ${reviewOptionText(p, now)}`, width),
+      tone: on ? 'accent' : p.mode === 'gate' ? 'warning' : 'text',
+      id: p.id,
+    })
+    if (p.note) out.push({ text: clip(`    ${p.note}`, width), tone: 'muted', id: p.id })
+  }
+  return out
+}
+
+/** Under the list: the selected item's one-line summary and the keys. */
+export function reviewOverlayFooter(p: ReviewRow | undefined, width: number): Line[] {
+  if (!p) return [{ text: 'esc close', tone: 'muted' }]
+  return [
+    {
+      text: clip(p.note ?? `${reviewKind(p)} ${p.blockTitle ?? p.blockId ?? p.id}`, width),
+      tone: 'text',
+    },
+    { text: clip('↑↓ move · ⏎ open · a accept · r reject · esc close', width), tone: 'muted' },
+  ]
+}
+
+/** What `review.show` returns, as far as the detail overlay reads it. */
+export interface ReviewShown {
+  item: ReviewRow
+  doc: { version: number; by: { role: string; agent?: string | undefined } } | null
+  text: string
+  changed?: { since: number; sections: string[]; removed: string[] } | undefined
+  previous?: { version: number; text: string } | undefined
+}
+
+/** `design review · Orders [blk_1] v2`. */
+export function reviewDetailTitle(p: ReviewRow): string {
+  const block = p.blockId ? `${p.blockTitle ?? p.blockId} [${p.blockId}]` : p.id
+  return `${reviewKind(p)} review · ${block}${versionOf(p)}`
+}
+
+/** What a gate on this item holds until it is accepted. */
+export function gateWaits(p: Pick<ReviewRow, 'kind' | 'source'>): string {
+  const kind = reviewKind(p)
+  if (kind === 'design') return 'planner and workers wait'
+  if (kind === 'plan') return 'workers wait'
+  if (kind === 'done') return 'done waits'
+  return 'the next stage waits'
+}
+
+/** `by designer (des-1) · 5m · gate: planner and workers wait`, or `… · queue`. */
+export function reviewDetailMeta(shown: ReviewShown, now: number): string {
+  const p = shown.item
+  const by = shown.doc
+    ? `${shown.doc.by.role}${shown.doc.by.agent ? ` (${shown.doc.by.agent})` : ''}`
+    : p.source
+  return `by ${by} · ${age(p.createdAt, now)} · ${p.mode === 'gate' ? `gate: ${gateWaits(p)}` : 'queue'}`
+}
+
+/** Wrap one line to `width`, continuing under its own indent (+2). */
+function wrapLine(line: string, width: number): string[] {
+  if (line.length <= width) return [line]
+  const indent = ' '.repeat((/^\s*/.exec(line)?.[0].length ?? 0) + 2)
+  const words = wrap(line.trim(), Math.max(8, width - indent.length))
+  return words.map((w, i) => (i ? `${indent}${w}` : `${indent.slice(2)}${w}`))
+}
+
+/**
+ * The detail overlay's body: the doc at the reviewed version with `(changed since vM)` on the
+ * headings of changed sections (or, with `previous`, the version before it, plain), then the
+ * block's recent decisions and open questions from the tree summary.
+ */
+export function reviewDetailBody(
+  shown: ReviewShown,
+  node: TuiNode | undefined,
+  width: number,
+  previous = false,
+): Line[] {
+  const out: Line[] = []
+  const add = (text: string, tone: Tone) => {
+    for (const l of wrapLine(text, width)) out.push({ text: l, tone })
+  }
+  if (previous) {
+    if (!shown.previous) add('no previous version', 'muted')
+    else {
+      add(`previous: v${shown.previous.version}`, 'muted')
+      for (const l of shown.previous.text.split('\n')) add(l, 'text')
+    }
+  } else {
+    const ch = shown.changed
+    const labels = new Map((ch?.sections ?? []).map((n) => [sectionLabel(n), n]))
+    for (const l of shown.text.split('\n')) {
+      const head = /^([A-Z][^:]*):/.exec(l)?.[1]
+      if (ch && head && labels.has(head))
+        add(`${head} (changed since v${ch.since}):${l.slice(head.length + 1)}`, 'warning')
+      else add(l, 'text')
+    }
+    if (ch?.removed.length) add(`removed since v${ch.since}: ${ch.removed.join(', ')}`, 'warning')
+  }
+  if (!node) return out
+  out.push({ text: '', tone: 'text' })
+  add('Decisions on this block', 'title')
+  if (!node.recentDecisions.length) add('  none', 'muted')
+  for (const d of node.recentDecisions) add(`  ${d.title} — ${d.decision}`, 'text')
+  const older = node.decisions - node.recentDecisions.length
+  if (older > 0) add(`  +${older} older`, 'muted')
+  out.push({ text: '', tone: 'text' })
+  add('Open questions', 'title')
+  const open = node.threads.filter((t) => t.status === 'open')
+  if (!open.length) add('  none', 'muted')
+  for (const t of open) add(`  ? ${t.title}`, 'text')
+  return out
+}
+
+export function reviewDetailFooter(previous: boolean): string {
+  return `↑↓ scroll · d ${previous ? 'this version' : 'previous version'} · a accept · r reject · esc back`
+}
+
+/** The reject prompt's title: `reject design · Orders v2`. */
+export function rejectTitle(p: ReviewRow): string {
+  return `reject ${reviewKind(p)} · ${p.blockTitle ?? p.blockId ?? p.id}${versionOf(p)}`
+}
+
+export const REJECT_HINT = 'Why? One or two lines. The manager sees this as a notice.'
+
+/** `design Orders v2 accepted · planner may start` (the start note only when it gated). */
+export function acceptedToast(p: ReviewRow): string {
+  const what = `${reviewKind(p)} ${p.blockTitle ?? p.blockId ?? p.id}${versionOf(p)}`
+  const kind = reviewKind(p)
+  const next =
+    p.mode !== 'gate'
+      ? ''
+      : kind === 'design'
+        ? ' · planner may start'
+        : kind === 'plan'
+          ? ' · workers may start'
+          : kind === 'done'
+            ? ' · block is done'
+            : ''
+  return `${what} accepted${next}`
+}
+
+export function rejectedToast(p: ReviewRow): string {
+  return `${reviewKind(p)} ${p.blockTitle ?? p.blockId ?? p.id}${versionOf(p)} rejected`
 }
 
 // ─────────────────────────────── route: decisions tab ───────────────────────────────
@@ -499,10 +775,23 @@ export function decisionLines(
 
 // ─────────────────────────────── route: notices tab ───────────────────────────────
 
-/** Every notice of the session, untruncated, newest first, with its timestamp. */
-export function noticeLines(notices: readonly SidebarNotice[], width: number): Line[] {
-  if (!notices.length) return [{ text: 'no notices', tone: 'muted' }]
-  const out: Line[] = []
+/**
+ * Every notice of the session, untruncated, newest first, with its timestamp; a managed
+ * session's cost (`counters`) heads the tab.
+ */
+export function noticeLines(
+  notices: readonly SidebarNotice[],
+  width: number,
+  counters?: Readonly<Record<string, number>>,
+): Line[] {
+  const head: Line[] = counters
+    ? [
+        { text: clip(costLine(counters), width), tone: 'muted' },
+        { text: '', tone: 'text' },
+      ]
+    : []
+  if (!notices.length) return [...head, { text: 'no notices', tone: 'muted' }]
+  const out: Line[] = [...head]
   for (const n of [...notices].reverse()) {
     const tone: Tone = n.level === 'warn' ? 'warning' : 'text'
     const when = n.ts ? `${n.ts.slice(0, 16).replace('T', ' ')}  ` : ''

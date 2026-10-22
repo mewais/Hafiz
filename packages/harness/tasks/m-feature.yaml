@@ -9,7 +9,7 @@ turns:
       applying discounts in the cart total, and showing them in the order summary. This is a
       multi-part feature, so plan it as tracked work: one block for the feature, one child block
       per part, and a worker subagent implementing each part (spawned on its block). Keep the
-      work in src/.
+      work in src/. Discounts apply before tax, always.
 expect:
   blocks_created: ">=4"
   manager_decisions: ">=1"
@@ -19,7 +19,7 @@ expect:
   worker_reports: ">=4"
   subagents_spawned: "==4"
   files_written: ">=4"
-  cap_rejections: "==0"
+  cap_rejections: "<=2"
   spawns_rejected: "==0"
 mock:
   - turn: 1

@@ -65,7 +65,7 @@ async function seed<T>(io: Io, fn: (core: Core, root: string) => Promise<T>, rep
   const backend = new FsBackend({ dir: storeDir, minorBatchSeconds: 0 })
   await backend.open()
   const config = loadConfig()
-  config.hafiz.confirm_done = 'auto' // the default is ask; seeds close blocks directly
+  config.policies.review.done = 'off' // seeds close blocks directly, no review items
   const core = new Core({ config, backend, repoDir: repoDir ?? worktree })
   try {
     return await fn(core, (await backend.read.getProject())?.rootBlockId as string)

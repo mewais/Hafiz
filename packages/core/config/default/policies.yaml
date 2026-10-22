@@ -6,7 +6,7 @@ status:
     done:    [active]            # reopen
     dropped: []
   guards:
-    to_done:    [digest_present_and_fresh, no_open_threads, children_closed, confirm_done]
+    to_done:    [digest_present_and_fresh, no_open_threads, children_closed, review_done]
     to_blocked: [blocked_on_required]
     to_dropped: [reason_required]
     reopen:     [reason_required]          # also marks the digest stale (command effect)
@@ -26,3 +26,14 @@ spawn:
     has_plan:  ['*']
     done:      []                          # reopen first
     dropped:   []
+review:
+  # Per event: off = no proposal; queue = a proposal for the review queue, work proceeds;
+  # gate = a proposal, and the next stage on that block waits until it is accepted (one block
+  # only: siblings and parents go on). design gates spawning the planner or a worker on the
+  # block, plan gates workers, done gates the transition itself (set_status asks for
+  # confirmation, a worker's done request waits for the manager).
+  design: queue      # filed when the session that wrote the design ends, or on block.create
+  plan:   queue
+  done:   gate       # default holds done for confirmation (previously confirm_done: ask)
+  drafts: queue      # condenser/drafter proposals; off | queue (drafts never gate)
+  approver: user     # user | manager: who may accept or reject design/plan reviews

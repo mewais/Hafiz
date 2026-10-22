@@ -20,6 +20,7 @@ import {
   type CoreContext,
   checkVersion,
   mustBlock,
+  onboardingDue,
   type Runner,
   recordDecision,
   runAs,
@@ -73,6 +74,7 @@ export async function blockCreate(
       updatedAt: now,
     }
     await t.putBlock(block, -1)
+    await onboardingDue(t)
     if (args.design) await writeDoc(ctx, t, by, block, 'design', args.design, 0, notices)
     if (args.plan) await writeDoc(ctx, t, by, block, 'plan', args.plan, 0, notices)
     return block
@@ -170,7 +172,7 @@ export async function blockSetStatus(
     const b = await mustBlock(t, args.id)
     checkVersion(b, args.expectedVersion)
     const all = await t.listBlocks()
-    const confirmDone = ctx.config.hafiz.confirm_done
+    const doneReview = ctx.config.policies.review.done
     const tc: TransitionContext = {
       block: b,
       to: args.status,
@@ -183,7 +185,7 @@ export async function blockSetStatus(
         ...(args.blockedOn ? { blockedOn: args.blockedOn } : {}),
         ...(args.confirmed !== undefined ? { confirmed: args.confirmed } : {}),
       },
-      confirmDonePolicy: confirmDone,
+      doneReview,
     }
     const outcome = ctx.status.check(tc)
     if (!outcome.proceed)
@@ -226,7 +228,8 @@ export async function blockSetStatus(
           p.version,
         )
     }
-    if (args.status === 'done' && confirmDone === 'auto') {
+    // `review.done: queue`: done applies and the user reviews it later (gate asked above).
+    if (args.status === 'done' && doneReview === 'queue') {
       await t.putProposal({
         id: opaqueId('prop'),
         kind: 'status',
@@ -247,16 +250,19 @@ export interface BlockRequestDoneArgs {
   digest: Record<string, SectionValue>
 }
 
-/** Worker path: write the digest, then either apply `done` (auto) or enqueue it for the manager. */
+/**
+ * Worker path: write the digest, then apply `done` (`review.done` off or queue) or, under
+ * `gate`, enqueue it for the manager.
+ */
 export async function blockRequestDone(
   ctx: CoreContext,
   by: Actor,
   args: BlockRequestDoneArgs,
 ): Promise<CommandResult<Block | NeedsConfirmation | { queued: true; proposal: Proposal }>> {
-  // Gated as request_done; under `confirm_done: auto` it applies `done` without the caller
+  // Gated as request_done; unless `review.done` gates, it applies `done` without the caller
   // needing `block.set_status:done` itself.
   authorize(ctx.config, by.role, 'block.request_done')
-  if (ctx.config.hafiz.confirm_done === 'auto')
+  if (ctx.config.policies.review.done !== 'gate')
     return blockSetStatus(ctx, by, { id: args.id, status: 'done', digest: args.digest }, runSystem)
   const spec = { command: 'block.request_done', major: false, target: args.id }
   return runAs(ctx, by, spec, async (t, notices) => {

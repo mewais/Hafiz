@@ -74,9 +74,11 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
   block (a worker before there is a plan, anyone on a done block) or that copies the block into
   the prompt. A worker's final message ends with a `hafiz-report` block; Hafiz stores the whole
   reply in the block's progress log and hands the manager only that block.
-- Anything agents want to change that needs a human (marking a block done, a proposed digest,
-  a missing protocol call) lands in the **review queue**: `hafiz review`, then
-  `hafiz review --accept ID` or `--reject ID`.
+- Anything agents want to change that needs a human (a finished design or plan, marking a block
+  done, a proposed digest, a missing protocol call) lands in the **review queue**: `hafiz review`
+  lists it, `hafiz review --show ID` prints the design or plan under review,
+  `hafiz review --accept ID` or `--reject ID --note "why"` resolves it. Which events file a
+  proposal, and which hold the block until you accept, is the review policy (below).
 - `hafiz status` shows the epoch, live sessions, token cost and re-emits, and pending
   proposals. In Kilo the same is `/hafiz-status`; `/hafiz-checkpoint` records unrecorded work.
 - Record a rule for every agent with `hafiz direct "Never touch the billing schema." --kind never`.
@@ -102,7 +104,7 @@ Agents reach Hafiz through twelve tools; each role sees only its own, narrowed t
 | `hafiz_progress_append` | one finding on a block's progress log | manager, designer (found, question), worker |
 | `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
 | `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
-| `hafiz_review` | list, accept or reject proposals in the review queue | manager |
+| `hafiz_review` | list, accept or reject (with a note) proposals in the review queue; design and plan reviews only under `approver: manager` | manager |
 | `hafiz_focus_set` | centre the context on chosen blocks | manager |
 | `hafiz_track_project` | start tracking an untracked repo | primary agents, untracked repos only |
 
@@ -114,19 +116,28 @@ The MCP gateway (`hafiz mcp --role <r>`) serves the same tools plus `hafiz_conte
 ## The Kilo TUI panel
 
 In the Kilo TUI the session sidebar gets a **Hafiz** section: the project, this session's role
-and focus, the block tree (◆ root, ✓ done, ▶ active, ◐ active with children, ○ planned,
-⧗ blocked, ✗ dropped; `3/5` plan steps; `●` on this session's focus blocks), open threads,
-pending review items, the latest notices and the session's Hafiz cost. Paths to focus and active
-blocks are open, finished and planned subtrees are folded to `▸ Billing (4)`; click a row to open
-or close it. The prompt shows a chip such as `◆ Payments · 2 pending`, and new review items and
-compliance notices pop up as toasts.
+and the blocks it is on (`manager · on Checkout, Pricing`), the block tree (◆ root, ✓ done,
+▶ active, ◐ active with children, ○ planned, ⧗ blocked, ✗ dropped; `3/5 steps`; `waits on user`;
+`(review)` or `(rejected)` on a block a gated design or plan review holds; `●` on this session's
+focus blocks), open questions on the focus blocks, the pending review items
+(`review  design Orders · done Cart totals`) and the latest notices. Paths to focus and active
+blocks are open, finished and planned subtrees are folded to `▸ Billing  +4 hidden`; click a row
+to open or close it. Click the footer (`? legend · …`) for a legend of the glyphs. The prompt
+shows a chip such as `◆ Payments · 2 pending`, and new review items and compliance notices pop up
+as toasts.
 
-`/hafiz` (or `ctrl+x f`) opens a full-screen view with three tabs: **Tree** (↑↓ move, ⏎/→ open,
+`ctrl+x v` (or `/hafiz-review`, or a click on the review line) opens the **review overlay**: the
+pending items (⏎ opens one: the doc at the version under review, with the sections changed since
+the approved version marked, `d` for the previous version, and the block's decisions and open
+questions), `a` accepts, `r` rejects with a note the manager sees, esc steps back. These are the
+panel's only writes, made as the `user`; everything else it reads as a `viewer` session the
+daemon refuses all writes for.
+
+`/hafiz` (or `ctrl+x f`) opens a full-screen view with four tabs: **Tree** (↑↓ move, ⏎/→ open,
 ← close, `z` cycles the zoom of the selected block, `h` its doc history), **Review** (pending
-proposals with what they would run) and **Decisions** (standing rules and recent decisions per
-block). Esc goes back. The panel is strictly read-only: it opens a `viewer` session the daemon
-refuses all writes for. Accept or reject with `hafiz review --accept <id>`; everything else goes
-through agents or the CLI.
+proposals with what they would run; ⏎ opens one in the overlay), **Decisions** (standing rules
+and recent decisions per block) and **Notices** (the session's Hafiz cost, then every notice).
+Esc goes back.
 
 ## Condenser model
 
@@ -155,6 +166,28 @@ llm:
 ```
 
 `hafiz doctor --online` sends a tiny request to check a direct provider is reachable.
+
+## Review policy
+
+`policies.yaml` (`~/.hafiz/config/` or `<store>/config/`) decides per event whether a proposal is
+filed and whether it holds the next stage on that block until accepted. `off`: no proposal;
+`queue`: a proposal, work goes on; `gate`: a proposal, and the block waits (siblings and
+parents do not). The defaults are `queue`, except `done: gate` (as before), approved by the user; this
+setting also gates designs:
+
+```yaml
+review:
+  design: gate       # no planner or worker on the block until its design is accepted
+  plan:   queue      # gate: no worker until the plan is accepted
+  done:   gate       # default: done waits for confirmation / the manager
+  drafts: queue      # condenser and drafter proposals (off | queue; never gate)
+  approver: user     # user | manager: who accepts or rejects design and plan reviews
+```
+
+A design or plan is filed when the agent session that wrote it ends (or when a block is created
+with one); a newer version replaces the pending proposal. Accepting pins the version on the
+block; the next review says which sections changed since it. `hafiz doctor` warns about the
+retired `hafiz.yaml confirm_done` (`ask` reads as `done: gate`, `auto` as `done: queue`).
 
 ## Where data lives
 

@@ -1,5 +1,7 @@
 import type { Config } from '../config/schema.js'
-import { ForbiddenError } from '../domain/errors.js'
+import { ForbiddenError, HafizError } from '../domain/errors.js'
+import { mayApprove } from '../domain/review.js'
+import type { Proposal } from '../domain/types.js'
 
 /**
  * Allowlist patterns (roles.yaml `tools`):
@@ -31,4 +33,23 @@ export function authorize(config: Config, role: string, command: string, qualifi
   const patterns = def?.tools ?? []
   if (!isAllowed(patterns, command, qualifier))
     throw new ForbiddenError(role, qualifier ? `${command}:${qualifier}` : command)
+}
+
+/**
+ * Resolving a proposal (`proposal.accept` / `proposal.reject`): the allowlist, and for design
+ * and plan reviews also `policies.yaml review.approver` (the user always may).
+ */
+export function authorizeResolve(
+  config: Config,
+  role: string,
+  command: string,
+  p: Pick<Proposal, 'source'>,
+): void {
+  authorize(config, role, command)
+  if (p.source !== 'review' || mayApprove(config.policies.review, role)) return
+  throw new HafizError(
+    'forbidden',
+    `role '${role}' may not resolve design or plan reviews: the approver is ${config.policies.review.approver} (policies.yaml review.approver). The user runs: hafiz review`,
+    { role, command },
+  )
 }

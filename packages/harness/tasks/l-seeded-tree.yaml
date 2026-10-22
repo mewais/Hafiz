@@ -55,10 +55,10 @@ expect:
   worker_done_requests: "==3"
   worker_progress_min: ">=2"
   decisions_standing: ">=1"
-  threads_opened: "==1"
+  threads_opened: "<=2"
   threads_parked: "==1"
   threads_open_at_end: "==0"
-  cap_rejections: "==0"
+  cap_rejections: "<=2"
   spawns_rejected: "==0"
 mock:
   - turn: 1

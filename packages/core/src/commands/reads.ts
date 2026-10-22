@@ -1,5 +1,6 @@
 // Read queries over the store (§5.2): the tree, its UI summary, one block in detail, doc history.
 
+import type { ReviewState } from '../domain/review.js'
 import {
   type Actor,
   type Block,
@@ -11,6 +12,8 @@ import {
   deriveDecisionStatus,
   type Edge,
   type ProgressEntry,
+  type ReviewMode,
+  type ReviewType,
   type Standing,
   type Status,
   type StepEvent,
@@ -58,6 +61,13 @@ export interface TreeSummaryNode {
   decisions: number
   /** The latest active decisions, newest first. */
   recentDecisions: DecisionBrief[]
+  /**
+   * Open design/plan reviews (§7): pending, or rejected and not yet revised, with the review
+   * table's row for the doc (`gate` holds the next stage on this block until accepted).
+   */
+  review?: Partial<Record<ReviewType, ReviewState & { mode: ReviewMode }>>
+  /** Doc versions approved through the review queue. */
+  reviewed?: Partial<Record<ReviewType, number>>
 }
 
 export interface TreeSummary {
@@ -131,6 +141,15 @@ export async function treeSummary(
     const active = b.decisions.filter((d) => d.status === 'active')
     for (const d of active) if (d.standing) standing.push(brief(d))
     const steps = b.steps
+    const open = snap.reviews.get(id)
+    const review = open
+      ? Object.fromEntries(
+          Object.entries(open).map(([t, r]) => [
+            t,
+            { ...r, mode: ctx.config.policies.review[t as ReviewType] },
+          ]),
+        )
+      : undefined
     nodes.push({
       id,
       parentId: b.block.parentId,
@@ -154,6 +173,8 @@ export async function treeSummary(
         .map((t) => ({ id: t.id, title: t.title, status: t.status })),
       decisions: active.length,
       recentDecisions: active.slice(-recent).reverse().map(brief),
+      ...(review ? { review } : {}),
+      ...(b.block.reviewed ? { reviewed: b.block.reviewed } : {}),
     })
   }
   return {

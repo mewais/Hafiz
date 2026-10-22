@@ -27,11 +27,23 @@ export type BeforeHook = 'draft_gist'
  * - `done_compliance`: a request to finish a block (`request_done`, `set_status` → done) runs
  *   the `request_done` compliance checks; their notices join the reply.
  * - `draft_digest`: the same request with a thin digest queues a drafted one (drafters on).
+ * - `file_reviews`: `block.create` with an inline design or plan, by a role that does not
+ *   approve reviews, files them for review (`policies.yaml review`).
+ * - `announce_resolution`: a design/plan review accepted or rejected, or any proposal rejected
+ *   with a note, is told to the reviewers (the manager).
  */
-export type AfterHook = 'refresh_focus' | 'announce_proposals' | 'done_compliance' | 'draft_digest'
+export type AfterHook =
+  | 'refresh_focus'
+  | 'announce_proposals'
+  | 'done_compliance'
+  | 'draft_digest'
+  | 'file_reviews'
+  | 'announce_resolution'
 
 /** After any write that can change a block's status or the review queue. */
 const TREE_WRITE: readonly AfterHook[] = ['refresh_focus', 'announce_proposals']
+/** After resolving a proposal. */
+const RESOLVE_WRITE: readonly AfterHook[] = [...TREE_WRITE, 'announce_resolution']
 /** After a request to finish a block. */
 const DONE_WRITE: readonly AfterHook[] = [...TREE_WRITE, 'done_compliance', 'draft_digest']
 
@@ -50,9 +62,9 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
   query('tree.list'),
   query('session.status'),
   query('proposal.list'),
-  write('proposal.accept', { after: TREE_WRITE }),
-  write('proposal.reject', { after: TREE_WRITE }),
-  write('block.create', { after: TREE_WRITE }),
+  write('proposal.accept', { after: RESOLVE_WRITE }),
+  write('proposal.reject', { after: RESOLVE_WRITE }),
+  write('block.create', { after: [...TREE_WRITE, 'file_reviews'] }),
   write('block.update', { after: TREE_WRITE }),
   write('block.move', { after: TREE_WRITE }),
   write('block.set_status', { after: DONE_WRITE }),

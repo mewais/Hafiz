@@ -244,20 +244,36 @@ against a mock LLM; corrections to the above in bold):**
 that Kilo finds through the package's `exports["./tui"]` when the package is listed in
 `tui.json[c]`; they run in the TUI thread while server plugins run in a worker, so the panel opens
 its own daemon connection as a `read_only` `viewer` session (`tree.summary`, `project.status`,
-`proposal.list`, `notices.peek` — which never drains —, `block.read`, `block.history`; every write
-method is refused). Kilo compiles `.tsx` with Solid's universal transform only outside
+`review.list`, `review.show`, `notices.peek` — which never drains —, `block.read`,
+`block.history`; every write method is refused). The panel writes exactly three things, all from
+the review overlay and as the `user` role on a second connection (`kilo-tui-user`, opened on the
+first write): `proposal.accept {id}`, `proposal.reject {id, note}`, and the `session.open` that
+attaches it. Kilo compiles `.tsx` with Solid's universal transform only outside
 `node_modules`, so `hafiz-kilo/tui` ships compiled JS (babel-preset-solid,
 `generate: universal`, `moduleName: @opentui/solid`) with `solid-js` and `@opentui/*` left as
 imports, which Kilo's runtime plugin maps onto its own instances. It registers a
 `sidebar_content` slot (opentui delivers `onMouseDown` to boxes there, so rows fold on click), a
 `session_prompt_right` chip, a `hafiz` route with keymap-layer bindings, the `/hafiz` slash
-command (`<leader>f`), and toasts; it is registered at every TUI start whatever the tracking state
+command (`<leader>f`), toasts, and the review overlay (`<leader>v`, `/hafiz-review`; `ctrl+r` is
+Kilo's session rename and `<leader>r` its redo, `<leader>v` is free in 7.8.15's defaults). The
+overlay uses `api.ui.dialog.replace(render, onClose)`: Kilo wraps the element in its own dialog
+frame (so the plugin passes content, not `ui.Dialog`, which would nest a second frame), inserts
+it reactively (signals read inside stay live: the list redraws from the store), resets the size
+to medium on every replace (`dialog.setSize` after mount), and closes the top dialog on escape
+by calling its onClose and popping. `ui.DialogSelect` was not used: its filter input would take
+`a`/`r` and it forwards no extra key actions. Each view registers its keys in a keymap layer only
+while mounted, at `priority` 1 (2 for escape over the reject `ui.DialogPrompt`), above Kilo's
+dialog layer (0), so esc steps back a view; the route's layer sets `enabled: () =>
+!dialog.open`. The slash command is one word (`/hafiz-review`), like every Kilo slash name. The
+real-TUI test drives list → detail → reject prompt → esc → esc → `a` and sees the list redraw
+empty. The panel is registered at every TUI start whatever the tracking state
 (`Hafiz · off (not a git repo)`, `Hafiz · untracked`, `connecting…`, or the tree) and has no timer:
 a completed `hafiz_track_project` tool part (`message.part.updated`, `part.type: tool`,
 `state.status: completed`) resolves the pointer once and switches it to tracked, and
 `message.part.updated` (Hafiz tool completed), `message.updated`, `session.idle|status|created`
 refresh it. Tracking started outside Kilo shows at the next TUI start; changes made outside Kilo
-(a proposal accepted from the CLI) show at the next Kilo event. Restart-bound after mid-session
+(a proposal accepted from the CLI) show at the next Kilo event; an accept or reject in the
+overlay re-reads at once. Restart-bound after mid-session
 tracking (Kilo reads config once): the embedded proxy shaper (hooks shape instead), `compaction.auto`,
 and a hidden condenser agent whose provider only the project config selects. With `llm.*.provider: kilo` the daemon
 relays condenser/drafter calls back over the plugin's connection (`llm.serve` /

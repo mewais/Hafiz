@@ -12,7 +12,6 @@ tokenizer:
   soft_zone: 0.15                  # writes within cap*(1+soft_zone) succeed with a notice
 windows:                           # context window per model family; used for budgets
   default: 200000
-confirm_done: ask                  # ask | auto
 llm:
   # provider: none | kilo | openai-compatible | anthropic | fake (tests).  none = condensation
   # disabled (the host's own compaction stays on). kilo = run through Kilo itself (the Kilo plugin
@@ -29,9 +28,11 @@ daemon:
 onboarding:
   # Tracking a repo that has commits and at least this many tracked source files (docs, licences
   # and dotfiles do not count) marks the project `onboarding: pending`: the manager has the
-  # designer describe the existing codebase in the root design before new work.
+  # designer describe the existing codebase in the root design before new work. It is asked only
+  # once tracked work starts (first block, first spawn on a block, or a root doc write), so a
+  # one-off fix does not spawn a designer.
   min_source_files: 5
-  # One line at the top of these roles' views while onboarding is pending; the rules say what to do.
+  # One line at the top of these roles' views once tracked work has started on a pending project; the rules say what to do.
   directive: "Onboarding pending: this repo had code before Hafiz started tracking it; follow your rules' Onboarding before new work."
   roles: [manager]
 host:

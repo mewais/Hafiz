@@ -1,9 +1,11 @@
 // Render: zoom → section selectors → Markdown. Pure and deterministic.
 import type { Config, DocSchema } from '../config/schema.js'
+import { gatingReview } from '../domain/review.js'
 import type {
   Block,
   Contract,
   DecisionView,
+  Doc,
   DocType,
   Ref,
   SectionValue,
@@ -126,6 +128,20 @@ export function formatSection(
   }
 }
 
+/** A whole document as labelled sections in schema order (the review queue's `show`). */
+export function renderDoc(
+  config: Config,
+  kind: string,
+  doc: Pick<Doc, 'type' | 'sections'>,
+): string {
+  const schema = schemaOf(config, kind, doc.type)
+  const formats = new Map(schema?.sections.map((x) => [x.name, x.format]))
+  return sectionOrder(schema, doc.sections)
+    .map((n) => formatSection(n, formats.get(n) ?? '', doc.sections[n] as SectionValue))
+    .filter(Boolean)
+    .join('\n')
+}
+
 export function decisionLine(d: DecisionView): string {
   const why = d.rationale ? ` Why: ${oneLine(d.rationale)}` : ''
   return `- ${oneLine(d.title)}: ${oneLine(d.decision)}${why} \`${d.id}\``
@@ -154,8 +170,19 @@ export function headingLine(
     b.kind !== ctx.config.kinds.default_kind && b.kind !== 'root' && b.parentId !== null
       ? [b.kind]
       : []
-  const tags = [b.status, ...kind, ...marks].join(' · ')
+  const tags = [b.status, ...reviewMarks(ctx, b), ...kind, ...marks].join(' · ')
   return `${'#'.repeat(Math.min(Math.max(level, 1), 6))} ${oneLine(b.title)} [${b.id}] ${tags}`
+}
+
+/**
+ * `review design` while a gated design waits for approval, `design rejected` once rejected and
+ * not yet revised (`policies.yaml review`): the next stage on the block waits. Queued reviews
+ * hold nothing and show nothing.
+ */
+function reviewMarks(ctx: RenderCtx, b: Block): string[] {
+  const g = gatingReview(ctx.config.policies.review, ctx.snap.reviews.get(b.id))
+  if (!g) return []
+  return [g.review.status === 'pending' ? `review ${g.type}` : `${g.type} rejected`]
 }
 
 function headerMeta(ctx: RenderCtx, s: BlockSnap): string {

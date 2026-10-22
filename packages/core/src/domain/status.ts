@@ -1,6 +1,6 @@
 import type { Config } from '../config/schema.js'
 import { GuardError, InvalidTransitionError } from './errors.js'
-import type { Block, BlockedOn, Doc, Status, Thread } from './types.js'
+import type { Block, BlockedOn, Doc, ReviewMode, Status, Thread } from './types.js'
 
 /** Everything a guard may need. Commands assemble it; guards stay pure. */
 export interface TransitionContext {
@@ -15,7 +15,8 @@ export interface TransitionContext {
     blockedOn?: BlockedOn
     confirmed?: boolean
   }
-  confirmDonePolicy: 'auto' | 'ask'
+  /** `policies.yaml review.done`: `gate` holds the transition until confirmed. */
+  doneReview: ReviewMode
 }
 
 export type GuardResult =
@@ -65,8 +66,8 @@ export const builtinGuards: Record<string, Guard> = {
         )
       : ok
   },
-  confirm_done: (c) =>
-    c.confirmDonePolicy === 'ask' && !c.args.confirmed ? { needsConfirmation: true } : ok,
+  review_done: (c) =>
+    c.doneReview === 'gate' && !c.args.confirmed ? { needsConfirmation: true } : ok,
   blocked_on_required: (c) =>
     c.args.blockedOn
       ? ok

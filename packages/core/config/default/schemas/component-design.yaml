@@ -3,6 +3,9 @@ sections:
   - { name: purpose,     required: true,  cap: 150, format: prose }
   - { name: scope,       required: true,  cap: 200, format: list }
   - { name: interface,   required: true,  cap: 600, format: structured }  # provides / consumes / contracts
+  - { name: approach,    required: false, cap: 300, format: prose }   # chosen method and the expensive-to-reverse calls
+  - { name: structure,   required: false, cap: 250, format: list }    # modules / responsibilities / extension points
+  - { name: risks,       required: false, cap: 200, format: list }    # what could break the approach; what to verify first
   - { name: constraints, required: false, cap: 200, format: list }
   - { name: rationale,   required: false, cap: 300, format: prose }
   - { name: references,  required: false, cap: 100, format: refs }

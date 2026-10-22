@@ -15,13 +15,16 @@ export function draftersEnabled(ctx: CoreContext, provider: LLMProvider): boolea
 /** Drafts are queued as the user's review items. */
 const reviewer = (sessionId: string) => ({ sessionId, role: 'user' })
 
-/** A gist draft for a thread, queued as a proposal (`thread.park` with the gist). */
+/**
+ * A gist draft for a thread, queued as a proposal (`thread.park` with the gist) unless
+ * `review.drafts` is off; the gist is returned either way (the park refusal carries it).
+ */
 export async function draftGist(
   ctx: CoreContext,
   provider: LLMProvider,
   sessionId: string,
   threadId: string,
-): Promise<{ gist: string; proposal: Proposal } | null> {
+): Promise<{ gist: string; proposal: Proposal | null } | null> {
   if (!draftersEnabled(ctx, provider)) return null
   const th = await ctx.backend.read.getThread(threadId)
   if (!th) return null
@@ -50,14 +53,14 @@ export function digestIsThin(ctx: CoreContext, digest: Record<string, SectionVal
   return ctx.tok.count(outcome) < 15 || pointers.length === 0
 }
 
-/** A fuller digest drafted from the block's progress log, queued as a proposal. */
+/** A fuller digest drafted from the block's progress log, queued as a proposal (drafts row). */
 export async function draftDigest(
   ctx: CoreContext,
   provider: LLMProvider,
   sessionId: string,
   blockId: BlockId,
 ): Promise<Proposal | null> {
-  if (!draftersEnabled(ctx, provider)) return null
+  if (!draftersEnabled(ctx, provider) || ctx.config.policies.review.drafts === 'off') return null
   const b = await ctx.backend.read.getBlock(blockId)
   if (!b) return null
   const log = (await ctx.backend.read.readLog(blockId, 'progress')).map((x) => x.entry)

@@ -9,6 +9,8 @@ import type {
   HistoryEntry,
   Proposal,
   ResolvedProject,
+  ReviewItem,
+  ReviewShow,
   Session,
   TreeSummary,
 } from '@hafiz/core'
@@ -184,13 +186,29 @@ export class DaemonClient {
     return this.call<ProjectStatus>('project.status')
   }
   sessionEnd() {
-    return this.call<{ ended: true }>('session.end')
+    return this.call<{ ended: true; reviews: string[] }>('session.end')
   }
   countersAdd(delta: Record<string, number>) {
     return this.call<Omit<Session, 'token'> | null>('counters.add', { delta })
   }
   proposalList(status?: Proposal['status']) {
     return this.call<Proposal[]>('proposal.list', status ? { status } : {})
+  }
+  /** The review queue with each proposal's table row, block title and reviewed version. */
+  reviewList(status?: Proposal['status'] | 'all') {
+    return this.call<ReviewItem[]>('review.list', status ? { status } : {})
+  }
+  /** A proposal and the doc it is about, at the version under review. */
+  reviewShow(id: string) {
+    return this.call<ReviewShow>('review.show', { id })
+  }
+  /** Accept a proposal (design/plan reviews: the approver role only). */
+  reviewAccept(id: string) {
+    return this.dispatch<Proposal>('proposal.accept', { id })
+  }
+  /** Reject a proposal; the note is stored on it and reaches the reviewers (the manager). */
+  reviewReject(id: string, note?: string) {
+    return this.dispatch<Proposal>('proposal.reject', note ? { id, note } : { id })
   }
   noticesDrain() {
     return this.call<QueuedNotice[]>('notices.drain')

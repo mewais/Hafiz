@@ -13,7 +13,7 @@ const ctx = (over: Partial<TransitionContext>): TransitionContext => ({
   threads: [],
   digest: null,
   args: {},
-  confirmDonePolicy: 'auto',
+  doneReview: 'queue',
   ...over,
 })
 
@@ -55,13 +55,15 @@ describe('status machine', () => {
       ),
     ).toThrow(/child block/)
   })
-  it('ask policy requests confirmation; confirmed proceeds', () => {
-    expect(sm.check(ctx({ args: { digestProvided: true }, confirmDonePolicy: 'ask' }))).toEqual({
+  it('review.done: gate requests confirmation (confirmed proceeds); off and queue proceed', () => {
+    for (const doneReview of ['off', 'queue'] as const)
+      expect(sm.check(ctx({ args: { digestProvided: true }, doneReview })).proceed).toBe(true)
+    expect(sm.check(ctx({ args: { digestProvided: true }, doneReview: 'gate' }))).toEqual({
       proceed: false,
       needsConfirmation: true,
     })
     expect(
-      sm.check(ctx({ args: { digestProvided: true, confirmed: true }, confirmDonePolicy: 'ask' }))
+      sm.check(ctx({ args: { digestProvided: true, confirmed: true }, doneReview: 'gate' }))
         .proceed,
     ).toBe(true)
   })

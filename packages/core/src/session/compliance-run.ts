@@ -95,8 +95,10 @@ export async function complianceRun(
         block: s.focus.blocks[0],
         openThreads,
         metrics,
-      }))
-        proposals.push(await proposalAdd(ctx, proposalOf(d), by))
+      })) {
+        const added = await proposalAdd(ctx, proposalOf(d), by)
+        if (added) proposals.push(added)
+      }
   }
   // measurable for the compliance harness (M6): how often the engine spoke to this session
   if (notices.length) await countersAdd(ctx, sessionId, { compliance_notices: notices.length })
