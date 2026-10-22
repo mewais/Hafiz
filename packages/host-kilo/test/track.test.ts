@@ -223,7 +223,7 @@ describe('untracked git repo', () => {
     const sys = (await system(hooks, 'ses_b')).join('\n')
     expect(sys).toContain('Onboarding pending')
     // the rules (injected: the agent's prompt predates tracking) say what onboarding means
-    expect(sys).toContain('first spawn the designer once on the\nroot block')
+    expect(sys).toContain('first spawn the designer once on\nthe root block')
   })
 })
 
