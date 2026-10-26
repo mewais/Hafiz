@@ -103,9 +103,18 @@ function readDelegations(file: string): Delegation[] {
     .map((l) => JSON.parse(l) as Delegation)
 }
 
+/** The slice of a review-queue item the runner looks at. */
+export interface ReviewQueueItem {
+  id: string
+  kind: string
+  source?: string
+  blockId?: string | undefined
+}
+
 /**
- * Resolve every pending review proposal as the `user` role, through the daemon. Rejections carry
- * `note`, which reaches the manager.
+ * Resolve the pending design and plan reviews (`source === 'review'`) as the `user` role, through
+ * the daemon. Done requests, drafts and compliance proposals are left alone (the manager audits
+ * them). Rejections carry `note`, which reaches the manager.
  */
 export async function resolveReviews(
   socketPath: string,
@@ -116,7 +125,8 @@ export async function resolveReviews(
   try {
     await user.openSession({ id: 'harness-review', host: 'harness', role: 'user' })
     const done: ReviewRecord[] = []
-    for (const p of await user.reviewList()) {
+    for (const p of (await user.reviewList()) as ReviewQueueItem[]) {
+      if (p.source !== 'review' || (p.kind !== 'design' && p.kind !== 'plan')) continue
       if (action === 'accept') await user.reviewAccept(p.id)
       else await user.reviewReject(p.id, note)
       done.push({ id: p.id, kind: p.kind, block: p.blockId ?? '', action })
@@ -176,7 +186,7 @@ export function pluginUrl(): string {
   return url.href
 }
 
-function kiloTurn(a: {
+export function kiloTurn(a: {
   bin: string
   repo: string
   env: NodeJS.ProcessEnv
@@ -210,25 +220,51 @@ function kiloTurn(a: {
       // Kilo takes its directory from $PWD, not the process cwd
       env: { ...a.env, PWD: a.repo, KILO_CONFIG_CONTENT: JSON.stringify(a.config) },
       stdio: ['ignore', 'pipe', 'pipe'],
+      // own process group, so a timeout kills Kilo's children too (they would hold the pipes open)
+      detached: true,
     })
     let stdout = ''
     let stderr = ''
+    let timedOut = false
+    let settled = false
     p.stdout?.on('data', (c: Buffer) => {
       stdout += c.toString()
     })
     p.stderr?.on('data', (c: Buffer) => {
       stderr += c.toString()
     })
-    const timer = setTimeout(() => p.kill('SIGKILL'), a.timeoutMs)
-    p.on('error', (e) => {
-      clearTimeout(timer)
-      rej(e)
-    })
-    p.on('close', (code) => {
-      clearTimeout(timer)
+    const kill = () => {
+      timedOut = true
+      try {
+        if (p.pid) process.kill(-p.pid, 'SIGKILL')
+      } catch {
+        p.kill('SIGKILL')
+      }
+    }
+    // Hard wall-clock limit from spawn, never reset by output. It compares Date.now() on a short
+    // interval rather than trusting one long timer, which does not advance while the machine sleeps.
+    const timer = setInterval(
+      () => {
+        if (Date.now() - t0 >= a.timeoutMs && !timedOut) kill()
+      },
+      Math.min(1000, Math.max(10, a.timeoutMs / 4)),
+    )
+    const finish = (code: number | null) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
       writeFileSync(`${a.logBase}.out.jsonl`, stdout)
       writeFileSync(`${a.logBase}.err.log`, stderr)
-      res({ code: code ?? -1, stdout, ms: Date.now() - t0 })
+      res({ code: timedOut ? -1 : (code ?? -1), stdout, ms: Date.now() - t0 })
+    }
+    p.on('error', (e) => {
+      clearInterval(timer)
+      rej(e)
+    })
+    p.on('close', finish)
+    // after a timeout kill, do not wait for pipes that stray grandchildren may still hold open
+    p.on('exit', (code) => {
+      if (timedOut) finish(code)
     })
   })
 }
@@ -254,6 +290,8 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HAFIZ_STORE_ROOT: join(work, 'stores'),
+    // private, empty: the user's ~/.hafiz/config (policies, rules) must not leak into a task
+    HAFIZ_HOME: join(work, 'hafiz-home'),
     XDG_RUNTIME_DIR: tmp('hafiz-rt-'),
     KILO_DISABLE_SHARE: '1',
     KILO_DISABLE_SESSION_INGEST: '1',
@@ -319,7 +357,10 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
         model,
         prompt,
         session,
-        timeoutMs: opts.turnTimeoutMs ?? (opts.mock ? 120_000 : TURN_TIMEOUT_S * 1000),
+        timeoutMs:
+          (task.turn_timeout ? task.turn_timeout * 1000 : undefined) ??
+          opts.turnTimeoutMs ??
+          (opts.mock ? 120_000 : TURN_TIMEOUT_S * 1000),
         logBase: join(runDir, `turn-${i + 1}`),
       })
       turns.push({ agent, code: r.code, ms: r.ms })

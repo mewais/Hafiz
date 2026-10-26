@@ -77,6 +77,8 @@ export const taskSchema = z.object({
    * daemon starts), e.g. `review: { design: gate, plan: gate }`.
    */
   policies: z.record(z.string(), z.unknown()).optional(),
+  /** Per-turn wall-clock limit in seconds for this task; overrides `--turn-timeout`. */
+  turn_timeout: z.number().positive().optional(),
   turns: z
     .array(
       z.object({

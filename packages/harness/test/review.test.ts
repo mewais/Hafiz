@@ -1,12 +1,12 @@
 // The review step between turns, the `policies:` override and the task shapes that use them.
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
 import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
-import { afterEach, describe, expect, it } from 'vitest'
-import { resolveReviews, writePolicies } from '../src/runner.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { kiloTurn, resolveReviews, writePolicies } from '../src/runner.js'
 import { holds } from '../src/score.js'
 import { loadTasks } from '../src/tasks.js'
 
@@ -72,7 +72,61 @@ describe('review step', () => {
   })
 })
 
+describe('resolveReviews with mixed proposals', () => {
+  it('resolves only review-sourced design and plan proposals', async () => {
+    const seen: string[] = []
+    const items = [
+      { id: 'a', kind: 'design', source: 'review', blockId: 'b1' },
+      { id: 'b', kind: 'plan', source: 'review', blockId: 'b2' },
+      { id: 'c', kind: 'done', source: 'auto_done', blockId: 'b3' },
+      { id: 'd', kind: 'design', source: 'drafter', blockId: 'b4' },
+      { id: 'e', kind: 'compliance', source: 'compliance', blockId: 'b5' },
+    ]
+    const spy = vi.spyOn(DaemonClient, 'connect').mockResolvedValue({
+      openSession: async () => undefined,
+      reviewList: async () => items,
+      reviewAccept: async (id: string) => void seen.push(id),
+      reviewReject: async (id: string) => void seen.push(id),
+      close: () => undefined,
+    } as unknown as DaemonClient)
+    cleanup.push(() => spy.mockRestore())
+    const done = await resolveReviews('sock', 'accept')
+    expect(seen).toEqual(['a', 'b'])
+    expect(done.map((r) => [r.id, r.kind, r.block])).toEqual([
+      ['a', 'design', 'b1'],
+      ['b', 'plan', 'b2'],
+    ])
+  })
+})
+
+describe('kiloTurn timeout', () => {
+  it('kills a slow binary at the hard limit even while it keeps printing', async () => {
+    const dir = tmp('hafiz-h-bin-')
+    const bin = join(dir, 'slow.sh')
+    writeFileSync(bin, '#!/bin/sh\nwhile true; do echo tick; sleep 0.1; done\n')
+    chmodSync(bin, 0o755)
+    const r = await kiloTurn({
+      bin,
+      repo: dir,
+      env: process.env,
+      config: {},
+      agent: 'x',
+      model: 'm',
+      prompt: 'p',
+      timeoutMs: 1000,
+      logBase: join(dir, 'turn-1'),
+    })
+    expect(r.code).toBe(-1)
+    expect(r.ms).toBeGreaterThanOrEqual(1000)
+    expect(r.ms).toBeLessThan(5000)
+  })
+})
+
 describe('tasks', () => {
+  it('m-feature-gated sets a 2 h turn timeout', () => {
+    expect(loadTasks(undefined, ['m-feature-gated'])[0]?.turn_timeout).toBe(7200)
+  })
+
   it('m-feature-gated declares gates and a review after turns 1 and 2', () => {
     const t = loadTasks(undefined, ['m-feature-gated'])[0]
     expect(t?.policies).toEqual({ review: { design: 'gate', plan: 'gate' } })

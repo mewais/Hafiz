@@ -14,8 +14,8 @@ one that gets parked. **M gated** (`m-feature-gated`) is the feature with design
 set to `gate`, run as designer, then planner, then workers across three turns.
 
 ## Review step and policies
-A turn may name a review for the moment after it. Before the next turn the runner resolves every
-pending review proposal as the `user` role, through the daemon (`reviewList`, `reviewAccept`,
+A turn may name a review for the moment after it. Before the next turn the runner resolves the
+pending design and plan review proposals only (not done requests, drafts or compliance) as the `user` role, through the daemon (`reviewList`, `reviewAccept`,
 `reviewReject`), as the review overlay or `hafiz review` would:
 ```yaml
 policies:                  # optional: written to <store>/config/policies.yaml before the daemon starts
@@ -37,7 +37,9 @@ at the end.
 - Your own Kilo auth/config is reused as is (the harness keeps your `HOME`): `kilo auth login`
   or provider env vars such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Check names with `kilo models`.
   Per-agent models in your Kilo config still win over `--model`, so mixed-provider sessions work.
-- Hafiz stores are temporary (`HAFIZ_STORE_ROOT` in the workdir); `~/.hafiz` is not written.
+- Hafiz stores are temporary (`HAFIZ_STORE_ROOT` in the workdir); `HAFIZ_HOME` is a private dir in the
+  workdir, so `~/.hafiz` is neither read nor written (a task runs under the built-in defaults plus
+  its own `policies:`).
 - Runs use `kilo run --auto` (permissions auto-approved) inside a throwaway repo copy.
 
 ## Commands
@@ -57,8 +59,8 @@ $H compare results/baseline/<a>/report.json results/tuned/<a>/report.json
 ```
 Options: `--isolate` (see below), `--tasks dir|file` (custom task files), `--only S,M,<task id>`, `--shaper proxy|hooks`
 (default: the project's setting; `proxy` gives exact wire cache numbers), `--keep` (keep the
-workdir to inspect the repo and store), `--turn-timeout <seconds>` (per Kilo turn, default 1800;
-a turn killed by it is reported as "harness timeout (SIGKILL)", not as a Kilo failure).
+workdir to inspect the repo and store), `--turn-timeout <seconds>` (hard wall-clock limit per Kilo turn from spawn, default 1800; a task may set
+`turn_timeout: <seconds>` to override it; a turn killed by it is reported as "harness timeout (SIGKILL)", not as a Kilo failure).
 `--isolate` (default off) runs Kilo with an empty private config dir (`XDG_CONFIG_HOME`), so
 only the harness plugin and the agents it generates are loaded; your own plugins, agents and
 providers do not leak in (auth in `XDG_DATA_HOME` is kept, so built-in providers still work; a

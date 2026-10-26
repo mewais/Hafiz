@@ -5,6 +5,7 @@ id: m-feature-gated
 size: M
 description: order discounts with gated design and plan reviews; designer, planner and workers across three turns
 agent: build
+turn_timeout: 7200
 policies:
   review: { design: gate, plan: gate }
 turns:
