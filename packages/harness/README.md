@@ -4,21 +4,35 @@ Scripted tasks run on real Kilo against a generated toy repo; per-role metrics a
 expected-vs-actual scores come out of the Hafiz store. Private, not published.
 
 ## What a run does
-Per task and repeat: temp workdir with the toy shop repo, `hafiz init`, optional seeded block tree,
-a harness-owned daemon, then one `kilo run --agent … -m provider/model` per user turn (turns 2+
-continue the same Kilo session). Afterwards it reads the store (logs, threads, proposals, audit)
-and the session counters. Tasks (`tasks/*.yaml`): **S** one-off fix, no tree (expect zero Hafiz
+Per task and repeat: temp workdir with the toy shop repo, then one `kilo run --agent … -m
+provider/model` per user turn (turns 2+ continue the same Kilo session). The harness does not
+stand in for the plugin or the manager. By default the repo is **untracked**: nothing Hafiz exists
+before Kilo starts, and the manager calls `hafiz_track_project` when work turns multi-step (the
+brownfield repo is then `onboarding: pending`, exactly as after `hafiz init`). A task with
+`setup.tracked: true` (S, L) starts as a tracked project: the real `hafiz init`, and for a seed a
+short-lived daemon that creates the tree and is closed before Kilo starts. In both cases the
+Kilo plugin finds or starts the project daemon itself (project pointer, socket under
+`XDG_RUNTIME_DIR`, `hafiz daemon`), with the run's env (`HAFIZ_HOME`, `HAFIZ_STORE_ROOT`,
+`XDG_RUNTIME_DIR`, `HAFIZ_DELEGATION_LOG`). Between turns the runner is a user of that daemon
+(the review step). At the end it stops the daemon (SIGTERM to the pid in the store lock, which
+flushes the store; SIGKILL after 10 s; also with `--keep`, which keeps only the workdir),
+then opens the store directly to read logs, threads, proposals, audit and the session counters.
+The runner finds the socket the way the plugin and CLI do (`socketPathFor(pointer id)`, the
+function exported by `@hafiz/gateway-mcp`), and sets `daemon.idle_shutdown_seconds` to a day in
+the run's private `$HAFIZ_HOME/config/hafiz.yaml` so the daemon outlives the last turn. Tasks (`tasks/*.yaml`): **S** one-off fix, no tree (expect zero Hafiz
 writes, no nudge); **M** feature → block + 4 children + a worker each; **L** seeded 3-level tree,
 designer + planner + 3 parallel workers, a side discussion that becomes a standing decision and
-one that gets parked. **M gated** (`m-feature-gated`) is the feature with design and plan reviews
+one that gets parked. **M** and **M gated** start untracked. **M gated** (`m-feature-gated`) is the feature with design and plan reviews
 set to `gate`, run as designer, then planner, then workers across three turns.
 
 ## Review step and policies
 A turn may name a review for the moment after it. Before the next turn the runner resolves the
-pending design and plan review proposals only (not done requests, drafts or compliance) as the `user` role, through the daemon (`reviewList`, `reviewAccept`,
+pending design and plan review proposals only (not done requests, drafts or compliance) as the `user` role, through the project's daemon (the plugin's; one is started on demand if none answers) (`reviewList`, `reviewAccept`,
 `reviewReject`), as the review overlay or `hafiz review` would:
 ```yaml
-policies:                  # optional: written to <store>/config/policies.yaml before the daemon starts
+setup:
+  tracked: false           # default; true = `hafiz init` (+ `seed:`) before Kilo starts
+policies:                  # optional: written to $HAFIZ_HOME/config/policies.yaml before Kilo starts
   review: { design: gate, plan: gate }
 turns:
   - prompt: Add order discounts ...
@@ -79,7 +93,8 @@ are listed under the task table in `report.md`.
 Metrics: `files_written` is read from the task repo's git state after the run (files changed or
 added against the seed commit, whoever wrote them; names in `result.json`), `files_written_managed`
 is the Hafiz session counter (workers running unmanaged do not count). `spawns_rejected` counts
-`task` calls vetoed by the checks; `tracked` is 1 when an agent created the Hafiz project.
+`task` calls vetoed by the checks; `tracked` is 1 when an agent created the Hafiz project (M and M gated expect `==1`; S and L start
+tracked, so it is 0).
 Other metrics: decisions (standing), progress per worker, step events, threads opened/parked,
 done requests (+ with digest), reports captured, cap rejections and retries, compliance notices,
 proposals by source, protocol / all tool calls, view re-emits, tokens per view, cache read ratio,

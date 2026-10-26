@@ -7,6 +7,7 @@ description: seeded 3-level tree, designer + planner + 3 workers, a standing dec
 agent: build
 setup:
   project_name: Toy Shop
+  tracked: true # a seeded tree implies an already tracked project
   seed:
     - as: checkout
       title: Checkout

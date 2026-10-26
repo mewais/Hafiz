@@ -20,6 +20,7 @@ turns:
     review: accept
   - prompt: Plans approved; proceed.
 expect:
+  tracked: "==1" # the manager started tracking itself (hafiz_track_project)
   designer_sessions: ">=1"
   planner_sessions: ">=1"
   worker_sessions: ">=1"
@@ -31,6 +32,9 @@ mock:
   - turn: 1
     roles:
       manager:
+        - calls:
+            - tool: hafiz_track_project
+              args: { name: Toy Shop, reason: Multi-part feature with subagents }
         - calls:
             - tool: hafiz_block_create
               as: feat

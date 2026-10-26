@@ -52,6 +52,7 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     if (!r.passed) console.error(JSON.stringify(r.expectations.filter((e) => !e.pass)), r.error)
     expect(r.passed).toBe(true)
     expect(r.metrics.total).toMatchObject({
+      tracked: 1, // the scripted manager called hafiz_track_project; the harness never ran init
       blocks_created: 5,
       decisions: 1,
       done_requests: 4,

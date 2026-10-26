@@ -1,4 +1,5 @@
 export * from './cli.js'
+export * from './daemon.js'
 export * from './fixture.js'
 export * from './metrics.js'
 export * from './mock-llm.js'

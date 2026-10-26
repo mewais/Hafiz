@@ -4,6 +4,8 @@ id: s-small-fix
 size: S
 description: one-off bug fix, no tree; expect at most a `changed` entry and no nudge
 agent: build
+setup:
+  tracked: true # a repo that already has Hafiz, so the manager is managed (counters) from the start
 turns:
   - prompt: >-
       formatMoney(5) in src/money.ts returns "$0.5" but it should return "$0.05" (cents are

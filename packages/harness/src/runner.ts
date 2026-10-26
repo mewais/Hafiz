@@ -1,5 +1,7 @@
-// One task run: temp workdir + toy repo + `hafiz init` + optional seed, a daemon the harness owns
-// (so it can read the store afterwards), then one `kilo run` per user turn, then the metrics.
+// One task run: temp workdir + toy repo, `hafiz init` and a seeded tree only for tasks that start
+// tracked (through a short-lived daemon that is closed before Kilo starts), then one `kilo run`
+// per user turn. The Kilo plugin finds or starts the daemon itself, as in real use; the runner
+// only reviews through it between turns, stops it at the end and reads the store for the metrics.
 // Real mode reuses the owner's own Kilo auth/config (their HOME); --mock replaces the provider
 // with the scripted mock LLM and a throwaway HOME.
 import { execFileSync, spawn } from 'node:child_process'
@@ -7,7 +9,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -17,8 +18,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run as hafiz, type Io } from '@hafiz/cli'
-import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
+import { type ReadOps, userConfigDir } from '@hafiz/core'
+import { DaemonClient, startDaemon } from '@hafiz/gateway-mcp'
 import { stringify } from 'yaml'
+import { rootBlockOf, stopDaemon, userSocket, withStoreRead } from './daemon.js'
 import { writeFixture } from './fixture.js'
 import { collectMetrics, type Delegation, type RunMetrics } from './metrics.js'
 import { type MockLlm, startMockLlm } from './mock-llm.js'
@@ -137,14 +140,26 @@ export async function resolveReviews(
   }
 }
 
-/** Write a task's `policies:` override into the (single) store under `storesRoot`. */
-export function writePolicies(storesRoot: string, policies: Record<string, unknown>): void {
-  const stores = readdirSync(storesRoot, { withFileTypes: true }).filter((d) => d.isDirectory())
-  const store = stores[0]
-  if (stores.length !== 1 || !store) throw new Error(`expected one store in ${storesRoot}`)
-  const dir = join(storesRoot, store.name, 'config')
+/**
+ * Idle shutdown for the plugin's daemon during a run (`hafiz.yaml daemon.idle_shutdown_seconds`,
+ * the documented knob): the run reviews and reads after Kilo has exited, so the daemon must
+ * outlive the default 15 minutes of silence.
+ */
+export const RUN_IDLE_SHUTDOWN_S = 24 * 60 * 60
+
+/**
+ * Write the run's config overrides into its private `$HAFIZ_HOME/config` (the user layer, which
+ * exists before any project does, so untracked tasks get them too): a task's `policies:` and the
+ * long idle shutdown.
+ */
+export function writeRunConfig(env: NodeJS.ProcessEnv, policies?: Record<string, unknown>): void {
+  const dir = userConfigDir(env)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'policies.yaml'), stringify(policies))
+  writeFileSync(
+    join(dir, 'hafiz.yaml'),
+    stringify({ daemon: { idle_shutdown_seconds: RUN_IDLE_SHUTDOWN_S } }),
+  )
+  if (policies) writeFileSync(join(dir, 'policies.yaml'), stringify(policies))
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -274,6 +289,16 @@ export function sessionIdOf(stdout: string): string | undefined {
   return /"sessionID"\s*:\s*"(ses_[A-Za-z0-9_-]+)"/.exec(stdout)?.[1]
 }
 
+/** The read side of a store that does not exist: a task whose agents never tracked the repo. */
+const EMPTY_STORE = {
+  listSessions: async () => [],
+  listBlocks: async () => [],
+  listProposals: async () => [],
+  readAudit: async () => [],
+  listThreads: async () => [],
+  readLog: async () => [],
+} as unknown as ReadOps
+
 export async function runTask(task: Task, repeat: number, opts: RunOptions): Promise<RunResult> {
   const log = opts.log ?? (() => undefined)
   const model = opts.mock ? MOCK_MODEL : (opts.model as string)
@@ -310,7 +335,6 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     env.XDG_CONFIG_HOME = xdg
   }
 
-  let daemon: DaemonHandle | undefined
   let mock: MockLlm | undefined
   const turns: TurnResult[] = []
   const reviews: ReviewRecord[] = []
@@ -320,23 +344,43 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   let filesChanged: string[] = []
   let delegations: Delegation[] = []
   try {
-    const io: Io = { cwd: repo, env, out: () => undefined, err: (l) => log(l) }
-    if ((await hafiz(['init', task.setup.project_name], io)) !== 0)
-      throw new Error('hafiz init failed')
-    if (task.policies) writePolicies(env.HAFIZ_STORE_ROOT as string, task.policies)
-    daemon = await startDaemon({ projectDir: repo, env, idleShutdownMs: 0 })
+    writeRunConfig(env, task.policies)
     // `{b.root}` and the seeded blocks' `as` names are available to mock scripts
     const vars: Record<string, string> = {}
-    const user = await DaemonClient.connect(daemon.socketPath)
-    try {
-      await user.openSession({ id: 'harness-seed', host: 'harness', role: 'user' })
-      const root = (await user.treeList())[0]?.id as string
-      vars.root = root
-      await seedTree(user, root, task.setup.seed, vars)
-    } finally {
-      user.close()
+    if (task.setup.tracked) {
+      // A project that is already tracked: the real CLI, then a seed through a daemon that is
+      // closed before Kilo starts, so the plugin finds the project and starts its own daemon.
+      const io: Io = { cwd: repo, env, out: () => undefined, err: (l) => log(l) }
+      if ((await hafiz(['init', task.setup.project_name], io)) !== 0)
+        throw new Error('hafiz init failed')
+      const seeder = await startDaemon({ projectDir: repo, env, idleShutdownMs: 0 })
+      try {
+        const user = await DaemonClient.connect(seeder.socketPath)
+        try {
+          await user.openSession({ id: 'harness-seed', host: 'harness', role: 'user' })
+          const root = (await user.treeList())[0]?.id as string
+          vars.root = root
+          await seedTree(user, root, task.setup.seed, vars)
+        } finally {
+          user.close()
+        }
+      } finally {
+        await seeder.close()
+      }
     }
-    if (opts.mock) mock = await startMockLlm({ fallback: scriptResponder(task, { repo, vars }) })
+    if (mock === undefined && opts.mock) {
+      const respond = scriptResponder(task, { repo, vars })
+      mock = await startMockLlm({
+        fallback: async (req) => {
+          // untracked tasks: the root block exists once the (scripted) manager has tracked the repo
+          if (vars.root === undefined) {
+            const root = await rootBlockOf(repo, env)
+            if (root) vars.root = root
+          }
+          return respond(req)
+        },
+      })
+    }
 
     const config = kiloConfig({
       plugin: pluginUrl(),
@@ -373,8 +417,12 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
         error = `turn ${i + 1} ${how} (see ${runDir}/turn-${i + 1}.err.log)`
         break
       }
-      if (turn.review !== 'none')
-        reviews.push(...(await resolveReviews(daemon.socketPath, turn.review, turn.note)))
+      if (turn.review !== 'none') {
+        // as a person would: the project's daemon (the plugin's, or one started on demand)
+        const socket = await userSocket(repo, env)
+        if (socket) reviews.push(...(await resolveReviews(socket, turn.review, turn.note)))
+        else log(`${task.id}#${repeat}: no Hafiz project after turn ${i + 1}, nothing to review`)
+      }
     }
     await sleep(opts.settleMs ?? 3000)
     // What the run changed in the repo, whoever changed it (managed workers or not)
@@ -385,12 +433,18 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
       ]),
     ].sort()
     delegations = readDelegations(delegationLog)
-    metrics = await collectMetrics(daemon.service.core.backend.read, { filesChanged, delegations })
+    // The daemon is the plugin's: shut it down (flushing the store), then read the store directly
+    await stopDaemon(repo, env)
+    const collected = await withStoreRead(repo, env, (read) =>
+      collectMetrics(read, { filesChanged, delegations }),
+    )
+    // never tracked: nothing in the store; the metrics are the empty ones
+    metrics = collected ?? (await collectMetrics(EMPTY_STORE, { filesChanged, delegations }))
   } catch (e) {
     error = String(e instanceof Error ? e.message : e)
   } finally {
     await mock?.close().catch(() => undefined)
-    await daemon?.close().catch(() => undefined)
+    await stopDaemon(repo, env).catch(() => undefined) // runs must not leak daemons (also with --keep)
     if (!opts.keep) rmSync(work, { recursive: true, force: true })
   }
   const expectations = scoreExpectations(task.expect, metrics)

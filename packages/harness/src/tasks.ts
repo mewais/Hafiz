@@ -68,13 +68,19 @@ export const taskSchema = z.object({
   setup: z
     .object({
       project_name: z.string().default('Toy Shop'),
+      /**
+       * Run `hafiz init` (and the seed) before Kilo starts: the repo is already a tracked project.
+       * Default false: the repo is untracked and the manager starts tracking with
+       * `hafiz_track_project` when work turns multi-step, as a real user's agent would.
+       */
+      tracked: z.boolean().default(false),
       /** Blocks created under the root (and their children) before the first turn. */
       seed: z.array(seedNode).default([]),
     })
-    .default({ project_name: 'Toy Shop', seed: [] }),
+    .default({ project_name: 'Toy Shop', tracked: false, seed: [] }),
   /**
-   * Overrides for the run's `policies.yaml` (written to `<store>/config/policies.yaml` before the
-   * daemon starts), e.g. `review: { design: gate, plan: gate }`.
+   * Overrides for the run's `policies.yaml` (written to `$HAFIZ_HOME/config/policies.yaml` before
+   * Kilo starts), e.g. `review: { design: gate, plan: gate }`.
    */
   policies: z.record(z.string(), z.unknown()).optional(),
   /** Per-turn wall-clock limit in seconds for this task; overrides `--turn-timeout`. */

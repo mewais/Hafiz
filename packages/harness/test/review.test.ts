@@ -4,9 +4,10 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
+import { userConfigDir } from '@hafiz/core'
 import { DaemonClient, type DaemonHandle, startDaemon } from '@hafiz/gateway-mcp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { kiloTurn, resolveReviews, writePolicies } from '../src/runner.js'
+import { kiloTurn, resolveReviews, writeRunConfig } from '../src/runner.js'
 import { holds } from '../src/score.js'
 import { loadTasks } from '../src/tasks.js'
 
@@ -20,10 +21,15 @@ async function project(policies?: Record<string, unknown>) {
   const cwd = tmp('hafiz-h-repo-')
   execFileSync('git', ['init', '-q'], { cwd })
   const root = tmp('hafiz-h-stores-')
-  const env = { ...process.env, HAFIZ_STORE_ROOT: root, XDG_RUNTIME_DIR: tmp('hafiz-h-rt-') }
+  const env = {
+    ...process.env,
+    HAFIZ_STORE_ROOT: root,
+    HAFIZ_HOME: join(tmp('hafiz-h-home-'), 'home'),
+    XDG_RUNTIME_DIR: tmp('hafiz-h-rt-'),
+  }
+  writeRunConfig(env, policies)
   const io: Io = { cwd, env, out: () => undefined, err: () => undefined }
   expect(await run(['init', 'Shop'], io)).toBe(0)
-  if (policies) writePolicies(root, policies)
   const d: DaemonHandle = await startDaemon({ projectDir: cwd, env, idleShutdownMs: 0 })
   cleanup.push(() => d.close())
   const user = await DaemonClient.connect(d.socketPath)
@@ -34,7 +40,7 @@ async function project(policies?: Record<string, unknown>) {
   const mgr = await DaemonClient.connect(d.socketPath)
   cleanup.push(() => mgr.close())
   await mgr.openSession({ id: 'mgr', host: 'test', role: 'manager' })
-  return { d, user, mgr, root, rootBlock }
+  return { d, user, mgr, root, rootBlock, env }
 }
 
 const design = {
@@ -44,11 +50,13 @@ const design = {
 }
 
 describe('review step', () => {
-  it('writes the policies override into the store config and the daemon honours it', async () => {
-    const { d, root } = await project({ review: { design: 'gate' } })
-    const store = d.storeDir
-    expect(store.startsWith(root)).toBe(true)
-    expect(readFileSync(join(store, 'config', 'policies.yaml'), 'utf8')).toContain('design: gate')
+  it('writes the policies override and a long idle shutdown into the private HAFIZ_HOME config', async () => {
+    const { d, env } = await project({ review: { design: 'gate' } })
+    const dir = userConfigDir(env)
+    expect(dir.startsWith(env.HAFIZ_HOME)).toBe(true)
+    expect(readFileSync(join(dir, 'policies.yaml'), 'utf8')).toContain('design: gate')
+    expect(readFileSync(join(dir, 'hafiz.yaml'), 'utf8')).toContain('idle_shutdown_seconds: 86400')
+    expect(d.service.core.config.policies.review.design).toBe('gate')
   })
 
   it('accepts every pending proposal as the user and records them', async () => {
@@ -123,6 +131,20 @@ describe('kiloTurn timeout', () => {
 })
 
 describe('tasks', () => {
+  it('only S and L start tracked; M starts untracked and expects the manager to track', () => {
+    const tracked = Object.fromEntries(loadTasks().map((t) => [t.id, t.setup.tracked]))
+    expect(tracked).toEqual({
+      'l-seeded-tree': true,
+      'm-feature': false,
+      'm-feature-gated': false,
+      's-small-fix': true,
+    })
+    for (const t of loadTasks(undefined, ['m-feature', 'm-feature-gated'])) {
+      expect(t.expect.tracked).toBe('==1')
+      expect(t.mock[0]?.roles.manager?.[0]?.calls?.[0]?.tool).toBe('hafiz_track_project')
+    }
+  })
+
   it('m-feature-gated sets a 2 h turn timeout', () => {
     expect(loadTasks(undefined, ['m-feature-gated'])[0]?.turn_timeout).toBe(7200)
   })
