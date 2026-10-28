@@ -180,8 +180,17 @@ describe('expectations', () => {
     expect(lookup(metrics, 'workers_done_requests')).toBe(1)
     expect(lookup(metrics, 'worker_progress_min')).toBe(1)
     expect(lookup(metrics, 'manager_threads_parked')).toBe(1)
-    expect(lookup(metrics, 'designer_sessions')).toBeUndefined()
+    // a role with no session: its counts are 0, so `designer_sessions <=4` holds
+    expect(lookup(metrics, 'designer_sessions')).toBe(0)
+    expect(lookup(metrics, 'designer_nope')).toBeUndefined()
     expect(lookup(metrics, 'nope')).toBeUndefined()
+  })
+
+  it('`a or b` passes when either metric holds', () => {
+    const [ok] = scoreExpectations({ 'designer_sessions or decisions_standing': '>=1' }, metrics)
+    expect(ok).toMatchObject({ pass: true, got: 1 })
+    const [miss] = scoreExpectations({ 'designer_sessions or nope': '>=1' }, metrics)
+    expect(miss).toMatchObject({ pass: false, got: 0 })
   })
 
   it('scores expected against actual; unknown metrics fail', () => {

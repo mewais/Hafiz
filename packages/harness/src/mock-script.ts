@@ -91,7 +91,13 @@ export function scriptResponder(
       block: /hafiz:block=([\w-]+)/.exec(prompt)?.[1] ?? '',
     }
 
-    const steps: MockStep[] = task.mock.find((t) => t.turn === turn)?.roles[role] ?? []
+    const roles = task.mock.find((t) => t.turn === turn)?.roles ?? {}
+    // `role:<var>`: this role's sessions spawned on block {b.<var>}
+    const onBlock = Object.keys(roles).find((k) => {
+      const [r, v] = k.split(':')
+      return r === role && v !== undefined && !!extra.block && ctx.vars[v] === extra.block
+    })
+    const steps: MockStep[] = roles[onBlock ?? role] ?? []
     const step = steps[index]
     const usage = { input: 400, output: 60, cacheRead: index === 0 ? 0 : 1600 }
     if (!step) return { text: role === 'worker' ? WORKER_DONE : 'Done.', usage }

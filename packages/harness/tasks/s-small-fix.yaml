@@ -2,6 +2,7 @@
 # should stay out of the way: no Hafiz writes, no nudge, no project created.
 id: s-small-fix
 size: S
+tiers: [smoke, full]
 description: one-off bug fix, no tree; expect at most a `changed` entry and no nudge
 agent: build
 setup:

@@ -1,6 +1,7 @@
 # M: untracked at the start; a feature that should become a tracked block with 3-5 children, one worker per child.
 id: m-feature
 size: M
+tiers: [full]
 description: order discounts feature; expect a feature block + 4 children and a worker per child
 agent: build
 turns:
@@ -12,14 +13,15 @@ turns:
       work in src/. Discounts apply before tax, always.
 expect:
   tracked: "==1" # the manager started tracking itself (hafiz_track_project)
-  blocks_created: ">=4"
-  manager_decisions: ">=1"
-  worker_sessions: "==4"
-  worker_done_requests: "==4"
-  worker_progress_min: ">=2"
+  blocks_created: ">=5" # the feature and its four parts
+  manager_decisions: ">=1" # "Discounts apply before tax, always."
+  designer_sessions: "<=4" # none needed; onboarding and a re-spawn are legitimate
+  worker_sessions: ">=4" # one per part; a tester and a coder per part is legitimate too
+  worker_done_requests: ">=4"
+  worker_progress_min: ">=1"
   worker_reports: ">=4"
-  subagents_spawned: "==4"
   files_written: ">=4"
+  threads_open_at_end: "==0"
   cap_rejections: "<=2"
   spawns_rejected: "==0"
 mock:

@@ -1,63 +1,146 @@
-# L: a seeded multi-level tree. The manager delegates to a designer, a planner and three parallel
-# workers; later the user opens a side discussion that should become a standing decision and one
-# that should be parked as a thread.
+# L: a seeded multi-level tree on the brownfield toy repo. The tree is what a designer and a
+# planner would have left: real designs that match the code (Cart, Orders and money exist; the
+# three leaves are missing work), a plan for Cart totals only. The root has no design yet, so the
+# project is `onboarding: pending` and the manager has the designer describe the code once.
+# Turn 1 is then satisfiable by exactly: the onboarding designer, one designer refinement of
+# Checkout, one planner for Pricing and Orders, and three workers. Later the user opens a side
+# discussion that should become a standing decision and one that should be parked as a thread.
 id: l-seeded-tree
 size: L
+tiers: [smoke, full]
 description: seeded 3-level tree, designer + planner + 3 workers, a standing decision and a parked thread
 agent: build
 setup:
   project_name: Toy Shop
   tracked: true # a seeded tree implies an already tracked project
   seed:
+    - as: money
+      title: Money
+      kind: external
+      design:
+        interface:
+          provides:
+            - { name: "addMoney(a: number, b: number): number", type: fn, notes: integer cents in and out }
+            - { name: "formatMoney(cents: number): string", type: fn, notes: "\"$12.05\"; the only formatter" }
+        references: [{ label: source, ref: src/money.ts }]
+    - as: inventory
+      title: Inventory
+      kind: external
+      design:
+        interface:
+          provides:
+            - { name: Inventory, type: class, notes: "set(sku, qty), available(sku), take(sku, qty)" }
+            - { name: "Inventory.take(sku, qty): void", type: method, notes: "throws \"insufficient stock for <sku>\"" }
+        references: [{ label: source, ref: src/inventory.ts }]
     - as: checkout
       title: Checkout
       kind: feature
       status: active
-      purpose: Turn a cart into a placed order with correct totals.
+      design:
+        purpose: Turn a cart into a placed order whose total is the priced cart total, in integer cents.
+        scope:
+          - "in: a per-line cart subtotal, a pricing step (no price rules yet), orders that record the priced total"
+          - "out: payment, tax, concrete discount rules, persistence"
+        interface:
+          provides:
+            - { name: "Orders.placeOrder(cart: Cart): PricedOrder", type: method, notes: "built by its child Orders, on Pricing" }
+        approach: >-
+          Three leaves, each in its own module of src/ and exported from src/index.ts. Cart totals
+          and Pricing are independent; Orders builds on Pricing.
+        references: [{ label: exports, ref: src/index.ts }]
       decisions:
         - { title: No card data, decision: Never store or log card numbers., standing: never }
       children:
         - as: cart
           title: Cart
           status: active
-          purpose: Hold lines and compute the pre-discount total.
+          design:
+            purpose: Hold the shopper's lines (src/cart.ts, existing code).
+            scope: ["in: Cart, Line, add/remove, totalCents()", "out: pricing, stock"]
+            interface:
+              provides:
+                - { name: "Line", type: type, notes: "{sku, unitCents, qty}" }
+                - { name: Cart, type: class, notes: "lines, add(sku, unitCents, qty=1) merges by sku, remove(sku)" }
+                - { name: "Cart.totalCents(): number", type: method, notes: sum of unitCents * qty }
+              consumes:
+                - { name: addMoney, block: Money }
+            references: [{ label: source, ref: src/cart.ts }, { label: tests, ref: test/cart.test.ts }]
           children:
             - as: totals
               title: Cart totals
-              purpose: Sum line totals in integer cents.
-              steps: [Total per line, Total per cart]
+              design:
+                purpose: A per-line breakdown and the subtotal of a cart, in integer cents.
+                scope: ["in: LineTotal, Cart.lineTotals(), Cart.subtotalCents() in src/cart.ts", "out: discounts, tax, formatting"]
+                interface:
+                  provides:
+                    - { name: LineTotal, type: type, notes: "{sku, qty, unitCents, totalCents}" }
+                    - { name: "Cart.lineTotals(): LineTotal[]", type: method, notes: one per line, in cart order }
+                    - { name: "Cart.subtotalCents(): number", type: method, notes: "sum of lineTotals; equals totalCents()" }
+                  consumes:
+                    - { name: Cart, block: Cart }
+                    - { name: addMoney, block: Money }
+              plan:
+                steps:
+                  - { id: s1, title: "Add LineTotal and Cart.lineTotals() to src/cart.ts" }
+                  - { id: s2, title: "Add Cart.subtotalCents() as the sum of the line totals" }
+                  - { id: s3, title: "Tests in test/cart.test.ts for both" }
+                acceptance:
+                  - npm test passes
+                  - "tea x2 at 450 and mug x1 at 1200: line totals 900 and 1200, subtotalCents() 2100"
         - as: pricing
           title: Pricing
-          purpose: Price rules applied to a cart.
+          design:
+            purpose: Price a cart by applying price rules to its subtotal. No rules exist yet, so the total is the subtotal.
+            scope: ["in: priceCart, PricedCart, PriceRule in a new src/pricing.ts", "out: concrete rules (coupons, bulk), tax"]
+            interface:
+              provides:
+                - { name: "priceCart(cart: Cart, rules?: PriceRule[]): PricedCart", type: fn, notes: "pure; rules default to []" }
+                - { name: PricedCart, type: type, notes: "{subtotalCents, adjustments: {rule, cents}[], totalCents}" }
+                - { name: PriceRule, type: type, notes: "(cart) => {rule: string, cents: number} | null" }
+              consumes:
+                - { name: "Cart.totalCents()", block: Cart, notes: the subtotal }
+              contracts:
+                - { name: totalCents, notes: "subtotalCents minus the sum of adjustment cents, never below 0" }
         - as: orders
           title: Orders
-          purpose: Place an order and take stock.
+          design:
+            purpose: Place orders and record them with their priced total (src/orders.ts, existing Orders.place).
+            scope: ["in: Orders.placeOrder and PricedOrder", "out: persistence, payment; place() keeps working"]
+            interface:
+              provides:
+                - { name: "Orders.placeOrder(cart: Cart): PricedOrder", type: method, notes: "takes stock as place() does, then records the order" }
+                - { name: PricedOrder, type: type, notes: "Order plus {subtotalCents, adjustments}; totalCents from priceCart" }
+              consumes:
+                - { name: "priceCart(cart)", block: Pricing }
+                - { name: "Inventory.take(sku, qty)", block: Inventory }
+            references: [{ label: source, ref: src/orders.ts }, { label: tests, ref: test/orders.test.ts }]
 turns:
   - prompt: >-
       Checkout is the active piece of work and it is in the Hafiz tree. Get it moving: have a
       designer refine the Checkout design, a planner write plans for Pricing and Orders, then
-      run workers in parallel on the three leaf blocks Cart totals, Pricing and Orders (each
-      spawned on its block). Each worker implements its block in src/ and reports back.
+      run workers on the three leaf blocks Cart totals, Pricing and Orders (each spawned on its
+      block), in parallel where their dependencies allow. Each worker implements its block in
+      src/ and reports back.
   - prompt: >-
       Side note while that is going on: let's settle that all money in this project is stored as
       integer cents, never floats. Make that a standing rule for the whole project.
   - prompt: >-
       Unrelated thought: maybe we should move order storage to Postgres some day. Talk it
       through with me briefly on the Orders block, but we are not doing it now, so park it.
+# Checked after the turn they name (fail-fast): a miss stops the task there.
+expect_after:
+  1: { worker_sessions: ">=3" }
 expect:
-  # one for the Checkout design the user asked for, one for onboarding: the seeded repo is
-  # brownfield (existing code), so the project starts with onboarding pending and the manager
-  # legitimately spawns the designer once more to document the existing code
-  designer_sessions: "==2"
-  planner_sessions: "==1"
-  worker_sessions: "==3"
-  designer_docs_written: ">=1"
+  # the onboarding designer (the root has no design), the Checkout refinement, and room for one
+  # re-spawn each; a tester and a coder per leaf is legitimate, so sessions are lower bounds
+  designer_sessions: "1..4"
+  planner_sessions: ">=1"
+  worker_sessions: ">=3"
   planner_docs_written: ">=2"
-  worker_done_requests: "==3"
-  worker_progress_min: ">=2"
+  worker_done_requests: ">=3"
   decisions_standing: ">=1"
-  threads_opened: "<=2"
-  threads_parked: "==1"
+  threads_opened: "<=3"
+  threads_parked: ">=1"
   threads_open_at_end: "==0"
   cap_rejections: "<=2"
   spawns_rejected: "==0"
@@ -68,32 +151,26 @@ mock:
         - calls:
             - tool: task
               args:
-                description: Refine Checkout design
+                description: Onboarding
                 subagent_type: designer
-                block: "{b.checkout}"
-                prompt: "[[turn:{turn}]] Refine the design of Checkout (block {b.checkout}): add its constraints."
+                block: "{b.root}"
+                prompt: "[[turn:{turn}]] Onboarding: describe the existing code in the root design."
         - calls:
             - tool: task
               args:
-                description: Onboard Cart
+                description: Refine Checkout design
                 subagent_type: designer
-                block: "{b.cart}"
-                prompt: "[[turn:{turn}]] Onboarding: document the existing code under Cart (block {b.cart})."
+                block: "{b.checkout}"
+                prompt: "[[turn:{turn}]] Refine the design of Checkout: add its constraints."
         - calls:
             - tool: task
               args:
                 description: Plan Pricing and Orders
                 subagent_type: planner
                 block: "{b.pricing}"
-                prompt: "[[turn:{turn}]] Write plans for Pricing ({b.pricing}) and Orders ({b.orders})."
+                prompt: "[[turn:{turn}]] Write plans for Pricing and Orders ({b.orders})."
         - calls:
-            - tool: hafiz_block_set_status
-              args: { id: "{b.pricing}", status: active }
-            - tool: hafiz_block_set_status
-              args: { id: "{b.orders}", status: active }
-            - tool: hafiz_block_set_status
-              args: { id: "{b.totals}", status: active }
-        - calls:
+            # no status calls: a worker spawned on a planned block activates it
             - tool: task
               args: &spawn
                 description: Cart totals
@@ -104,7 +181,18 @@ mock:
               args: { <<: *spawn, description: Pricing, block: "{b.pricing}", prompt: "[[turn:{turn}]] Implement pricing in src/." }
             - tool: task
               args: { <<: *spawn, description: Orders, block: "{b.orders}", prompt: "[[turn:{turn}]] Implement orders in src/." }
-        - text: Design refined, plans written, and the three leaf blocks implemented.
+        - text: Onboarded, design refined, plans written, and the three leaf blocks implemented.
+      # the onboarding designer, on the root (`role:<var>`: a session spawned on that block)
+      designer:root:
+        - calls:
+            - tool: hafiz_doc
+              args:
+                block: "{block}"
+                type: design
+                sections:
+                  overview: A small TypeScript shop library (cart, orders, inventory, money) with node:test tests.
+                  topology: ["src/cart.ts Cart -> src/money.ts addMoney", "src/orders.ts Orders.place -> Inventory.take, Cart.totalCents"]
+        - text: Root design written from the existing code.
       designer:
         - calls:
             - tool: hafiz_doc
@@ -121,15 +209,15 @@ mock:
                 block: "{b.pricing}"
                 type: plan
                 sections:
-                  steps: [{ id: s1, title: Define rule shape }, { id: s2, title: Apply rules }]
-                  acceptance: [tests pass]
+                  steps: [{ id: s1, title: Define PriceRule and PricedCart }, { id: s2, title: Implement priceCart }]
+                  acceptance: [npm test passes]
             - tool: hafiz_doc
               args:
                 block: "{b.orders}"
                 type: plan
                 sections:
-                  steps: [{ id: s1, title: Place order }, { id: s2, title: Take stock }]
-                  acceptance: [tests pass]
+                  steps: [{ id: s1, title: Add PricedOrder }, { id: s2, title: Implement placeOrder }]
+                  acceptance: [npm test passes]
         - text: Plans written for Pricing and Orders.
       worker:
         - calls:

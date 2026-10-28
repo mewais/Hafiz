@@ -1,34 +1,41 @@
-# M, gated: the same feature with design and plan reviews set to `gate`, so the pipeline
+# M, gated: a two-part feature with design and plan reviews set to `gate`, so the pipeline
 # designer -> planner -> workers runs across turns. After turns 1 and 2 the runner accepts the
 # pending reviews as the user (what the review overlay or `hafiz review --accept` does).
 id: m-feature-gated
 size: M
-description: order discounts with gated design and plan reviews; designer, planner and workers across three turns
+tiers: [smoke, full]
+description: percentage coupons in two parts with gated design and plan reviews; designer, planner and workers across three turns
 agent: build
 turn_timeout: 7200
 policies:
   review: { design: gate, plan: gate }
 turns:
   - prompt: >-
-      Add order discounts to the shop: percentage coupon codes, a bulk-quantity discount rule,
-      applying discounts in the cart total, and showing them in the order summary. This is a
-      multi-part feature, so plan it as tracked work: one block for the feature, one child block
-      per part, and a worker subagent implementing each part (spawned on its block). Keep the
-      work in src/. Discounts apply before tax, always.
+      Add percentage coupon codes to the shop, in two parts: the coupon codes themselves (a code
+      maps to a percentage off), and applying an entered coupon in the cart total. Plan it as
+      tracked work: one block for the feature, one child block per part, and a worker subagent
+      implementing each part (spawned on its block). Keep the work in src/. Discounts apply
+      before tax, always.
     review: accept
   - prompt: Design approved; plan and implement it.
     review: accept
   - prompt: Plans approved; proceed.
+# Checked after the turn they name (fail-fast): a miss stops the task there.
+expect_after:
+  1: { tracked: "==1", designer_sessions: ">=1" }
+  2: { "planner_sessions or planner_docs_written": ">=1" }
 expect:
   tracked: "==1" # the manager started tracking itself (hafiz_track_project)
-  designer_sessions: ">=1"
+  blocks_created: ">=3" # the feature and its two parts
+  designer_sessions: "1..4" # the onboarding designer (brownfield repo), the feature, a re-spawn
   planner_sessions: ">=1"
-  worker_sessions: ">=1"
-  worker_done_requests: ">=1"
+  worker_sessions: ">=2" # one per part; a tester and a coder per part is legitimate too
+  worker_done_requests: ">=2"
+  threads_open_at_end: "==0"
   cap_rejections: "<=2"
-  spawns_rejected: "<=2"
+  spawns_rejected: "==0"
 mock:
-  # the smallest pipeline: one feature block, designed (turn 1), planned (turn 2), built (turn 3)
+  # onboarding, then the feature designed with its two parts (turn 1), planned (turn 2), built (turn 3)
   - turn: 1
     roles:
       manager:
@@ -38,18 +45,32 @@ mock:
         - calls:
             - tool: hafiz_block_create
               as: feat
-              args: { parent: "{b.root}", title: Order discounts, kind: feature }
-        - calls:
-            - tool: hafiz_block_set_status
-              args: { id: "{b.feat}", status: active }
+              args: { parent: "{b.root}", title: Coupon codes, kind: feature }
         - calls:
             - tool: task
               args:
-                description: Design order discounts
+                description: Onboarding
+                subagent_type: designer
+                block: "{b.root}"
+                prompt: "[[turn:{turn}]] Onboarding: describe the existing code in the root design."
+        - calls:
+            - tool: task
+              args:
+                description: Design coupon codes
                 subagent_type: designer
                 block: "{b.feat}"
-                prompt: "[[turn:{turn}]] Design order discounts (block {b.feat})."
+                prompt: "[[turn:{turn}]] Design coupon codes in two parts (block {b.feat})."
         - text: The design is written and awaits your review.
+      designer:root:
+        - calls:
+            - tool: hafiz_doc
+              args:
+                block: "{block}"
+                type: design
+                sections:
+                  overview: A small TypeScript shop library (cart, orders, inventory, money) with node:test tests.
+                  topology: ["src/cart.ts Cart -> src/money.ts addMoney", "src/orders.ts Orders.place -> Inventory.take"]
+        - text: Root design written from the existing code.
       designer:
         - calls:
             - tool: hafiz_doc
@@ -57,42 +78,65 @@ mock:
                 block: "{block}"
                 type: design
                 sections:
-                  purpose: Let shoppers pay less through coupon codes and bulk-quantity rules.
-                  scope: ["in: coupons, bulk rule, cart and order integration", "out: payment"]
-                  interface: { provides: [{ name: applyDiscounts(cart), type: fn }], consumes: [] }
-        - text: Design written.
+                  purpose: Let shoppers pay less with percentage coupon codes, applied before tax.
+                  scope: ["in: coupon codes, applying one in the cart total", "out: payment, tax"]
+                  interface: { provides: [{ name: "Cart.totalCents(coupon?)", type: method }], consumes: [] }
+        - calls:
+            - tool: hafiz_block_create
+              as: coupons
+              args: &child
+                parent: "{block}"
+                title: Coupon catalogue
+                design: { purpose: "Codes that map to a percentage off.", scope: ["in: src/coupons.ts"], interface: { provides: [{ name: "couponPercent(code)", type: fn }], consumes: [] } }
+            - tool: hafiz_block_create
+              as: apply
+              args:
+                <<: *child
+                title: Apply coupon in cart total
+                design: { purpose: "The cart total less the coupon's percentage.", scope: ["in: src/cart.ts"], interface: { provides: [{ name: "Cart.totalCents(coupon?)", type: method }], consumes: [{ name: couponPercent, block: Coupon catalogue }] } }
+        - text: Design written, with a child block per part.
   - turn: 2
     roles:
       manager:
         - calls:
             - tool: task
               args:
-                description: Plan order discounts
+                description: Plan coupon codes
                 subagent_type: planner
                 block: "{b.feat}"
-                prompt: "[[turn:{turn}]] Plan order discounts (block {b.feat})."
-        - text: The plan is written and awaits your review.
+                prompt: "[[turn:{turn}]] Plan both parts of coupon codes (block {b.feat})."
+        - text: The plans are written and await your review.
       planner:
         - calls:
             - tool: hafiz_doc
               args:
-                block: "{block}"
+                block: "{b.coupons}"
                 type: plan
                 sections:
-                  steps: [{ id: s1, title: Model and apply discounts }]
-                  acceptance: [tests pass]
-        - text: Plan written.
+                  steps: [{ id: s1, title: Add the coupon catalogue }]
+                  acceptance: [npm test passes]
+            - tool: hafiz_doc
+              args:
+                block: "{b.apply}"
+                type: plan
+                sections:
+                  steps: [{ id: s1, title: Apply a coupon in totalCents }]
+                  acceptance: [npm test passes]
+        - text: Plans written for both parts.
   - turn: 3
     roles:
       manager:
         - calls:
+            # no status calls: a worker spawned on a planned block activates it
             - tool: task
-              args:
-                description: Implement order discounts
+              args: &spawn
+                description: Coupon catalogue
                 subagent_type: worker
-                block: "{b.feat}"
-                prompt: "[[turn:{turn}]] Implement order discounts in src/."
-        - text: Order discounts are implemented and reported.
+                block: "{b.coupons}"
+                prompt: "[[turn:{turn}]] Implement the coupon catalogue in src/."
+            - tool: task
+              args: { <<: *spawn, description: Apply coupon, block: "{b.apply}", prompt: "[[turn:{turn}]] Apply coupons in the cart total in src/." }
+        - text: Both parts are implemented and reported.
       worker:
         - calls:
             - tool: hafiz_step_set
@@ -100,18 +144,20 @@ mock:
         - calls:
             - tool: write
               args:
-                filePath: "{repo}/src/discount-{block}.ts"
+                filePath: "{repo}/src/coupon-{block}.ts"
                 content: "export const part = '{block}'\n"
         - calls:
             - tool: hafiz_step_set
               args: { block: "{block}", step_id: s1, status: done }
+            - tool: hafiz_progress_append
+              args: { block: "{block}", kind: done, text: "Implemented the part in its own module." }
         - calls:
             - tool: hafiz_block_set_status
               args:
                 id: "{block}"
                 status: done
                 digest:
-                  outcome: Discounts are implemented in a new module under src/.
+                  outcome: The part is implemented in a new module under src/.
                   interface_delta: ["none"]
-                  pointers: [{ label: file, ref: "src/discount-{block}.ts" }]
+                  pointers: [{ label: file, ref: "src/coupon-{block}.ts" }]
         - text: "Implemented.\n```hafiz-report\noutcome: done\n```"
