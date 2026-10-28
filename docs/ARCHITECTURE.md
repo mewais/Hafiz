@@ -118,9 +118,16 @@ Guards are config (`policies.status`), composed from registered predicates. Defa
   Records `done_at.commit` (repo HEAD) for later drift detection.
 - A worker may `block.request_done(id, digest)`: writes the digest and, under `done: gate`,
   enqueues the transition for the manager; otherwise it applies `done` (`queue` also enqueues the
-  review item).
+  review item). Under `gate` every guard but the review itself is checked at request time, so the
+  worker hears about an open thread or a planned block, not the manager when it accepts.
 - `→ blocked` requires `blocked_on`. `→ active` from `blocked` clears it.
-- `→ active` on a block whose parent is `planned` activates the parent (configurable).
+- `→ active` activates the block's `planned` ancestors, nearest first
+  (`activate_parent_on_child_active`).
+- **Spawning starts work** (`status.activate_on_spawn`, default `[worker]`): a session of a listed
+  role opened on a `planned` block (spawned on it) activates the block, and its ancestors as
+  above, in the session-open transaction (an epoch bump). Designer and planner spawns leave the
+  status alone: design is not work started. A transition the table does not allow says what to do
+  instead (`planned → done`: a worker spawned on it activates it, or set it active first).
 
 ### 3.3 Epochs and re-emission
 
@@ -319,6 +326,10 @@ views:
   worker:
     extends: default
     budget: { share_of_window: 0.20 }
+  designer:   # and planner: the blocks under theirs at DESIGN (planner: planned and active ones)
+    extends: default
+    rules_prepend:
+      - { match: { relation: descendant, status: planned }, zoom: DESIGN }
 ```
 
 Everything in `match` is an attribute Relate computed; new attributes need no engine change.
@@ -397,7 +408,9 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   (`LINE`) so every visible block's path stays intact.
 - **Rendering**: one heading per visible block, depth-based level, `Title [id] status · marks`
   (marks: `review design` / `review plan` while a gated review holds the block, `design rejected`
-  / `plan rejected` until revised (§7), non-default kind, `focus`, `dependency`); sections are
+  / `plan rejected` until revised (§7), `needs design` / `needs plan` on an open non-root block
+  of a kind with a plan schema that lacks one (a block with children needs no plan of its own),
+  so even a one-line block says which role goes next, non-default kind, `focus`, `dependency`); sections are
   labelled lines, never headings;
   missing docs and empty sections render nothing; superseded decisions render nowhere and standing
   ones only in the floor; runs of heading-only blocks are not blank-line separated.
@@ -520,7 +533,7 @@ roles:
                       doc.patch:design, decision.record, thread.*, progress.append:found,
                       progress.append:question],
               rules: rules/designer.md }
-  planner:  { view: default, focus_policy: spawned_block,
+  planner:  { view: planner, focus_policy: spawned_block,
               tools: [context.*, block.read, tree.list, block.create, doc.write:plan,
                       doc.patch:plan, thread.*], rules: rules/planner.md }
   worker:   { view: worker, focus_policy: spawned_block,
@@ -668,10 +681,10 @@ the condenser's helper sessions pass through.
 | Check | Mechanism |
 |---|---|
 | Spawn on a block | Kilo's `task` gets a required `block`: a block id (exact, unique prefix or unique title, `matchBlock`), or `none` for a helper outside Hafiz, never for a role agent. Unknown ids are refused with the valid ones; a valid one becomes the `hafiz:block=<id>` marker in the prompt, so `session.open` is unchanged |
-| Spawn fits the block | the spawned role must be listed for the block's state in `policies.yaml spawn.roles_by_state` (`no_design` → designer, `no_plan` → designer, planner, `has_plan` → any, `done`/`dropped` → nobody); the refusal names the missing step |
+| Spawn fits the block | the spawned role must be listed for the block's state in `policies.yaml spawn.roles_by_state` (`no_design` → designer, `no_plan` → designer, planner, `has_plan` → any, `done`/`dropped` → nobody); the refusal names the missing step (a parent without a plan: its open children, where the work is) |
 | A gated review holds its block | a design or plan whose `policies.yaml review` row is `gate` and whose review is open (`tree.summary` node `review`: pending, or rejected and not yet revised) counts as not there yet, so a design under review admits only the designer and a plan under review no worker. The refusal names the proposal and the fix: "design of Payments (v3) awaits review: hafiz review --accept prop_…" (a rejection: its note, "revise it"). One block only |
 | Pass the block, not its contents | a `task` prompt that quotes `<hafiz…>` or exceeds `host.kilo.delegation_prompt_cap` tokens is refused: the subagent sees its block in its own view |
-| Only the report reaches the parent | `tool.execute.after`: the child's full text is captured to the store and the parent gets its fenced `hafiz-report` (or the text and a line saying there is none); a child whose role may finish its block and whose session ran neither a done request nor a blocked entry (`session.activity`) gets "ended without a done request or a blocked entry" |
+| Only the report reaches the parent | `tool.execute.after`: the child's full text is captured to the store and the parent gets its fenced `hafiz-report` (or the text and a line saying there is none); a child whose role may finish its block and whose session ran neither a done request nor a blocked entry (`session.activity`) gets "ended without a done request or a blocked entry: the block is not finished; …" with what to do next |
 | No blind overwrites | `hafiz_doc` sends `require_version`: writing an existing doc needs its `expected_version` (Core) |
 | The store is Hafiz's | a `bash` command naming `project.storeDir` is refused (`read`/`edit` are already denied by permission) |
 
@@ -708,8 +721,13 @@ docs/ ARCHITECTURE.md DESIGN-NOTES.md HOST-MATRIX.md
   tuning. This number decides how much the condenser and drafters must carry. Tasks can resolve
   review proposals as the user between turns (`review: accept | reject`) and override
   `policies.yaml` for a run (e.g. `review.design: gate`), so the gated pipeline designer →
-  planner → workers is exercised across turns; `--isolate` runs Kilo without the owner's own
-  config. A `task` call is logged and counted once, even when Kilo fires its hooks twice for it.
+  planner → workers is exercised across turns; `--isolate` runs Kilo with only the owner's
+  providers and model keys from their own config. A `task` call is logged and counted once, even
+  when Kilo fires its hooks twice for it. Runs are tiered (`--tier smoke`, the default: S, M gated
+  and L once, with fail-fast on per-turn `expect_after` checks; `--tier full`: every task,
+  `--repeat` times). The plugin logs each write refused for size (`HAFIZ_REJECTION_LOG`: role,
+  block, section, measured, cap), the report tables them per section, and each run saves its
+  subagents' transcripts (`kilo export`).
 - Shaper tests: recorded Kilo requests → byte-identical prefix when the hash is unchanged; exact
   replacement when it changed; tail/delta/unfiled placement.
 - Cost tests: re-emits/hour and cache ratio on a simulated 8-worker hour.
