@@ -5,6 +5,7 @@ size: S
 description: one-off bug fix, no tree; expect at most a `changed` entry and no nudge
 agent: build
 setup:
+  broken_money: true # the toy repo's formatMoney bug and failing test are this task's job
   tracked: true # a repo that already has Hafiz, so the manager is managed (counters) from the start
 turns:
   - prompt: >-

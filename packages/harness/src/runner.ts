@@ -307,7 +307,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   const work = tmp(`hafiz-harness-${task.id}-`)
   const repo = join(work, 'repo')
   mkdirSync(repo)
-  writeFixture(repo)
+  writeFixture(repo, { brokenMoney: task.setup.broken_money })
   const seedCommit = git(repo, 'rev-parse', 'HEAD')[0] as string
   const delegationLog = join(runDir, 'delegations.jsonl')
   rmSync(delegationLog, { force: true })

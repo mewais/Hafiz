@@ -154,7 +154,13 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
     'thread.resolve',
     { id: 't', outcome: 'o' },
   ],
-  ['manager', 'hafiz_review', { action: 'list' }, 'proposal.list', { status: 'pending' }],
+  [
+    'manager',
+    'hafiz_review',
+    { action: 'list' },
+    'review.list',
+    { status: 'pending', resolvable: true },
+  ],
   ['manager', 'hafiz_review', { action: 'accept', id: 'p' }, 'proposal.accept', { id: 'p' }],
   ['manager', 'hafiz_review', { action: 'reject', id: 'p' }, 'proposal.reject', { id: 'p' }],
   ['manager', 'hafiz_focus_set', { blocks: ['a'] }, 'focus.set', { blocks: ['a'] }],
@@ -166,7 +172,8 @@ describe('tool catalogue → commands', () => {
   })
 
   it('covers every command each tool declares, and only catalogue commands', () => {
-    const reached = new Set(CASES.map((c) => c[3]))
+    // the review list is the read that `proposal.list` grants
+    const reached = new Set(CASES.map((c) => (c[3] === 'review.list' ? 'proposal.list' : c[3])))
     const commands = new Set(COMMAND_SPECS.map((c) => c.command))
     for (const s of TOOL_SPECS)
       for (const c of s.commands) {

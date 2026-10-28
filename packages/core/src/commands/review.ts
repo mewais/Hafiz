@@ -257,12 +257,18 @@ export async function reviewList(
   ctx: CoreContext,
   by: Actor,
   status: Proposal['status'] | 'all' = 'pending',
+  /** Only what `by` may resolve (the agent tool); the CLI and the TUI read the whole queue. */
+  resolvable = false,
 ): Promise<ReviewItem[]> {
   authorize(ctx.config, by.role, 'proposal.list')
   const read = ctx.backend.read
   const titles = new Map((await read.listBlocks()).map((b) => [b.id, b.title]))
   const policy = ctx.config.policies.review
-  return (await read.listProposals(status === 'all' ? undefined : { status })).map((p) => {
+  // A review the caller may not resolve is not theirs to read as a gate (the user: everything).
+  const mine = (await read.listProposals(status === 'all' ? undefined : { status })).filter(
+    (p) => !resolvable || p.source !== 'review' || mayApprove(policy, by.role),
+  )
+  return mine.map((p) => {
     const title = p.blockId ? titles.get(p.blockId) : undefined
     return {
       ...p,

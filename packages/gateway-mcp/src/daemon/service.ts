@@ -160,6 +160,8 @@ const schemas = {
   'review.list': z.object({
     ...token,
     status: z.enum(['pending', 'accepted', 'rejected', 'all']).optional(),
+    /** Only what the session's role may resolve (the agent tool's list). */
+    resolvable: z.boolean().optional(),
   }),
   /** One proposal and the doc it is about, at the version under review (`hafiz review --show`). */
   'review.show': z.object({ ...token, id: z.string().min(1) }),
@@ -377,7 +379,11 @@ export class DaemonService {
         return core.backend.read.listProposals(status ? { status } : undefined)
       }
       case 'review.list':
-        return core.reviewList(by, p.status as Params<'review.list'>['status'])
+        return core.reviewList(
+          by,
+          p.status as Params<'review.list'>['status'],
+          p.resolvable as boolean | undefined,
+        )
       case 'review.show':
         return core.reviewShow(by, p.id as string)
       case 'notices.drain':

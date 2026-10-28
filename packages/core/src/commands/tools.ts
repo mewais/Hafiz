@@ -448,7 +448,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     },
     description: (cfg, t) =>
       sentences(
-        'Review queue. list: pending proposals and what accepting runs. accept: id, runs it. reject: id, note (why).',
+        'Review queue. list: proposals you may resolve. accept: id, runs it. reject: id, note (why).',
         t.choices.includes('accept') &&
           `Design and plan reviews: ${cfg.policies.review.approver === 'user' ? 'the user only' : 'you or the user'}.`,
       ),
@@ -461,7 +461,9 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       const action = String(a.action) as keyof typeof REVIEW_ACTIONS
       const command = REVIEW_ACTIONS[action]
       if (!command) throw new ValidationError(`unknown review action '${String(a.action)}'`)
-      if (action === 'list') return { command, args: { status: 'pending' } }
+      // list reads the review queue (filtered to what this role may resolve), not raw proposals
+      if (action === 'list')
+        return { command: 'review.list', args: { status: 'pending', resolvable: true } }
       need(a, ['id'], `review ${action}`)
       return { command, args: pick(a, action === 'reject' ? ['id', 'note'] : ['id']) }
     },

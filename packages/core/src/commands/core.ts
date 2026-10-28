@@ -369,8 +369,8 @@ export class Core {
     return proposalAdd(this.ctx, p, by)
   }
   /** Pending proposals (or those of `status`, or `all`) with their review-table row. */
-  reviewList(by: Actor, status: Proposal['status'] | 'all' = 'pending') {
-    return reviewList(this.ctx, by, status)
+  reviewList(by: Actor, status: Proposal['status'] | 'all' = 'pending', resolvable = false) {
+    return reviewList(this.ctx, by, status, resolvable)
   }
   /** A proposal and the doc it is about, at the version under review. */
   reviewShow(by: Actor, id: string) {

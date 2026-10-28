@@ -74,10 +74,12 @@ export const taskSchema = z.object({
        * `hafiz_track_project` when work turns multi-step, as a real user's agent would.
        */
       tracked: z.boolean().default(false),
+      /** Seed the formatMoney bug and its failing test (the S task's job); default false: green suite. */
+      broken_money: z.boolean().default(false),
       /** Blocks created under the root (and their children) before the first turn. */
       seed: z.array(seedNode).default([]),
     })
-    .default({ project_name: 'Toy Shop', tracked: false, seed: [] }),
+    .default({ project_name: 'Toy Shop', tracked: false, broken_money: false, seed: [] }),
   /**
    * Overrides for the run's `policies.yaml` (written to `$HAFIZ_HOME/config/policies.yaml` before
    * Kilo starts), e.g. `review: { design: gate, plan: gate }`.

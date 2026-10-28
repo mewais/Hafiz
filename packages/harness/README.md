@@ -32,6 +32,7 @@ pending design and plan review proposals only (not done requests, drafts or comp
 ```yaml
 setup:
   tracked: false           # default; true = `hafiz init` (+ `seed:`) before Kilo starts
+  broken_money: false      # default; true seeds the formatMoney bug + failing test (only s-small-fix); else the suite is green
 policies:                  # optional: written to $HAFIZ_HOME/config/policies.yaml before Kilo starts
   review: { design: gate, plan: gate }
 turns:

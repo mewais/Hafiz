@@ -8,7 +8,7 @@ import type {
   ContextView,
   DeltaResult,
   Explanation,
-  Proposal,
+  ReviewItem,
   RoleTool,
 } from '@hafiz/core'
 import { HafizError, routeTool, suggestedCommand } from '@hafiz/core'
@@ -73,12 +73,15 @@ async function body(
         .join('\n')
     case 'session.status':
       return JSON.stringify(await call('session.status'))
-    case 'proposal.list':
-      // Each entry says where it came from and what accepting it would run.
+    case 'review.list':
+      // Proposals the caller may resolve; each says where it came from and what accepting runs.
+      // A review's payload is bookkeeping (it reads like a gate), so it is left out.
       return JSON.stringify(
-        (await call<Proposal[]>('proposal.list', a.status ? { status: a.status } : {})).map(
-          (p) => ({ ...p, suggested: suggestedCommand(p) }),
-        ),
+        (await call<ReviewItem[]>('review.list', a)).map((p) => {
+          if (p.source !== 'review') return { ...p, suggested: suggestedCommand(p) }
+          const { payload: _payload, ...rest } = p
+          return rest
+        }),
       )
     default: {
       let out = await call<CommandResult>('dispatch', { command, args: a })

@@ -193,6 +193,36 @@ describe('review table: approver, rejection', () => {
     expect((await core.reviewList(user, 'rejected'))[0]?.resolutionNote).toBe('not a finding')
   })
 
+  it('the review list holds only what the caller may resolve: approver user hides design reviews from the manager', async () => {
+    const { core, block, designs } = await setup()
+    await designs(design)
+    await core.proposalAdd(
+      {
+        kind: 'progress',
+        source: 'compliance',
+        blockId: block.id,
+        payload: {
+          command: 'progress.append',
+          args: { block: block.id, kind: 'found', text: 'x' },
+        },
+      },
+      mgr,
+    )
+    expect((await core.reviewList(mgr, 'pending', true)).map((p) => p.source)).toEqual([
+      'compliance',
+    ])
+    expect((await core.reviewList(user, 'pending', true)).map((p) => p.source).sort()).toEqual([
+      'compliance',
+      'review',
+    ])
+  })
+
+  it('approver manager: the manager sees design reviews in the list', async () => {
+    const { core, designs } = await setup({ approver: 'manager' })
+    await designs(design)
+    expect((await core.reviewList(mgr, 'pending', true)).map((p) => p.source)).toEqual(['review'])
+  })
+
   it('approver manager: the manager resolves design reviews too', async () => {
     const { core, block, designs, read } = await setup({ approver: 'manager' })
     const [p] = await designs(design)
