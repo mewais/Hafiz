@@ -41,6 +41,10 @@ export const BLOCK_ARG_DESCRIPTION =
 export const TASK_RESULT =
   /<task id="([^"]+)" state="completed">\n(?:<summary>[\s\S]*?<\/summary>\n)?<task_result>\n?([\s\S]*?)\n?<\/task_result>/
 
+/** The handback line for a child that may finish its block and did not, nor said what blocks it. */
+export const UNFINISHED =
+  'ended without a done request or a blocked entry: the block is not finished; read the report, then spawn a worker on it again or record what blocks it'
+
 const REPORT = /```hafiz-report\n[\s\S]*?\n```/g
 
 /** The sessions the checks consult; SessionRegistry in the plugin, a fake in tests. */
@@ -150,12 +154,19 @@ export function createChecks(o: ChecksOptions) {
   }
 
   /** The block `ref` names, resolved as the parent sees the tree. */
-  async function resolve(parent: string, ref: string): Promise<TreeSummaryNode> {
+  async function resolve(
+    parent: string,
+    ref: string,
+  ): Promise<{ node: TreeSummaryNode; children: TreeSummaryNode[] }> {
     const { nodes } = await sessions.call<TreeSummary>(parent, 'tree.summary', {
       recentDecisions: 0,
     })
     const m = matchBlock(nodes, ref)
-    if ('id' in m) return nodes.find((n) => n.id === m.id) as TreeSummaryNode
+    if ('id' in m)
+      return {
+        node: nodes.find((n) => n.id === m.id) as TreeSummaryNode,
+        children: nodes.filter((n) => n.parentId === m.id),
+      }
     if ('ambiguous' in m)
       return refuse(`task: block '${ref}' is ambiguous (${m.by}):\n${blockList(m.ambiguous)}`)
     return refuse(`task: no block '${ref}'. Valid block ids:\n${blockList(nodes)}`)
@@ -196,11 +207,17 @@ export function createChecks(o: ChecksOptions) {
       refuse(
         `task: '${agent}' is not managed by Hafiz here, so it cannot work on a block; pass ${BLOCK_ARG}: "${NO_BLOCK}".`,
       )
-    const node = await resolve(parent, ref)
+    const { node, children } = await resolve(parent, ref)
     const gate = gatingReview(config.policies.review, node.review)
     const state = spawnState(node, gate?.type)
     const allowed = config.policies.spawn.roles_by_state[state] ?? []
-    const says = gate && state !== spawnState(node) ? reviewSays(node, gate) : STATE_SAYS[state]
+    const open = children.filter((c) => c.status !== 'done' && c.status !== 'dropped')
+    const says =
+      gate && state !== spawnState(node)
+        ? reviewSays(node, gate)
+        : state === 'no_plan' && open.length
+          ? `its work is in its children (${open.map((c) => `${c.title} [${c.id}]`).join(', ')}): spawn on those; it has no plan of its own yet (the planner writes one only for integration)`
+          : STATE_SAYS[state]
     if (!allowed.includes('*') && !allowed.includes(role as string))
       refuse(
         `task: no ${role} on ${node.title} [${node.id}]: ${says}. ${
@@ -284,7 +301,7 @@ export function createChecks(o: ChecksOptions) {
             'progress.append:blocked',
             'block.set_status:blocked',
           ].includes(c)
-        if (done && !done.some(says)) lines.push('ended without a done request or a blocked entry')
+        if (done && !done.some(says)) lines.push(UNFINISHED)
       }
       const start = (m.index as number) + m[0].indexOf('<task_result>') + '<task_result>'.length
       const end = (m.index as number) + m[0].length - '</task_result>'.length

@@ -24,7 +24,7 @@ standing (`always`, `never`, `prefer`); a replacement supersedes.
 **Threads.** A discussion unsettled after a turn or two becomes a `hafiz_thread` on its block;
 park it with a gist when you move on, resolve it once settled.
 
-**Status and review.** Mark blocks active when work starts, blocked with what they wait on,
-dropped with why. Done requests and drafts wait in `hafiz_review`: when told proposals are
-pending, resolve them. Design and plan reviews belong to the policy's approver (the user by
+**Status and review.** Spawning a worker activates its block; mark blocks blocked with what
+they wait on, dropped with why. Done requests and drafts wait in `hafiz_review`: when told
+proposals are pending, resolve them. Design and plan reviews are the approver's (the user by
 default). Log what you learn as progress; adjust plans with `hafiz_doc`.

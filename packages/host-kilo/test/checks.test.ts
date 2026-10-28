@@ -7,6 +7,7 @@ import {
   type CheckSessions,
   createChecks,
   HafizToolError,
+  UNFINISHED,
 } from '../src/index.js'
 
 const ROLES = new Set(['manager', 'designer', 'planner', 'worker'])
@@ -185,6 +186,24 @@ describe('task: a required block argument', () => {
 })
 
 describe('task: the spawn fits the block', () => {
+  it('a worker on a parent without a plan is pointed at its open children', async () => {
+    const kid = (id: string, title: string, status: TreeSummaryNode['status']) => ({
+      ...node(id, title, status, { design: 1, plan: 1 }),
+      parentId: 'blk_des',
+    })
+    const nodes = [
+      ...NODES,
+      kid('blk_k1', 'Coupons', 'planned'),
+      kid('blk_k2', 'Apply', 'active'),
+      kid('blk_k3', 'Old', 'done'),
+    ]
+    const { checks } = setup({ nodes })
+    await refused(
+      task(checks, { subagent_type: 'worker', block: 'blk_des' }),
+      /its work is in its children \(Coupons \[blk_k1\], Apply \[blk_k2\]\): spawn on those/,
+    )
+  })
+
   it('no design → designer; no plan → designer or planner; planned → anyone', async () => {
     const { checks } = setup()
     await task(checks, { subagent_type: 'designer', block: 'blk_new' })
@@ -352,7 +371,7 @@ describe('task: only the hafiz-report reaches the parent', () => {
       commands: ['progress.append:found', 'step.set'],
     })
     const out = await checks.handback('ses_w', result(report), 'blk_pln')
-    expect(out).toBe(result(`${report}\nended without a done request or a blocked entry`))
+    expect(out).toBe(result(`${report}\n${UNFINISHED}`))
     expect(sessions.calls).toEqual([{ id: 'ses_w', method: 'session.activity' }])
     // a designer does not finish blocks: no such line, no query
     const d = setup({ children: { ses_d: 'designer' } })

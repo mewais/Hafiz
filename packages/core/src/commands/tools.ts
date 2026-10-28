@@ -450,7 +450,9 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       sentences(
         'Review queue. list: proposals you may resolve. accept: id, runs it. reject: id, note (why).',
         t.choices.includes('accept') &&
-          `Design and plan reviews: ${cfg.policies.review.approver === 'user' ? 'the user only' : 'you or the user'}.`,
+          (cfg.policies.review.approver === 'user'
+            ? "Design and plan reviews are the user's, not listed; a block waits only while its heading says review."
+            : 'Design and plan reviews: you or the user; a block waits only while its heading says review.'),
       ),
     shape: (_cfg, t) => ({
       action: enumOf(t.choices),

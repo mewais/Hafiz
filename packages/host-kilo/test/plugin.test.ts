@@ -16,6 +16,7 @@ import {
   type PluginInput,
   RULES_SEPARATOR,
   SESSION_HEADER,
+  UNFINISHED,
 } from '../src/index.js'
 
 const tmp = (p: string) => realpathSync(mkdtempSync(join(tmpdir(), p)))
@@ -331,7 +332,7 @@ describe('plugin: sessions, report capture, shaping', () => {
     )
     // the parent hears that there was no report, and (from the daemon) that the worker did not finish
     expect(out.output).toContain(
-      `\nno hafiz-report in this result; full text stored on block ${block}\nended without a done request or a blocked entry\n</task_result>`,
+      `\nno hafiz-report in this result; full text stored on block ${block}\n${UNFINISHED}\n</task_result>`,
     )
     const read = d.service.core.backend.read
     const log = await read.readLog(block, 'progress')

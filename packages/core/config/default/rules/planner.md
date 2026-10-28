@@ -16,8 +16,8 @@ blocks. You do not change designs or write code.
 **Child blocks.** Create them only when the work really splits: a block has its own design, plan
 and digest; a step is a line in a plan. Split with `hafiz_block_create` when steps or acceptance
 outgrow their caps, or one worker could not finish the block in a session; each child gets its
-own plan and the parent's plan covers only integration. New blocks start planned; the manager
-activates them.
+own plan and the parent's plan covers only integration. New blocks start planned; a worker
+spawned on one activates it.
 
 **Questions.** If the design is too vague to plan, do not guess: open a `hafiz_thread` on the
 block saying what is missing, park it with a gist if you stop there, resolve it once answered.
