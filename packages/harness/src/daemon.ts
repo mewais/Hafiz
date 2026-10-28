@@ -2,7 +2,9 @@
 // lookup-or-start path (project pointer -> socket under XDG_RUNTIME_DIR -> spawn `hafiz daemon`).
 // These helpers let the runner act like a user of that daemon: find it the way the plugin and
 // the CLI do, review through it, stop it at the end, and read the store once it is gone.
-import { existsSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   type Config,
@@ -127,5 +129,41 @@ export async function withStoreRead<T>(
     return await fn(backend.read, config)
   } finally {
     await backend.close()
+  }
+}
+
+/**
+ * Read the store while the plugin's daemon may still serve it (between turns): a copy of the
+ * store directory (without its git history) is opened and read, so the live store, its journal
+ * and its daemon are never touched. Undefined while the repo is untracked.
+ */
+export async function withStoreSnapshot<T>(
+  repo: string,
+  env: NodeJS.ProcessEnv,
+  fn: (read: ReadOps, config: Config) => Promise<T>,
+): Promise<T | undefined> {
+  const project = projectOf(repo, env)
+  if (!project || !existsSync(project.storeDir)) return undefined
+  const copy = mkdtempSync(join(tmpdir(), 'hafiz-harness-snap-'))
+  try {
+    cpSync(project.storeDir, copy, {
+      recursive: true,
+      filter: (src) => !src.slice(project.storeDir.length).startsWith('/.git'),
+    })
+    const loaded = loadConfig(configDirs(copy, env))
+    const storage = loaded.hafiz.storage
+    const config: Config = {
+      ...loaded,
+      hafiz: { ...loaded.hafiz, storage: { ...storage, git: { ...storage.git, enabled: false } } },
+    }
+    const backend = createBackend(config, copy)
+    await backend.open()
+    try {
+      return await fn(backend.read, config)
+    } finally {
+      await backend.close()
+    }
+  } finally {
+    rmSync(copy, { recursive: true, force: true })
   }
 }

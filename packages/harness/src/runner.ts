@@ -21,8 +21,9 @@ import { run as hafiz, type Io } from '@hafiz/cli'
 import { type ReadOps, userConfigDir } from '@hafiz/core'
 import { DaemonClient, startDaemon } from '@hafiz/gateway-mcp'
 import { stringify } from 'yaml'
-import { rootBlockOf, stopDaemon, userSocket, withStoreRead } from './daemon.js'
+import { rootBlockOf, stopDaemon, userSocket, withStoreRead, withStoreSnapshot } from './daemon.js'
 import { writeFixture } from './fixture.js'
+import { writeIsolatedKiloConfig } from './kilo-config.js'
 import { collectMetrics, type Delegation, type RunMetrics } from './metrics.js'
 import { type MockLlm, startMockLlm } from './mock-llm.js'
 import { scriptResponder, TURN_MARKER } from './mock-script.js'
@@ -42,10 +43,13 @@ export interface RunOptions {
   /** Keep the temp workdir (repo, store) for inspection. */
   keep?: boolean | undefined
   /**
-   * Run Kilo with an empty private config dir (XDG_CONFIG_HOME), so only the harness plugin (and
-   * the agents it generates) is loaded: none of the owner's own plugins, agents or providers.
+   * Run Kilo with a private config dir (XDG_CONFIG_HOME) holding only the owner's `provider`,
+   * `model` and `small_model` (kilo-config.ts), so the harness plugin and the agents it
+   * generates are loaded and none of the owner's own plugins, agents or permissions.
    */
   isolate?: boolean | undefined
+  /** After each turn, score the task's `expect_after` for it; a miss stops the task there. */
+  failFast?: boolean | undefined
   turnTimeoutMs?: number | undefined
   /** Milliseconds to wait after the last turn for report capture and session-end checks. */
   settleMs?: number | undefined
@@ -64,6 +68,22 @@ export interface TurnResult {
   agent: string
   code: number
   ms: number
+}
+
+/** One write the plugin refused for size (`HAFIZ_REJECTION_LOG`, one jsonl line each). */
+export interface CapRejectionEntry {
+  session: string
+  role?: string | undefined
+  block?: string | undefined
+  tool?: string | undefined
+  command: string
+  sections: Array<{ section: string; measured: number; cap: number }>
+}
+
+/** Fail-fast stopped the task after `turn`: the `expect_after` checks that missed. */
+export interface FailFastStop {
+  turn: number
+  failed: Expectation[]
 }
 
 /** Default per-turn limit for real models (seconds); `--turn-timeout` overrides it. */
@@ -86,7 +106,13 @@ export interface RunResult {
   filesChanged: string[]
   /** `task` calls the mechanical checks refused, with the error the model read. */
   rejected: Delegation[]
+  /** Writes refused for size, with each section's measured size and cap. */
+  capRejections: CapRejectionEntry[]
+  /** Subagent transcripts saved as `sessions/<role>-<id>.json` (`kilo export`). */
+  transcripts: string[]
   expectations: Expectation[]
+  /** Set when fail-fast stopped the task: remaining turns (and repeats) were skipped. */
+  stopped?: FailFastStop
   llmRequests?: number
   error?: string
   workdir?: string
@@ -97,13 +123,47 @@ const git = (cwd: string, ...args: string[]) =>
     .split('\n')
     .filter(Boolean)
 
-/** Every delegation the plugin logged (`HAFIZ_DELEGATION_LOG`), in order. */
-function readDelegations(file: string): Delegation[] {
+/** Every line of a jsonl sink the plugin writes (`HAFIZ_DELEGATION_LOG`, …), in order. */
+function readJsonl<T>(file: string): T[] {
   if (!existsSync(file)) return []
   return readFileSync(file, 'utf8')
     .split('\n')
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as Delegation)
+    .map((l) => JSON.parse(l) as T)
+}
+
+/**
+ * Save each subagent session's transcript (`kilo export <id>`, Kilo's own JSON) as
+ * `<dir>/<role>-<id>.json`; the manager's own turns are already in `turn-N.out.jsonl`. Best
+ * effort: a session Kilo cannot export is skipped. Returns the files written.
+ */
+export function exportTranscripts(a: {
+  bin: string
+  repo: string
+  env: NodeJS.ProcessEnv
+  sessions: ReadonlyArray<{ id: string; role: string }>
+  dir: string
+}): string[] {
+  const out: string[] = []
+  for (const s of a.sessions) {
+    try {
+      const json = execFileSync(a.bin, ['export', s.id, '--pure'], {
+        cwd: a.repo,
+        env: { ...a.env, PWD: a.repo },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 60_000,
+        maxBuffer: 256 * 1024 * 1024,
+      })
+      const start = json.indexOf('{')
+      if (start < 0) continue
+      mkdirSync(a.dir, { recursive: true })
+      const file = join(a.dir, `${s.role}-${s.id}.json`)
+      writeFileSync(file, json.slice(start))
+      out.push(file)
+    } catch {}
+  }
+  return out
 }
 
 /** The slice of a review-queue item the runner looks at. */
@@ -310,7 +370,10 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   writeFixture(repo, { brokenMoney: task.setup.broken_money })
   const seedCommit = git(repo, 'rev-parse', 'HEAD')[0] as string
   const delegationLog = join(runDir, 'delegations.jsonl')
+  const rejectionLog = join(runDir, 'rejections.jsonl')
   rmSync(delegationLog, { force: true })
+  rmSync(rejectionLog, { force: true })
+  rmSync(join(runDir, 'sessions'), { recursive: true, force: true })
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -321,6 +384,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     KILO_DISABLE_SHARE: '1',
     KILO_DISABLE_SESSION_INGEST: '1',
     HAFIZ_DELEGATION_LOG: delegationLog,
+    HAFIZ_REJECTION_LOG: rejectionLog,
   }
   if (opts.mock) {
     const home = join(work, 'home')
@@ -328,11 +392,15 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     Object.assign(env, { HOME: home, KILO_DISABLE_MODELS_FETCH: '1' })
   }
   if (opts.isolate) {
-    // Kilo reads its global config (plugins, agents, providers) from $XDG_CONFIG_HOME/kilo;
-    // auth stays where it is (XDG_DATA_HOME), so built-in providers still work.
+    // Kilo reads its global config (plugins, agents, providers) from $XDG_CONFIG_HOME/kilo; the
+    // private one keeps only the owner's providers and model keys. Auth stays where it is
+    // (XDG_DATA_HOME), so built-in and custom providers both work.
     const xdg = join(work, 'kilo-config')
-    mkdirSync(xdg, { recursive: true })
+    const kept = writeIsolatedKiloConfig(env, xdg)
     env.XDG_CONFIG_HOME = xdg
+    log(
+      `${task.id}#${repeat}: --isolate keeps ${Object.keys(kept).join(', ') || 'nothing'} of your Kilo config`,
+    )
   }
 
   let mock: MockLlm | undefined
@@ -343,6 +411,8 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
   let metrics: RunMetrics = { total: {}, roles: {} }
   let filesChanged: string[] = []
   let delegations: Delegation[] = []
+  let stopped: FailFastStop | undefined
+  let transcripts: string[] = []
   try {
     writeRunConfig(env, task.policies)
     // `{b.root}` and the seeded blocks' `as` names are available to mock scripts
@@ -423,6 +493,17 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
         if (socket) reviews.push(...(await resolveReviews(socket, turn.review, turn.note)))
         else log(`${task.id}#${repeat}: no Hafiz project after turn ${i + 1}, nothing to review`)
       }
+      const after = task.expect_after[String(i + 1)]
+      if (opts.failFast && after && i + 1 < task.turns.length) {
+        const now = await turnMetrics(repo, env, delegationLog)
+        const failed = scoreExpectations(after, now).filter((x) => !x.pass)
+        if (failed.length) {
+          stopped = { turn: i + 1, failed }
+          error = `fail-fast after turn ${i + 1}: ${failed.map((x) => `${x.metric} ${x.want} (got ${x.got ?? '-'})`).join(', ')}`
+          log(`${task.id}#${repeat}: ${error}`)
+          break
+        }
+      }
     }
     await sleep(opts.settleMs ?? 3000)
     // What the run changed in the repo, whoever changed it (managed workers or not)
@@ -432,7 +513,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
         ...git(repo, 'ls-files', '--others', '--exclude-standard'),
       ]),
     ].sort()
-    delegations = readDelegations(delegationLog)
+    delegations = readJsonl<Delegation>(delegationLog)
     // The daemon is the plugin's: shut it down (flushing the store), then read the store directly
     await stopDaemon(repo, env)
     const collected = await withStoreRead(repo, env, (read) =>
@@ -440,6 +521,21 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     )
     // never tracked: nothing in the store; the metrics are the empty ones
     metrics = collected ?? (await collectMetrics(EMPTY_STORE, { filesChanged, delegations }))
+    const subagents =
+      (await withStoreRead(repo, env, async (read) =>
+        (
+          await read.listSessions()
+        )
+          .filter((x) => x.parentSessionId && x.role !== 'user' && x.role !== 'viewer')
+          .map((x) => ({ id: x.id, role: x.role })),
+      )) ?? []
+    transcripts = exportTranscripts({
+      bin: opts.kiloBin,
+      repo,
+      env,
+      sessions: subagents,
+      dir: join(runDir, 'sessions'),
+    })
   } catch (e) {
     error = String(e instanceof Error ? e.message : e)
   } finally {
@@ -454,20 +550,35 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     repeat,
     model,
     mock: opts.mock,
-    passed: !error && turns.every((t) => t.code === 0) && expectations.every((x) => x.pass),
+    passed:
+      !error && !stopped && turns.every((t) => t.code === 0) && expectations.every((x) => x.pass),
     turns,
     reviews,
     wallMs: Date.now() - t0,
     metrics,
     filesChanged,
     rejected: delegations.filter((d) => d.error),
+    capRejections: readJsonl<CapRejectionEntry>(rejectionLog),
+    transcripts: transcripts.map((f) => f.slice(runDir.length + 1)),
     expectations,
+    ...(stopped ? { stopped } : {}),
     ...(mock ? { llmRequests: mock.requests.length } : {}),
     ...(error ? { error } : {}),
     ...(opts.keep ? { workdir: work } : {}),
   }
   writeFileSync(join(runDir, 'result.json'), `${JSON.stringify(result, null, 2)}\n`)
   return result
+}
+
+/** The metrics so far, between turns: the store read from a copy while the daemon may run. */
+async function turnMetrics(
+  repo: string,
+  env: NodeJS.ProcessEnv,
+  delegationLog: string,
+): Promise<RunMetrics> {
+  const delegations = readJsonl<Delegation>(delegationLog)
+  const read = (r: ReadOps) => collectMetrics(r, { delegations })
+  return (await withStoreSnapshot(repo, env, read)) ?? (await read(EMPTY_STORE))
 }
 
 /** Resolve the kilo binary: --kilo-bin, $HAFIZ_KILO_BIN, else `kilo` on PATH (verified). */

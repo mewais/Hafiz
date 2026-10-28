@@ -16,15 +16,16 @@ const enabled = process.env.HAFIZ_KILO_E2E === '1' && !!BIN
 describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', () => {
   const out = realpathSync(mkdtempSync(join(tmpdir(), 'hafiz-harness-out-')))
   afterAll(() => rmSync(out, { recursive: true, force: true }))
-  const ids = { S: 's-small-fix', M: 'm-feature', L: 'l-seeded-tree' }
+  const ids = { S: 's-small-fix', M: 'm-feature', G: 'm-feature-gated', L: 'l-seeded-tree' }
   const tasks = Object.fromEntries(loadTasks().map((t) => [t.id, t]))
 
-  const run = (size: 'S' | 'M' | 'L', keep = false): Promise<RunResult> =>
+  const run = (size: keyof typeof ids, keep = false): Promise<RunResult> =>
     runTask(tasks[ids[size]] as NonNullable<(typeof tasks)[string]>, 1, {
       mock: true,
       kiloBin: BIN as string,
       outDir: out,
       keep,
+      failFast: true,
     })
 
   it('S: a one-off fix leaves no Hafiz trace', async () => {
@@ -99,5 +100,29 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     })
     expect(r.metrics.roles.designer).toMatchObject({ docs_written: 2 })
     expect(r.metrics.roles.planner).toMatchObject({ docs_written: 2 })
+    // the workers were spawned on planned blocks and nobody activated them by hand
+    expect(r.metrics.roles.manager?.hafiz_writes).toBe(3) // decision, thread open, thread park
+    // each subagent's transcript is saved
+    expect(r.transcripts).toHaveLength(6)
+    expect(existsSync(join(out, 'l-seeded-tree-1', r.transcripts[0] as string))).toBe(true)
+  }, 300000)
+
+  it('M gated: designer, planner and two workers across three reviewed turns', async () => {
+    const r = await run('G')
+    if (!r.passed) console.error(JSON.stringify(r.expectations.filter((e) => !e.pass)), r.error)
+    expect(r.passed).toBe(true)
+    expect(r.stopped).toBeUndefined() // the per-turn checks held
+    expect(r.turns).toHaveLength(3)
+    // after turn 1: the root, feature and two part designs; after turn 2: the two plans
+    expect(r.reviews.map((x) => x.kind).sort()).toEqual([
+      'design',
+      'design',
+      'design',
+      'design',
+      'plan',
+      'plan',
+    ])
+    expect(r.metrics.roles.worker).toMatchObject({ sessions: 2, done_requests: 2 })
+    expect(r.metrics.total.spawns_rejected).toBe(0)
   }, 300000)
 })
