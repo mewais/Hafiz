@@ -20,7 +20,7 @@ roles:
     # block.create: external stubs, sub-components; progress: findings and questions only
     rules: rules/designer.md
   planner:
-    view: default
+    view: planner                   # default, plus the designs of the blocks under its block
     focus_policy: spawned_block
     tools: [context.*, block.read, tree.list, block.create, doc.write:plan, doc.patch:plan, thread.*]
     rules: rules/planner.md

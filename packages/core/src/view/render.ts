@@ -170,7 +170,9 @@ export function headingLine(
     b.kind !== ctx.config.kinds.default_kind && b.kind !== 'root' && b.parentId !== null
       ? [b.kind]
       : []
-  const tags = [b.status, ...reviewMarks(ctx, b), ...kind, ...marks].join(' · ')
+  const tags = [b.status, ...reviewMarks(ctx, b), ...docMarks(ctx, b), ...kind, ...marks].join(
+    ' · ',
+  )
   return `${'#'.repeat(Math.min(Math.max(level, 1), 6))} ${oneLine(b.title)} [${b.id}] ${tags}`
 }
 
@@ -183,6 +185,23 @@ function reviewMarks(ctx: RenderCtx, b: Block): string[] {
   const g = gatingReview(ctx.config.policies.review, ctx.snap.reviews.get(b.id))
   if (!g) return []
   return [g.review.status === 'pending' ? `review ${g.type}` : `${g.type} rejected`]
+}
+
+/**
+ * `needs design` / `needs plan` on an open block (not the root) of a kind that takes a plan:
+ * the next doc it needs before a worker can start (a block with children needs no plan of its
+ * own), so a reader at any zoom (the manager sees most blocks as one line) knows which role goes
+ * next without reading the block.
+ */
+function docMarks(ctx: RenderCtx, b: Block): string[] {
+  if (b.parentId === null || b.status === 'done' || b.status === 'dropped') return []
+  const kind =
+    ctx.config.kinds.kinds[b.kind] ?? ctx.config.kinds.kinds[ctx.config.kinds.default_kind]
+  if (!kind?.schemas.plan) return []
+  if (!b.docVersions.design) return ['needs design']
+  // a parent's plan covers only integration: its children carry the work
+  if (!b.docVersions.plan && !ctx.snap.children.get(b.id)?.length) return ['needs plan']
+  return []
 }
 
 function headerMeta(ctx: RenderCtx, s: BlockSnap): string {

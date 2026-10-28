@@ -79,7 +79,9 @@ describe('review table: design and plan rows', () => {
         expect(list[0]).toMatchObject({ kind: 'design', version: 1, mode, blockTitle: 'Billing' })
         expect((await node()).review?.design).toMatchObject({ version: 1, status: 'pending', mode })
       } else expect((await node()).review).toBeUndefined()
-      expect(await heading()).toMatch(mode === 'gate' ? /planned · review design$/ : /planned$/)
+      expect(await heading()).toMatch(
+        mode === 'gate' ? /planned · review design · needs plan$/ : /planned · needs plan$/,
+      )
     },
   )
 
@@ -248,7 +250,7 @@ describe('review table: approver, rejection', () => {
       status: 'rejected',
       resolutionNote: 'split the index',
     })
-    expect(await heading()).toMatch(/· design rejected$/)
+    expect(await heading()).toMatch(/· design rejected · needs plan$/)
     // the same version is never filed again; a revision is
     await core.sessionOpen({ id: 'designer-1', host: 't', role: 'designer' })
     expect((await core.sessionEnd('designer-1')).proposals).toEqual([])
@@ -257,7 +259,7 @@ describe('review table: approver, rejection', () => {
     expect((await node()).review?.design?.status).toBe('pending')
     await core.dispatch(user, 'proposal.accept', { id: next?.id }, s)
     expect(notified.at(-1)?.text).toBe(`design v2 of 'Billing' [${block.id}] approved by user`)
-    expect(await heading()).toMatch(/planned$/)
+    expect(await heading()).toMatch(/planned · needs plan$/)
   })
 })
 

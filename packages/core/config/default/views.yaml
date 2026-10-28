@@ -26,3 +26,7 @@ views:
     extends: default
     rules_prepend:
       - { match: { relation: descendant, status: planned }, zoom: DESIGN }
+  planner:
+    extends: default
+    rules_prepend:                                           # the children it plans or splits
+      - { match: { relation: descendant, status: [planned, active] }, zoom: DESIGN }
