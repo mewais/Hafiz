@@ -32,6 +32,54 @@ export interface RunToolOptions {
 export interface ToolOutcome {
   text: string
   isError: boolean
+  /** The call was refused for size (a doc section over its cap, a log entry over its cap). */
+  rejection?: CapRejection
+}
+
+/** What a cap rejection measured, per section: `design.interface`, `progress`, `thread.gist`. */
+export interface CapRejection {
+  command: string
+  sections: Array<{ section: string; measured: number; cap: number }>
+}
+
+/** Log entries by command, for a rejection that names no section. */
+const LOG_SECTION: Record<string, string> = {
+  'progress.append': 'progress',
+  'thread.park': 'thread.gist',
+  'thread.open': 'thread.entry',
+  'thread.append': 'thread.entry',
+  'thread.resolve': 'thread.entry',
+}
+
+/** The cap rejection in a daemon error, or undefined when the error is something else. */
+export function capRejection(
+  command: string,
+  args: Record<string, unknown>,
+  data: unknown,
+): CapRejection | undefined {
+  const d = (data ?? {}) as {
+    code?: string
+    sections?: Array<{ section?: unknown; measured?: unknown; cap?: unknown }>
+    measured?: unknown
+    cap?: unknown
+  }
+  if (d.code === 'cap_exceeded' && Array.isArray(d.sections)) {
+    const doc = command.startsWith('doc.') ? String(args.type ?? 'doc') : 'digest'
+    return {
+      command,
+      sections: d.sections.map((x) => ({
+        section: `${doc}.${String(x.section)}`,
+        measured: Number(x.measured),
+        cap: Number(x.cap),
+      })),
+    }
+  }
+  if (typeof d.cap === 'number' && typeof d.measured === 'number')
+    return {
+      command,
+      sections: [{ section: LOG_SECTION[command] ?? command, measured: d.measured, cap: d.cap }],
+    }
+  return undefined
 }
 
 function isNeedsConfirmation(r: unknown): r is { needsConfirmation: true; message: string } {
@@ -114,8 +162,12 @@ export async function runTool(
   try {
     text = await body(call, rt, args, opts)
   } catch (e) {
-    if (e instanceof RpcError)
-      return { text: `${e.message}${e.data ? `\n${JSON.stringify(e.data)}` : ''}`, isError: true }
+    if (e instanceof RpcError) {
+      const text = `${e.message}${e.data ? `\n${JSON.stringify(e.data)}` : ''}`
+      const { command, args: a } = routeTool(rt, args)
+      const rejection = capRejection(command, a, e.data)
+      return { text, isError: true, ...(rejection ? { rejection } : {}) }
+    }
     // the call did not fit the tool (routeTool): nothing reached the daemon
     if (e instanceof HafizError) return { text: e.message, isError: true }
     throw e

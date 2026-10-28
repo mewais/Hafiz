@@ -403,7 +403,8 @@ function managedHooks(
   }
   const counted = new Set<string>()
   const seenCalls = new Set<string>()
-  if (toolsMode === 'native') out.tool = nativeTools({ config, sessions })
+  if (toolsMode === 'native')
+    out.tool = nativeTools({ config, sessions, rejectionLog: env.HAFIZ_REJECTION_LOG })
 
   if (proxy)
     out['chat.headers'] = async (i, o) => {
@@ -484,7 +485,13 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
   const noted = new Map<string, { id: string; parentID?: string; agent?: string }>()
 
   const hafizTools =
-    mode === 'native' ? nativeTools({ config, sessions: () => managed?.sessions }) : {}
+    mode === 'native'
+      ? nativeTools({
+          config,
+          sessions: () => managed?.sessions,
+          rejectionLog: env.HAFIZ_REJECTION_LOG,
+        })
+      : {}
   const hafizNames = Object.keys(hafizTools)
 
   const roleOf = (agent: string | undefined): string => {

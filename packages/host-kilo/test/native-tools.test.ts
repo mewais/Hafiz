@@ -1,7 +1,7 @@
 // Plugin-native Hafiz tools: one catalogue shared with the MCP gateway, per-call resolution of the
 // calling Kilo session, default roles for non-Hafiz agents, and the generated permission config.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Io, run } from '@hafiz/cli'
@@ -42,13 +42,14 @@ const ctx = (sessionID: string, agent: string): KiloToolContext => ({
 })
 
 /** A tracked repo, its daemon and the plugin; `policies` is the project's policies.yaml override. */
-async function live(policies?: string) {
+async function live(policies?: string, extraEnv: Record<string, string> = {}) {
   const cwd = tmp('hafiz-repo-')
   execFileSync('git', ['init', '-q'], { cwd })
   const env = {
     ...process.env,
     HAFIZ_STORE_ROOT: tmp('hafiz-stores-'),
     XDG_RUNTIME_DIR: tmp('hafiz-rt-'),
+    ...extraEnv,
   }
   const io: Io = { cwd, env, out: () => undefined, err: () => undefined }
   expect(await run(['init', 'Shop'], io)).toBe(0)
@@ -144,6 +145,50 @@ describe('shared tool catalogue', () => {
       }, 0)
       expect(total, role).toBeLessThanOrEqual(max)
     }
+  })
+})
+
+describe('cap rejections (HAFIZ_REJECTION_LOG)', () => {
+  it('logs each refused write with role, block and every section over its cap', async () => {
+    const file = join(tmp('hafiz-rej-'), 'rejections.jsonl')
+    const { hooks, blocks } = await live(undefined, { HAFIZ_REJECTION_LOG: file })
+    await session(hooks, 'ses_m', 'manager', 'Ship it')
+    await session(hooks, 'ses_w', 'worker', `hafiz:block=${blocks[0]} go`, 'ses_m')
+    const long = 'word '.repeat(400)
+    await expect(
+      tool(hooks, 'hafiz_progress_append').execute(
+        { block: blocks[0], kind: 'found', text: long },
+        ctx('ses_w', 'worker'),
+      ),
+    ).rejects.toThrow(/cap/)
+    await expect(
+      tool(hooks, 'hafiz_doc').execute(
+        {
+          block: blocks[1],
+          type: 'plan',
+          sections: { steps: [{ id: 's1', title: 'x' }], acceptance: [long] },
+        },
+        ctx('ses_m', 'manager'),
+      ),
+    ).rejects.toThrow(/over the cap/)
+    const lines = readFileSync(file, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatchObject({
+      role: 'worker',
+      block: blocks[0],
+      command: 'progress.append',
+      sections: [{ section: 'progress', cap: expect.any(Number) }],
+    })
+    expect(lines[1]).toMatchObject({
+      role: 'manager',
+      block: blocks[1],
+      command: 'doc.patch',
+      sections: [{ section: 'plan.acceptance', cap: 200 }],
+    })
+    expect(lines[1].sections[0].measured).toBeGreaterThan(230)
   })
 })
 

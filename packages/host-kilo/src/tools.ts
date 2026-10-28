@@ -2,6 +2,7 @@
 // once per instance, a native tool's execute() receives the calling Kilo session id, so every
 // call is resolved to that session's own Hafiz session (role, parent, spawned block, token) and
 // attributed correctly. Generated from the same catalogue the MCP gateway uses.
+import { appendFileSync } from 'node:fs'
 import {
   agentRoleNames,
   type Config,
@@ -51,6 +52,11 @@ export interface NativeToolsOptions {
   config: Config
   /** The registry, or a getter: undefined until an untracked repo starts being tracked. */
   sessions: SessionRegistry | (() => SessionRegistry | undefined)
+  /**
+   * A jsonl file that gets one line per write refused for size (`HAFIZ_REJECTION_LOG`, set by
+   * the harness): role, block and each section with its measured size and cap.
+   */
+  rejectionLog?: string | undefined
 }
 
 /** The one tool an untracked git repo gets (primary agents only; see install.ts). */
@@ -108,6 +114,20 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
         const rt = toolsForRole(config, role, 'kilo').find((t) => t.spec.name === name)
         if (!rt) throw new HafizToolError(`${name} is not available to the ${role} role.`)
         const r = await runTool((m, p) => sessions.call(sid, m, p), rt, args)
+        if (r.rejection && opts.rejectionLog) {
+          const k = sessions.get(sid)
+          const line = {
+            ts: new Date().toISOString(),
+            session: sid,
+            role,
+            block: args.block ?? args.id ?? k?.block,
+            tool: name,
+            ...r.rejection,
+          }
+          try {
+            appendFileSync(opts.rejectionLog, `${JSON.stringify(line)}\n`)
+          } catch {} // a diagnostics sink never fails the call
+        }
         if (r.isError) throw new HafizToolError(r.text)
         return { title: name, output: r.text, metadata: { hafiz_role: role } }
       },
