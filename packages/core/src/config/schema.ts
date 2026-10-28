@@ -238,6 +238,9 @@ export const policiesFile = z.object({
     transitions: z.record(z.string(), z.array(z.string())),
     guards: z.record(z.string(), z.array(z.string())),
     activate_parent_on_child_active: z.boolean().default(true),
+    // Roles whose spawn on a `planned` block starts the work: the block (and its planned
+    // ancestors) turns active when that session opens. Designers and planners are not work.
+    activate_on_spawn: z.array(z.string()).default([]),
   }),
   epoch: z.object({ minor_paths: z.array(z.string()) }),
   caps: z.object({

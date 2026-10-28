@@ -85,7 +85,27 @@ export class GuardError extends HafizError {
 }
 
 export class InvalidTransitionError extends HafizError {
-  constructor(from: string, to: string) {
-    super('invalid_transition', `cannot move a block from '${from}' to '${to}'`, { from, to })
+  /**
+   * `allowed`: where `from` may go (policies.yaml); `activatedBy`: roles whose spawn on a planned
+   * block activates it (`status.activate_on_spawn`). Both only shape the remedy in the message.
+   */
+  constructor(
+    from: string,
+    to: string,
+    allowed: readonly string[] = [],
+    activatedBy: readonly string[] = [],
+  ) {
+    let remedy = allowed.length ? `; from '${from}' it can go to ${allowed.join(', ')}` : ''
+    if (from === 'planned' && allowed.includes('active'))
+      remedy = `: the block is planned, so its work has not started. ${
+        activatedBy.length
+          ? `A ${activatedBy.join(' or ')} spawned on it activates it; or set`
+          : 'Set'
+      } it active first, then ${to}`
+    super('invalid_transition', `cannot move a block from '${from}' to '${to}'${remedy}`, {
+      from,
+      to,
+      allowed,
+    })
   }
 }

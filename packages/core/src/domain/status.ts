@@ -61,7 +61,7 @@ export const builtinGuards: Record<string, Guard> = {
     return openKids.length
       ? fail(
           'children_closed',
-          `child block(s) not closed: ${openKids.map((k) => `${k.id} [${k.status}]`).join(', ')}.`,
+          `child block(s) not closed: ${openKids.map((k) => `${k.id} [${k.status}]`).join(', ')}. Finish or drop them first.`,
           { children: openKids.map((k) => k.id) },
         )
       : ok
@@ -93,12 +93,14 @@ export interface TransitionOutcome {
 export class StatusMachine {
   private readonly transitions: Record<string, string[]>
   private readonly guardLists: Record<string, string[]>
+  private readonly activatedBy: string[]
   constructor(
     policy: Config['policies']['status'],
     private readonly guards: Record<string, Guard> = builtinGuards,
   ) {
     this.transitions = policy.transitions
     this.guardLists = policy.guards
+    this.activatedBy = policy.activate_on_spawn ?? []
   }
 
   canTransition(from: Status, to: Status): boolean {
@@ -108,7 +110,8 @@ export class StatusMachine {
   /** Throws InvalidTransitionError / GuardError; returns needsConfirmation when a guard asks for it. */
   check(ctx: TransitionContext): TransitionOutcome {
     const from = ctx.block.status
-    if (!this.canTransition(from, ctx.to)) throw new InvalidTransitionError(from, ctx.to)
+    if (!this.canTransition(from, ctx.to))
+      throw new InvalidTransitionError(from, ctx.to, this.transitions[from] ?? [], this.activatedBy)
     const key = from === 'done' && ctx.to === 'active' ? 'reopen' : `to_${ctx.to}`
     let needsConfirmation = false
     for (const name of this.guardLists[key] ?? []) {

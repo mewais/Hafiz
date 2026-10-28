@@ -266,3 +266,56 @@ describe('core scenario', () => {
     ).rejects.toThrow(/unknown section/)
   })
 })
+
+describe('activate on spawn (policies.yaml status.activate_on_spawn)', () => {
+  async function tree() {
+    const { core, root } = await setup()
+    const feat = (await core.blockCreate(pln, { parent: root.id, title: 'Checkout' })).result
+    const leaf = (await core.blockCreate(pln, { parent: feat.id, title: 'Totals', plan })).result
+    return { core, root, feat, leaf }
+  }
+  const status = async (core: Core, id: string) => (await core.backend.read.getBlock(id))?.status
+
+  it('a worker session opened on a planned block activates it and its planned ancestors', async () => {
+    const { core, feat, leaf } = await tree()
+    const epoch = (await core.backend.read.getProject())?.epoch ?? 0
+    await core.sessionOpen({ id: 'w1', host: 't', role: 'worker', spawnedBlock: leaf.id })
+    expect(await status(core, leaf.id)).toBe('active')
+    expect(await status(core, feat.id)).toBe('active')
+    expect((await core.backend.read.getProject())?.epoch).toBe(epoch + 1)
+    // and so its done request is a legal transition
+    const r = await core.blockRequestDone(w1, { id: leaf.id, digest })
+    expect((r.result as Block).status).toBe('done')
+  })
+
+  it('designer and planner spawns leave the status alone (design is not work started)', async () => {
+    const { core, leaf } = await tree()
+    await core.sessionOpen({ id: 'd1', host: 't', role: 'designer', spawnedBlock: leaf.id })
+    await core.sessionOpen({ id: 'p1', host: 't', role: 'planner', spawnedBlock: leaf.id })
+    expect(await status(core, leaf.id)).toBe('planned')
+  })
+
+  it('an empty activate_on_spawn keeps the block planned; done then names the remedy', async () => {
+    const config = autoConfig()
+    config.policies.status.activate_on_spawn = []
+    const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
+    const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
+    const leaf = (await core.blockCreate(pln, { parent: result.root.id, title: 'T', plan })).result
+    await core.sessionOpen({ id: 'w1', host: 't', role: 'worker', spawnedBlock: leaf.id })
+    expect(await status(core, leaf.id)).toBe('planned')
+    await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
+      /planned, so its work has not started\. Set it active first, then done/,
+    )
+  })
+
+  it('under review.done: gate a done request on a planned block fails at once, with the remedy', async () => {
+    const config = loadConfig()
+    const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
+    const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
+    const leaf = (await core.blockCreate(pln, { parent: result.root.id, title: 'T', plan })).result
+    await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
+      /A worker spawned on it activates it; or set it active first, then done/,
+    )
+    expect(await core.backend.read.listProposals()).toHaveLength(0)
+  })
+})

@@ -14,6 +14,7 @@ import type {
   Status,
 } from '../domain/types.js'
 import { gitHead } from '../project/resolve.js'
+import type { WriteOps } from '../store/backend.js'
 import { authorize } from './authz.js'
 import {
   type CommandResult,
@@ -216,18 +217,7 @@ export async function blockSetStatus(
         title: `${reopen ? 'Reopened' : args.status === 'dropped' ? 'Dropped' : `Status → ${args.status}`}: ${b.title}`,
         decision: args.reason,
       })
-    if (
-      args.status === 'active' &&
-      nb.parentId &&
-      ctx.config.policies.status.activate_parent_on_child_active
-    ) {
-      const p = all.find((x) => x.id === nb.parentId)
-      if (p && p.status === 'planned')
-        await t.putBlock(
-          { ...p, status: 'active', version: p.version + 1, updatedAt: now },
-          p.version,
-        )
-    }
+    if (args.status === 'active') await activateAncestors(ctx, t, nb, now)
     // `review.done: queue`: done applies and the user reviews it later (gate asked above).
     if (args.status === 'done' && doneReview === 'queue') {
       await t.putProposal({
@@ -243,6 +233,46 @@ export async function blockSetStatus(
     }
     return nb
   })
+}
+
+/**
+ * `status.activate_parent_on_child_active`: a block turning active activates its planned
+ * ancestors, nearest first, so no active block sits under a planned one.
+ */
+export async function activateAncestors(
+  ctx: CoreContext,
+  t: WriteOps,
+  b: Block,
+  now: string,
+): Promise<void> {
+  if (!ctx.config.policies.status.activate_parent_on_child_active) return
+  for (let id = b.parentId; id; ) {
+    const p = await t.getBlock(id)
+    if (p?.status !== 'planned') return
+    await t.putBlock({ ...p, status: 'active', version: p.version + 1, updatedAt: now }, p.version)
+    id = p.parentId
+  }
+}
+
+/**
+ * `status.activate_on_spawn`: a session of one of these roles opened on a planned block starts
+ * its work: the block (and its planned ancestors) turn active in the session-open write.
+ * Returns true when it changed a block (the caller bumps the epoch).
+ */
+export async function activateOnSpawn(
+  ctx: CoreContext,
+  t: WriteOps,
+  role: string,
+  blockId: BlockId,
+): Promise<boolean> {
+  if (!ctx.config.policies.status.activate_on_spawn.includes(role)) return false
+  const b = await t.getBlock(blockId)
+  if (b?.status !== 'planned' || !ctx.status.canTransition('planned', 'active')) return false
+  const now = ctx.clock.now()
+  const nb: Block = { ...b, status: 'active', version: b.version + 1, updatedAt: now }
+  await t.putBlock(nb, b.version)
+  await activateAncestors(ctx, t, nb, now)
+  return true
 }
 
 export interface BlockRequestDoneArgs {
@@ -267,6 +297,17 @@ export async function blockRequestDone(
   const spec = { command: 'block.request_done', major: false, target: args.id }
   return runAs(ctx, by, spec, async (t, notices) => {
     const b = await mustBlock(t, args.id)
+    // Everything but the review itself is checked now, so the worker hears what is wrong (an
+    // open thread, a planned block) instead of the manager when it accepts the request.
+    ctx.status.check({
+      block: b,
+      to: 'done',
+      children: (await t.listBlocks()).filter((x) => x.parentId === b.id),
+      threads: await t.listThreads(b.id),
+      digest: null,
+      args: { digestProvided: true, confirmed: true },
+      doneReview: 'gate',
+    })
     await writeDoc(ctx, t, by, b, 'digest', args.digest, undefined, notices)
     const proposal: Proposal = {
       id: opaqueId('prop'),
