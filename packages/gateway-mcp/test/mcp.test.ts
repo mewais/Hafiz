@@ -111,7 +111,6 @@ const KILO_TOOLS: Record<string, string[]> = {
     'hafiz_decision_record',
     'hafiz_thread',
     'hafiz_review',
-    'hafiz_focus_set',
   ],
   designer: [
     'hafiz_block_read',
@@ -356,7 +355,6 @@ describe('mcp scenario', () => {
     const b = (await mgr.json('hafiz_block_create', { parent: root, title: 'Beta' })).id
     await mgr.json('hafiz_block_set_status', { id: a, status: 'active' })
     await mgr.json('hafiz_block_set_status', { id: b, status: 'active' })
-    await mgr.json('hafiz_focus_set', { blocks: [b] })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: a })
     const before = (await w.call('hafiz_context_for')).text
     const mBefore = await mgr.json('hafiz_session_status')
@@ -367,7 +365,8 @@ describe('mcp scenario', () => {
     const after = (await w2.call('hafiz_context_for')).text
     expect(after.replace(/\[view.*\]/, '')).toBe(before.replace(/\[view.*\]/, ''))
     const mAfter = await mgr2.json('hafiz_session_status')
-    expect(mAfter.session.focus).toEqual({ blocks: [b], computed: false })
+    expect(mAfter.session.focus).toEqual(mBefore.session.focus)
+    expect(mAfter.session.focus.blocks).toEqual(expect.arrayContaining([a, b]))
     expect(mAfter.session.counters.tool_calls_hafiz).toBeGreaterThanOrEqual(
       mBefore.session.counters.tool_calls_hafiz,
     )

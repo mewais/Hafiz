@@ -163,7 +163,6 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
   ],
   ['manager', 'hafiz_review', { action: 'accept', id: 'p' }, 'proposal.accept', { id: 'p' }],
   ['manager', 'hafiz_review', { action: 'reject', id: 'p' }, 'proposal.reject', { id: 'p' }],
-  ['manager', 'hafiz_focus_set', { blocks: ['a'] }, 'focus.set', { blocks: ['a'] }],
 ]
 
 describe('tool catalogue → commands', () => {
@@ -228,7 +227,6 @@ describe('tool catalogue per role', () => {
       'hafiz_decision_record',
       'hafiz_thread',
       'hafiz_review',
-      'hafiz_focus_set',
     ])
     expect(names('manager', 'mcp')).toEqual([
       ...common,

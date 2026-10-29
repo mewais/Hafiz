@@ -65,7 +65,7 @@ async function rig(provider: string, llm?: FakeProvider) {
   const shaper = new ConversationShaper({ config, source: sessions, log: (l) => log.push(l) })
   expect(await sessions.open('ses', { agent: 'manager' })).toBe(true)
   const root = (await d.service.core.treeListRaw())[0]?.id as string
-  await d.service.core.focusSet({ sessionId: 'ses', role: 'manager' }, { blocks: [root] })
+  await d.service.core.focusSet({ sessionId: 'ses', role: 'user' }, { blocks: [root] })
   return { d, sessions, shaper, config, log, root }
 }
 

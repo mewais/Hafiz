@@ -214,7 +214,7 @@ describe('core scenario', () => {
       parentSessionId: 'host-1',
     })
     expect(w.focus.blocks).toEqual([b.id])
-    await core.focusSet({ sessionId: 'host-1', role: 'manager' }, { blocks: [a.id, b.id] })
+    await core.focusSet({ sessionId: 'host-1', role: 'user' }, { blocks: [a.id, b.id] })
     await core.sessionEnd('host-1')
     const again = await core.sessionOpen({ id: 'host-1', host: 'test', role: 'manager' })
     expect(again.focus).toEqual({ blocks: [a.id, b.id], computed: false })

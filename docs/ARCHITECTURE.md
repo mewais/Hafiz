@@ -198,7 +198,7 @@ sections:
 | `progress.append(block, entry)` | append-only |
 | `decision.record(block, {title, decision, rationale, standing?, supersedes?})` | append-only; epoch |
 | `thread.open / park(gist) / resume / resolve` | minor |
-| `focus.set(session, blocks, order?)` | overrides computed focus |
+| `focus.set(session, blocks, order?)` | overrides computed focus; no agent role holds it (the user does) |
 | `proposal.accept / reject(id, note?)` | review queue; `accept` performs the proposed command as the accepting session (a design/plan review pins the version instead, §7); `note` is stored on the proposal and told to the reviewers. Design/plan reviews: only the user and `review.approver` |
 
 Stale `expected_version` → `Conflict{current}`. All commands are journaled transactions; every
@@ -206,7 +206,7 @@ successful command produces an `AuditEntry` and (major writes) a git commit auth
 `<role>/<agent-name> <session-id@hafiz>`; CLI writes are authored as the user.
 
 **Agent tool catalogue vs commands.** The commands above are what Core, the daemon, the CLI and
-the tests speak. Agents see a smaller catalogue (`commands/tools.ts`, `TOOL_SPECS`): twelve tools
+the tests speak. Agents see a smaller catalogue (`commands/tools.ts`, `TOOL_SPECS`): ten tools
 on Kilo, each routing a call to one command or query (`routeTool`), e.g. `hafiz_thread`
 `action: park` → `thread.park`, `hafiz_block_read` without `id` → `tree.list`, `hafiz_doc` →
 `doc.patch` (`replace: true` → `doc.write`, always with `require_version`, so an agent never
@@ -340,7 +340,7 @@ Everything in `match` is an attribute Relate computed; new attributes need no en
 Focus is set by the adapter at spawn from the role's `focus_policy` and persisted on the session:
 `manager: all_active`; `designer`, `planner`, `worker`: `spawned_block` — the block they are
 spawned on, falling back to the active front when used directly (no block);
-`focus.set` overrides it. Agents do not have to remember to set focus.
+the user's `focus.set` overrides it. Agents do not set focus: it is no agent tool.
 
 ### 6.5 The tail: ownership, policy, delta, condensation
 
@@ -526,7 +526,7 @@ guard → `review_done`).
 roles:
   manager:  { view: default, focus_policy: all_active,
               tools: [context.*, block.*, tree.list, doc.patch:plan, decision.record, thread.*,
-                      progress.append, focus.set, proposal.*, session.status],
+                      progress.append, proposal.*, session.status],
               rules: rules/manager.md }
   designer: { view: designer, focus_policy: spawned_block,
               tools: [context.*, block.read, tree.list, block.create, doc.write:design,

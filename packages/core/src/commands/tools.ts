@@ -470,13 +470,6 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       return { command, args: pick(a, action === 'reject' ? ['id', 'note'] : ['id']) }
     },
   },
-  {
-    name: 'hafiz_focus_set',
-    commands: ['focus.set'],
-    description: () => 'Centre your context on these blocks (most important first) this session.',
-    shape: () => ({ blocks: z.array(z.string()) }),
-    route: (a) => ({ command: 'focus.set', args: pick(a, ['blocks']) }),
-  },
 ]
 
 const grantHeld = (can: Can, grant: string) => {

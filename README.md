@@ -89,7 +89,7 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 
 ## Agent tools
 
-Agents reach Hafiz through twelve tools; each role sees only its own, narrowed to what it may do
+Agents reach Hafiz through eleven tools; each role sees only its own, narrowed to what it may do
 (`config/default/roles.yaml`). Their descriptions carry the mechanics; the rules in
 `config/default/rules/` say when to use them.
 
@@ -105,7 +105,6 @@ Agents reach Hafiz through twelve tools; each role sees only its own, narrowed t
 | `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
 | `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
 | `hafiz_review` | list, accept or reject (with a note) proposals in the review queue; design and plan reviews only under `approver: manager` | manager |
-| `hafiz_focus_set` | centre the context on chosen blocks | manager |
 | `hafiz_track_project` | start tracking an untracked repo | primary agents, untracked repos only |
 
 Dependencies between blocks are not a tool: a design's `interface.consumes` entries name their

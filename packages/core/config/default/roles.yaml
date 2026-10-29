@@ -10,7 +10,7 @@ roles:
     view: default
     focus_policy: all_active
     tools: [context.*, block.*, tree.list, doc.patch:plan, decision.record, thread.*,
-            progress.append, focus.set, proposal.*, session.status]
+            progress.append, proposal.*, session.status]
     rules: rules/manager.md
   designer:
     view: designer
