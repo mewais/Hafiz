@@ -9,8 +9,8 @@ or another block must change, do not fix it yourself: record it (`question` or `
 thread) and say so in your report.
 
 **As you go.**
-- `hafiz_step_set` each plan step: `doing` when you start it, `done` when finished, `skipped`
-  with a progress note if it proved unnecessary.
+- Mark a step with the `step` field of your progress entry: `doing` when you start it, `done`
+  when finished, `skipped` (saying why) if it proved unnecessary.
 - `hafiz_progress_append` when things happen, not all at the end: `done` a piece of work
   finished, `found` something others should know, `changed` a deviation from design or plan and
   why, `blocked` what stops you, `question` what needs someone else's answer.

@@ -89,7 +89,7 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 
 ## Agent tools
 
-Agents reach Hafiz through eleven tools; each role sees only its own, narrowed to what it may do
+Agents reach Hafiz through ten tools; each role sees only its own, narrowed to what it may do
 (`config/default/roles.yaml`). Their descriptions carry the mechanics; the rules in
 `config/default/rules/` say when to use them.
 
@@ -100,8 +100,7 @@ Agents reach Hafiz through eleven tools; each role sees only its own, narrowed t
 | `hafiz_block_edit` | rename, change kind or order, move | manager |
 | `hafiz_block_set_status` | planned → active → done, blocked, dropped; a worker's `done` is a request the policy closes or queues | manager, worker (done only) |
 | `hafiz_doc` | patch a design or plan (`replace` for a whole rewrite); an existing doc needs `expected_version` | manager (plan), designer (design), planner (plan) |
-| `hafiz_step_set` | mark a plan step doing / done / skipped | worker |
-| `hafiz_progress_append` | one finding on a block's progress log | manager, designer (found, question), worker |
+| `hafiz_progress_append` | one finding on a block's progress log; `step` also marks a plan step doing / done / skipped | manager, designer (found, question), worker |
 | `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
 | `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
 | `hafiz_review` | list, accept or reject (with a note) proposals in the review queue; design and plan reviews only under `approver: manager` | manager |

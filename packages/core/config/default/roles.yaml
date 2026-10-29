@@ -28,7 +28,7 @@ roles:
     view: worker
     focus_policy: spawned_block
     # the digest goes with the done request (hafiz_block_set_status), not through hafiz_doc
-    tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
+    tools: [context.*, block.read, progress.append, thread.open, thread.park,
             block.request_done]
     rules: rules/worker.md
   user:

@@ -95,7 +95,12 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
         acceptance: ['charges succeed'],
       },
     })
-    await u.dispatch('step.set', { block: payments, stepId: 's1', status: 'done' })
+    await u.dispatch('progress.append', {
+      block: payments,
+      kind: 'done',
+      text: 'Model done.',
+      step: { id: 's1', status: 'done' },
+    })
     const reporting = await mk(root, 'Reporting')
     u.close()
     // a designer session writes Reporting's design and ends: one review in the queue

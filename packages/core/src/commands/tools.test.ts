@@ -105,10 +105,10 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
   ],
   [
     'worker',
-    'hafiz_step_set',
-    { block: 'b', step_id: 's1', status: 'done' },
-    'step.set',
-    { block: 'b', stepId: 's1', status: 'done' },
+    'hafiz_progress_append',
+    { block: 'b', kind: 'done', text: 't', step: { id: 's1', status: 'done' } },
+    'progress.append',
+    { block: 'b', kind: 'done', text: 't', step: { id: 's1', status: 'done' } },
   ],
   [
     'worker',
@@ -250,7 +250,6 @@ describe('tool catalogue per role', () => {
     expect(names('worker', 'kilo')).toEqual([
       'hafiz_block_read',
       'hafiz_block_set_status',
-      'hafiz_step_set',
       'hafiz_progress_append',
       'hafiz_thread',
     ])
@@ -295,6 +294,11 @@ describe('tool catalogue per role', () => {
     expect(ddoc.spec.description(config, ddoc)).toMatch(/consumes/)
 
     expect(tool('designer', 'hafiz_progress_append').choices).toEqual(['found', 'question'])
+    // roles that log finished work mark plan steps with the same entry
+    expect(props(tool('designer', 'hafiz_progress_append'))).not.toContain('step')
+    const wp = tool('worker', 'hafiz_progress_append')
+    expect(props(wp)).toContain('step')
+    expect(wp.spec.description(config, wp)).toMatch(/also marks that plan step/)
     expect(tool('manager', 'hafiz_progress_append').choices).not.toContain('report')
     // the worker may not list the tree: id is required
     const wr = tool('worker', 'hafiz_block_read')

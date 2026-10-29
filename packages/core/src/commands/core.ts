@@ -72,9 +72,7 @@ import {
   decisionRecord,
   type ProgressAppendArgs,
   progressAppend,
-  type StepSetArgs,
   type SystemProgressArgs,
-  stepSet,
   systemProgress,
   type ThreadAppendArgs,
   type ThreadOpenArgs,
@@ -151,7 +149,6 @@ export interface CommandArgs {
   'edge.remove': EdgeArgs
   'doc.write': DocWriteArgs
   'doc.patch': DocWriteArgs
-  'step.set': StepSetArgs
   'progress.append': ProgressAppendArgs
   'decision.record': DecisionRecordArgs
   'thread.open': ThreadOpenArgs
@@ -270,9 +267,6 @@ export class Core {
 
   // ───────────────────────────── logs & threads ─────────────────────────────
 
-  stepSet(by: Actor, args: StepSetArgs) {
-    return stepSet(this.ctx, by, args)
-  }
   progressAppend(by: Actor, args: ProgressAppendArgs) {
     return progressAppend(this.ctx, by, args)
   }
@@ -431,7 +425,6 @@ export class Core {
       'edge.remove': (b, a) => this.edgeRemove(b, a),
       'doc.write': (b, a) => this.docWrite(b, a),
       'doc.patch': (b, a) => this.docPatch(b, a),
-      'step.set': (b, a) => this.stepSet(b, a),
       'progress.append': (b, a) => this.progressAppend(b, a),
       'decision.record': (b, a) => this.decisionRecord(b, a),
       'thread.open': (b, a) => this.threadOpen(b, a),

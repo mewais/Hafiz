@@ -121,13 +121,7 @@ const KILO_TOOLS: Record<string, string[]> = {
     'hafiz_thread',
   ],
   planner: ['hafiz_block_read', 'hafiz_block_create', 'hafiz_doc', 'hafiz_thread'],
-  worker: [
-    'hafiz_block_read',
-    'hafiz_block_set_status',
-    'hafiz_step_set',
-    'hafiz_progress_append',
-    'hafiz_thread',
-  ],
+  worker: ['hafiz_block_read', 'hafiz_block_set_status', 'hafiz_progress_append', 'hafiz_thread'],
 }
 const CONTEXT = ['hafiz_context_for', 'hafiz_context_delta']
 const TOOLS: Record<string, string[]> = {
@@ -151,7 +145,7 @@ describe('mcp tool lists', () => {
       expect(await a.tools()).toEqual(expected)
     }
     const u = await agent(d, 'user', { HAFIZ_SESSION_ID: 's-user' })
-    expect(await u.tools()).toHaveLength(14)
+    expect(await u.tools()).toHaveLength(12)
   })
 
   it('serving Kilo (host.kilo.tools: mcp), leaves out the context reads Kilo injects', async () => {
@@ -284,8 +278,18 @@ describe('mcp scenario', () => {
           text: `checkout change ${i}`,
         }),
       ),
-      w1.json('hafiz_step_set', { block: a, step_id: 's1', status: 'done' }),
-      w2.json('hafiz_step_set', { block: b, step_id: 's1', status: 'doing' }),
+      w1.json('hafiz_progress_append', {
+        block: a,
+        kind: 'done',
+        text: 'catalog step done',
+        step: { id: 's1', status: 'done' },
+      }),
+      w2.json('hafiz_progress_append', {
+        block: b,
+        kind: 'found',
+        text: 'checkout step started',
+        step: { id: 's1', status: 'doing' },
+      }),
     ])
 
     // per-role views differ, and each worker sees its own block

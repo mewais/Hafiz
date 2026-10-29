@@ -92,20 +92,15 @@ mock:
       worker:
         - calls:
             - tool: hafiz_progress_append
-              args: { block: "{block}", kind: found, text: "Reviewed src/cart.ts and src/money.ts; the new code can live in its own module." }
-        - calls:
-            - tool: hafiz_step_set
-              args: { block: "{block}", step_id: s1, status: doing }
+              args: { block: "{block}", kind: found, text: "Reviewed src/cart.ts and src/money.ts; the new code can live in its own module.", step: { id: s1, status: doing } }
         - calls:
             - tool: write
               args:
                 filePath: "{repo}/src/discount-{block}.ts"
                 content: "export const part = '{block}'\n"
         - calls:
-            - tool: hafiz_step_set
-              args: { block: "{block}", step_id: s1, status: done }
             - tool: hafiz_progress_append
-              args: { block: "{block}", kind: done, text: "Implemented the part in its own module." }
+              args: { block: "{block}", kind: done, text: "Implemented the part in its own module.", step: { id: s1, status: done } }
         - calls:
             - tool: hafiz_block_set_status
               args:

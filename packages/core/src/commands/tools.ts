@@ -153,6 +153,9 @@ const THREAD_ARGS: Record<string, { need: string[]; keep: string[] }> = {
   resolve: { need: ['id'], keep: ['id', 'outcome'] },
 }
 
+/** Roles that log finished work (`done` entries) mark plan steps with them. */
+const marksSteps = (t: RoleTool) => t.choices.includes('done')
+
 /** Whether `done` closes the block (set_status) or asks for it (request_done). */
 const closesBlocks = (t: RoleTool) => t.can('block.set_status', 'done')
 
@@ -349,17 +352,6 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     }),
   },
   {
-    name: 'hafiz_step_set',
-    commands: ['step.set'],
-    description: () => "Set a step's status as you go (ids from the block's plan).",
-    shape: (cfg) => ({
-      block: z.string(),
-      step_id: z.string(),
-      status: enumOf(cfg.logs.step.statuses),
-    }),
-    route: (a) => ({ command: 'step.set', args: pick(a, ['block', 'step_id', 'status']) }),
-  },
-  {
     name: 'hafiz_progress_append',
     commands: ['progress.append'],
     choice: {
@@ -370,17 +362,25 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
           .filter((k) => k !== 'report')
           .map((k) => option(k, `progress.append:${k}`)),
     },
-    description: (cfg) =>
-      `One finding for a block's progress log: one or two sentences, <= ~${cfg.logs.progress.cap} tokens; write several rather than one long one.`,
-    shape: (_cfg, t) => ({
+    description: (cfg, t) =>
+      sentences(
+        `One finding for a block's progress log: one or two sentences, <= ~${cfg.logs.progress.cap} tokens; write several rather than one long one.`,
+        marksSteps(t) && 'step: also marks that plan step.',
+      ),
+    shape: (cfg, t) => ({
       block: z.string(),
       kind: enumOf(t.choices),
       text: z.string(),
       refs: z.array(z.string()).optional(),
+      ...(marksSteps(t)
+        ? {
+            step: z.object({ id: z.string(), status: enumOf(cfg.logs.step.statuses) }).optional(),
+          }
+        : {}),
     }),
     route: (a) => ({
       command: 'progress.append',
-      args: pick(a, ['block', 'kind', 'text', 'refs']),
+      args: pick(a, ['block', 'kind', 'text', 'refs', 'step']),
     }),
   },
   {

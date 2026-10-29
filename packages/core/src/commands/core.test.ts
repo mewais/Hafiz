@@ -109,14 +109,36 @@ describe('core scenario', () => {
           text: `finding ${i}`,
         }),
       ),
-      core.stepSet(w1, { block: payments.id, stepId: 's1', status: 'done' }),
-      core.stepSet(w2, { block: payments.id, stepId: 's2', status: 'doing' }),
+      core.progressAppend(w1, {
+        block: payments.id,
+        kind: 'done',
+        text: 'model done',
+        step: { id: 's1', status: 'done' },
+      }),
+      core.progressAppend(w2, {
+        block: payments.id,
+        kind: 'found',
+        text: 'webhooks started',
+        step: { id: 's2', status: 'doing' },
+      }),
     ])
     expect((await core.backend.read.getProject())?.epoch).toBe(epochBefore)
-    expect((await core.backend.read.readLog(payments.id, 'progress')).length).toBe(10)
+    expect((await core.backend.read.readLog(payments.id, 'progress')).length).toBe(12)
+    const steps = await core.backend.read.readLog(payments.id, 'steps')
+    expect(steps.map((e) => [e.entry.stepId, e.entry.status]).sort()).toEqual([
+      ['s1', 'done'],
+      ['s2', 'doing'],
+    ])
+    // an unknown step refuses the whole entry: neither log is written
     await expect(
-      core.stepSet(w1, { block: payments.id, stepId: 'nope', status: 'done' }),
+      core.progressAppend(w1, {
+        block: payments.id,
+        kind: 'done',
+        text: 'x',
+        step: { id: 'nope', status: 'done' },
+      }),
     ).rejects.toThrow(/known: s1, s2/)
+    expect((await core.backend.read.readLog(payments.id, 'progress')).length).toBe(12)
 
     // standing decision; superseding
     const d1 = (

@@ -73,7 +73,6 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
   write('edge.remove'),
   write('doc.write'),
   write('doc.patch'),
-  write('step.set'),
   write('progress.append'),
   write('decision.record'),
   write('thread.open'),

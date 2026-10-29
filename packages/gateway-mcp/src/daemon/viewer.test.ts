@@ -44,7 +44,12 @@ async function seed(u: DaemonClient) {
       acceptance: ['charges succeed'],
     },
   })
-  await u.dispatch('step.set', { block, stepId: 's1', status: 'done' })
+  await u.dispatch('progress.append', {
+    block,
+    kind: 'done',
+    text: 'Model done.',
+    step: { id: 's1', status: 'done' },
+  })
   await u.dispatch('decision.record', {
     block,
     title: 'No card data',

@@ -58,7 +58,9 @@ beforeAll(async () => {
   await core.progressAppend(w1, { block: b1, kind: 'done', text: 'b' })
   await core.progressAppend(w1, { block: b1, kind: 'report', text: 'final report' })
   await core.progressAppend(w2, { block: b2, kind: 'found', text: 'c' })
-  await core.stepSet(w1, { block: b1, stepId: 's1', status: 'done' }).catch(() => undefined)
+  await core
+    .progressAppend(w1, { block: b1, kind: 'done', text: 's', step: { id: 's1', status: 'done' } })
+    .catch(() => undefined)
   await core.blockRequestDone(w1, { id: b1, digest })
   await core.proposalAdd(
     { kind: 'progress', source: 'compliance', payload: { command: 'progress.append', args: {} } },

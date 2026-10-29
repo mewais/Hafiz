@@ -1,4 +1,5 @@
-// Log commands (§5.1): plan steps, progress, decisions and threads. Append-only, no CAS.
+// Log commands (§5.1): progress (which may mark a plan step), decisions and threads.
+// Append-only, no CAS.
 
 import { NotFoundError, ValidationError } from '../domain/errors.js'
 import { opaqueId } from '../domain/ids.js'
@@ -14,6 +15,7 @@ import type {
   StepStatus,
   Thread,
 } from '../domain/types.js'
+import type { WriteOps } from '../store/backend.js'
 import {
   type CommandResult,
   type CoreContext,
@@ -26,44 +28,33 @@ import {
   runSystem,
 } from './tx.js'
 
-export interface StepSetArgs {
-  block: BlockId
-  stepId: string
+/** A plan step's new status, carried by a progress entry (`progress.append` `step`). */
+export interface StepMark {
+  id: string
   status: StepStatus
 }
 
-export async function stepSet(
+/** Append a step event inside the caller's transaction; the step must be in the block's plan. */
+async function appendStep(
   ctx: CoreContext,
+  t: WriteOps,
   by: Actor,
-  args: StepSetArgs,
-): Promise<CommandResult<StepEvent>> {
-  const spec = {
-    command: 'step.set',
-    major: !isMinor(ctx, 'steps'),
-    target: `${args.block}#${args.stepId}`,
-  }
-  return runAs(ctx, by, spec, async (t) => {
-    const b = await mustBlock(t, args.block)
-    const statuses = ctx.config.logs.step.statuses
-    if (!statuses.includes(args.status))
-      throw new ValidationError(`step status must be one of ${statuses.join(', ')}`)
-    const plan = await t.getDoc(b.id, 'plan')
-    const steps = (plan?.sections.steps ?? []) as Step[]
-    if (!steps.some((s) => s.id === args.stepId))
-      throw new NotFoundError(
-        'step',
-        `${args.stepId} (known: ${steps.map((s) => s.id).join(', ') || 'none — write a plan first'})`,
-      )
-    const ev: StepEvent = {
-      blockId: b.id,
-      stepId: args.stepId,
-      status: args.status,
-      ts: ctx.clock.now(),
-      by,
-    }
-    await t.appendLog(b.id, 'steps', ev)
-    return ev
-  })
+  blockId: BlockId,
+  step: StepMark,
+): Promise<StepEvent> {
+  const statuses = ctx.config.logs.step.statuses
+  if (!statuses.includes(step.status))
+    throw new ValidationError(`step status must be one of ${statuses.join(', ')}`)
+  const plan = await t.getDoc(blockId, 'plan')
+  const steps = (plan?.sections.steps ?? []) as Step[]
+  if (!steps.some((s) => s.id === step.id))
+    throw new NotFoundError(
+      'step',
+      `${step.id} (known: ${steps.map((s) => s.id).join(', ') || 'none — write a plan first'})`,
+    )
+  const ev: StepEvent = { blockId, stepId: step.id, status: step.status, ts: ctx.clock.now(), by }
+  await t.appendLog(blockId, 'steps', ev)
+  return ev
 }
 
 export interface ProgressAppendArgs {
@@ -71,6 +62,8 @@ export interface ProgressAppendArgs {
   kind: ProgressKind
   text: string
   refs?: string[]
+  /** Also mark a plan step, in the same transaction (one audit entry). */
+  step?: StepMark
 }
 
 export async function progressAppend(
@@ -110,7 +103,8 @@ function logProgress(
   args: ProgressAppendArgs,
   run: Runner,
 ): Promise<CommandResult<ProgressEntry>> {
-  const spec = { command, qualifier, major: !isMinor(ctx, 'progress'), target: args.block }
+  const major = !isMinor(ctx, 'progress') || (!!args.step && !isMinor(ctx, 'steps'))
+  const spec = { command, qualifier, major, target: args.block }
   return run(ctx, by, spec, async (t) => {
     const b = await mustBlock(t, args.block)
     const cfg = ctx.config.logs.progress
@@ -123,6 +117,7 @@ function logProgress(
         `progress entry is ${n} tokens; cap is ${cap}. One finding per entry.`,
         { measured: n, cap },
       )
+    if (args.step) await appendStep(ctx, t, by, b.id, args.step)
     const e = progressEntry(ctx, by, b.id, args.kind, args)
     await t.appendLog(b.id, 'progress', e)
     return e

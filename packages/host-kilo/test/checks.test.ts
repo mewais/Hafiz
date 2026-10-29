@@ -368,7 +368,7 @@ describe('task: only the hafiz-report reaches the parent', () => {
   it('notes a worker that ended without a done request or a blocked entry', async () => {
     const { checks, sessions } = setup({
       children: { ses_w: 'worker' },
-      commands: ['progress.append:found', 'step.set'],
+      commands: ['progress.append:found'],
     })
     const out = await checks.handback('ses_w', result(report), 'blk_pln')
     expect(out).toBe(result(`${report}\n${UNFINISHED}`))

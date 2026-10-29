@@ -194,8 +194,7 @@ sections:
 | `block.request_done(id, digest)` | worker path; enqueues or auto-applies |
 | `edge.add / edge.remove` | epoch; CLI only (agents' edges are derived from designs, below) |
 | `doc.write / doc.patch(block, type, …, expected_version, require_version?)` | full/section replace; validate; CAS; epoch. A design write sets the block's `depends_on` edges to the blocks its `interface.consumes[].block` name (id, or a title matching one block); unknown names → a notice |
-| `step.set(block, step_id, status)` | append-only event; no epoch; no CAS |
-| `progress.append(block, entry)` | append-only |
+| `progress.append(block, entry, step?)` | append-only; `step: {id, status}` also appends that plan step's event in the same transaction (no epoch, no CAS) |
 | `decision.record(block, {title, decision, rationale, standing?, supersedes?})` | append-only; epoch |
 | `thread.open / park(gist) / resume / resolve` | minor |
 | `focus.set(session, blocks, order?)` | overrides computed focus; no agent role holds it (the user does) |
@@ -206,7 +205,7 @@ successful command produces an `AuditEntry` and (major writes) a git commit auth
 `<role>/<agent-name> <session-id@hafiz>`; CLI writes are authored as the user.
 
 **Agent tool catalogue vs commands.** The commands above are what Core, the daemon, the CLI and
-the tests speak. Agents see a smaller catalogue (`commands/tools.ts`, `TOOL_SPECS`): ten tools
+the tests speak. Agents see a smaller catalogue (`commands/tools.ts`, `TOOL_SPECS`): nine tools
 on Kilo, each routing a call to one command or query (`routeTool`), e.g. `hafiz_thread`
 `action: park` → `thread.park`, `hafiz_block_read` without `id` → `tree.list`, `hafiz_doc` →
 `doc.patch` (`replace: true` → `doc.write`, always with `require_version`, so an agent never
@@ -537,7 +536,7 @@ roles:
               tools: [context.*, block.read, tree.list, block.create, doc.write:plan,
                       doc.patch:plan, thread.*], rules: rules/planner.md }
   worker:   { view: worker, focus_policy: spawned_block,
-              tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
+              tools: [context.*, block.read, progress.append, thread.open, thread.park,
                       block.request_done], rules: rules/worker.md }
 ```
 
