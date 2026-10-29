@@ -27,8 +27,6 @@ export type BeforeHook = 'draft_gist'
  * - `done_compliance`: a request to finish a block (`request_done`, `set_status` → done) runs
  *   the `request_done` compliance checks; their notices join the reply.
  * - `draft_digest`: the same request with a thin digest queues a drafted one (drafters on).
- * - `file_reviews`: `block.create` with an inline design or plan, by a role that does not
- *   approve reviews, files them for review (`policies.yaml review`).
  * - `announce_resolution`: a design/plan review accepted or rejected, or any proposal rejected
  *   with a note, is told to the reviewers (the manager).
  */
@@ -37,7 +35,6 @@ export type AfterHook =
   | 'announce_proposals'
   | 'done_compliance'
   | 'draft_digest'
-  | 'file_reviews'
   | 'announce_resolution'
 
 /** After any write that can change a block's status or the review queue. */
@@ -64,15 +61,16 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
   query('proposal.list'),
   write('proposal.accept', { after: RESOLVE_WRITE }),
   write('proposal.reject', { after: RESOLVE_WRITE }),
-  write('block.create', { after: [...TREE_WRITE, 'file_reviews'] }),
+  write('block.create', { after: TREE_WRITE }),
   write('block.update', { after: TREE_WRITE }),
   write('block.move', { after: TREE_WRITE }),
   write('block.set_status', { after: DONE_WRITE }),
   write('block.request_done', { after: DONE_WRITE }),
   write('edge.add'),
   write('edge.remove'),
-  write('doc.write'),
-  write('doc.patch'),
+  // a design or plan write files its review in the write's transaction (review.ts); announce it
+  write('doc.write', { after: ['announce_proposals'] }),
+  write('doc.patch', { after: ['announce_proposals'] }),
   write('progress.append'),
   write('decision.record'),
   write('thread.open'),

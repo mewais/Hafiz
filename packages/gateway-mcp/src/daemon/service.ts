@@ -345,9 +345,8 @@ export class DaemonService {
       case 'session.end': {
         // Last chance to say something: a resumed session finds these in its queue.
         await this.compliance(session.id, 'session_end')
-        const { proposals } = await core.sessionEnd(session.id)
-        if (proposals.length) await this.announceNewProposals(session.id)
-        return { ended: true, reviews: proposals.map((x) => x.id) }
+        await core.sessionEnd(session.id)
+        return { ended: true }
       }
       case 'system.progress':
         return core.systemProgress(by, {

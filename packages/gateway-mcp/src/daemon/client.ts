@@ -186,7 +186,7 @@ export class DaemonClient {
     return this.call<ProjectStatus>('project.status')
   }
   sessionEnd() {
-    return this.call<{ ended: true; reviews: string[] }>('session.end')
+    return this.call<{ ended: true }>('session.end')
   }
   countersAdd(delta: Record<string, number>) {
     return this.call<Omit<Session, 'token'> | null>('counters.add', { delta })

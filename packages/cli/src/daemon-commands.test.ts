@@ -116,7 +116,8 @@ describe('cli: daemon-backed commands', () => {
     await core.sessionOpen({ id: 'ds', host: 't', role: 'designer', spawnedBlock: block })
     const sections = { purpose: 'money in', scope: ['in: invoices'], interface: {} }
     await core.docWrite({ sessionId: 'ds', role: 'designer' }, { block, type: 'design', sections })
-    const [p] = (await core.sessionEnd('ds')).proposals
+    // filed as it is written
+    const [p] = (await core.reviewList(user)).filter((x) => x.source === 'review')
     const id = p?.id as string
 
     out.length = 0

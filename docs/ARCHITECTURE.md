@@ -222,7 +222,8 @@ A command catalogue entry (`commands/catalogue.ts`, `COMMAND_SPECS`) may declare
 around the command when it is dispatched (`commands/hooks.ts`): `before: [draft_gist]` on `thread.park`; `after:
 [refresh_focus, announce_proposals]` on every `block.*` and `proposal.*` write, plus
 `done_compliance, draft_digest` on `block.request_done` and `block.set_status` (to `done`),
-`file_reviews` on `block.create` and `announce_resolution` on `proposal.accept/reject` (§7).
+`announce_proposals` on `doc.write/patch` (a design or plan write files its review in its own
+transaction, §7) and `announce_resolution` on `proposal.accept/reject`.
 What a hook has for other sessions or the caller's notice queue goes to the gateway through a
 `DispatchSink` (`proposalsAdded`, `enqueue` for the caller, `notifyReviewers` for the sessions
 that run the review queue); the daemon keeps only gateway concerns (queues, cap-rejection
@@ -254,7 +255,7 @@ tx → epoch bump → audit) with two entry points. `runAs(ctx, actor, {command,
 actor's role against the allowlist first; it backs every command `dispatch` serves.
 `runSystem(ctx, actor, {command, …}, fn)` skips the role check and is Hafiz's own bookkeeping (session
 open/end, counters, compliance state, focus refresh, condensation, checkpoint requests, queued
-proposals, filed reviews (`review.file`), view-hash and delta-cursor updates, `system.progress`,
+proposals, view-hash and delta-cursor updates, `system.progress`,
 `project.init`, `schema.migrate`, and `done` applied by `request_done` under `review.done` `off`
 or `queue`). No
 `runSystem` write is reachable through `dispatch` or the tool catalogue; grep for it to see every
@@ -471,19 +472,20 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   **on that block** waits until it is accepted (siblings and parents are unaffected): a design
   gate refuses spawning the planner or a worker on the block, a plan gate refuses workers (§12.1),
   a done gate is the status guard. Compliance proposals are outside the table (always queued).
-  - *Filing* (Core, mechanical, never rules text). When a session ends, every design and plan
-    whose current version it wrote is filed (`fileSessionReviews`, from `Core.sessionEnd`;
-    the daemon announces them); `block.create` with an inline design or plan files them at once
-    (`file_reviews` hook). Writes by a role that may approve reviews are not filed. The proposal
+  - *Filing* (Core, mechanical, never rules text). Every design or plan write (`doc.write`,
+    `doc.patch`, inline on `block.create`) files its version inside the write's own transaction
+    (`fileReviewOnWrite`, from `writeDoc`), so a gate holds from the write on, while the writer
+    is still running; the `announce_proposals` hook then tells the reviewers. Writes by a role
+    that may approve reviews (the user, `approver`) are not filed; a manager's plan under
+    `approver: user` is, and its acceptance pins it like any other. The proposal
     is `{kind: design|plan, source: review, blockId, payload: review.approve {block, type,
     version}, note}`; `note` is one line, e.g. `design v3 of 'Billing': changed since v1: scope,
     interface (+1 provides, -1 consumes)` (sections whose value changed between the approved
     version and this one, read from the doc history; `new: …` before any approval). One pending
-    proposal per block and doc: a newer version replaces its payload and note; a version that was
-    rejected is never filed again.
+    proposal per block and doc: a newer version replaces its payload and note and keeps its id
+    (the review list stays stable); after a rejection the next version is a new proposal.
   - *Approval* pins the version on the block (`reviewed: {design: 3}`) and writes a `changed`
-    progress entry "design v3 approved by user" — never a decision. If the doc moved on while
-    waiting, the newer version is filed at once. *Rejection* takes a `note`, stored on the
+    progress entry "design v3 approved by user" — never a decision. *Rejection* takes a `note`, stored on the
     proposal (`resolution_note`); a rejected version keeps holding a gate until a new version is
     filed. Both reach the reviewers (the manager) as a notice through the `DispatchSink`.
   - *Who resolves*: design/plan reviews only the user and `approver` (`authorizeResolve`); other

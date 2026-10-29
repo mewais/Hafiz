@@ -182,8 +182,9 @@ review:
   approver: user     # user | manager: who accepts or rejects design and plan reviews
 ```
 
-A design or plan is filed when the agent session that wrote it ends (or when a block is created
-with one); a newer version replaces the pending proposal. Accepting pins the version on the
+A design or plan is filed as it is written (`hafiz_doc`, or inline on `hafiz_block_create`) by
+any role but the approver, so a gate holds from that write on; a newer version replaces the
+pending proposal. Accepting pins the version on the
 block; the next review says which sections changed since it. `hafiz doctor` warns about the
 retired `hafiz.yaml confirm_done` (`ask` reads as `done: gate`, `auto` as `done: queue`).
 

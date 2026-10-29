@@ -7,7 +7,7 @@ import { opaqueId } from '../domain/ids.js'
 import { reviewModeOf } from '../domain/review.js'
 import type { Actor, Proposal } from '../domain/types.js'
 import { authorizeResolve } from './authz.js'
-import { fileReview, pinReview } from './review.js'
+import { pinReview } from './review.js'
 import { type CommandResult, type CoreContext, runAs, runSystem } from './tx.js'
 
 export type NewProposal = Omit<Proposal, 'id' | 'status' | 'createdAt'>
@@ -58,9 +58,6 @@ export async function proposalResolve(
     await t.putProposal(np)
     return np
   })
-  // The doc moved on while this version waited: the newer one goes up for review.
-  if (review && args.accept && p.blockId)
-    await fileReview(ctx, by, p.blockId, p.kind as 'design' | 'plan')
   return out
 }
 

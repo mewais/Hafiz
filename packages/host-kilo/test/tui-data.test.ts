@@ -110,7 +110,10 @@ describe('TUI review actions', () => {
           interface: { provides: [{ name: 'order()' }] },
         },
       })
-      return (await ds.sessionEnd()).reviews[0] as string
+      await ds.sessionEnd()
+      // filed on the write: the block's one pending design review
+      const pending = await d.service.core.backend.read.listProposals({ status: 'pending' })
+      return pending.find((p) => p.source === 'review' && p.blockId === block)?.id as string
     }
     const first = await designer('ds1', 'orders as records')
     const snap = await source.snapshot()

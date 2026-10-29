@@ -26,6 +26,7 @@ import { type Notice, schemaFor, validateDoc } from '../schema/validate.js'
 import type { StorageBackend, WriteOps } from '../store/backend.js'
 import { countValue, type Tokenizer } from '../tokenizer.js'
 import { authorize } from './authz.js'
+import { fileReviewOnWrite } from './review.js'
 
 /** What every Core module works over. */
 export interface CoreContext {
@@ -181,6 +182,8 @@ export async function writeDoc(
   Object.assign(block, updated)
   if (type === 'digest') delete block.digestStale // Object.assign cannot remove keys
   if (type === 'design') await deriveDependencies(t, block, schema, v.sections, notices)
+  // Every design/plan version goes up for review as it is written (policies.yaml review).
+  if (type === 'design' || type === 'plan') await fileReviewOnWrite(ctx, t, by, block, type, doc)
   if (block.parentId === null) {
     if (type === 'design') await finishOnboarding(ctx, t, by, block)
     else await onboardingDue(t)

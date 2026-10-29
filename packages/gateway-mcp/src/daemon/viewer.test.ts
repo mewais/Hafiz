@@ -152,11 +152,13 @@ describe('review queue over the daemon (CLI and TUI)', () => {
     const m = await as(d, 'mgr', 'manager')
     const v = await as(d, 'kilo-tui', 'viewer')
     let n = 0
-    /** A designer session on the block writes its design and ends: the review ids it filed. */
+    /** A designer session on the block writes its design and ends: the pending review it filed. */
     const designer = async (purpose: string) => {
       const ds = await as(d, `ds${++n}`, 'designer', block)
       await ds.dispatch('doc.patch', { block, type: 'design', sections: design(purpose) })
-      return (await ds.sessionEnd()).reviews
+      await ds.sessionEnd()
+      const pending = await d.service.core.backend.read.listProposals({ status: 'pending' })
+      return pending.filter((p) => p.source === 'review' && p.blockId === block).map((p) => p.id)
     }
 
     const [id] = await designer('money in')

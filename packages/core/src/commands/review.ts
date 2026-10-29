@@ -1,30 +1,30 @@
-// Design and plan reviews (§7, `policies.yaml review`): filing a proposal when a doc is ready for
-// review, pinning the approved version, and the reads the CLI and the TUI share (list, show).
-// Filing is Hafiz's own bookkeeping (system writes); resolving goes through proposals.ts.
+// Design and plan reviews (§7, `policies.yaml review`): filing a proposal on every design/plan
+// write, pinning the approved version, and the reads the CLI and the TUI share (list, show).
+// Filing is Hafiz's own bookkeeping inside the write's transaction; resolving goes through
+// proposals.ts.
 
 import type { DocSchema } from '../config/schema.js'
 import { NotFoundError } from '../domain/errors.js'
 import { opaqueId } from '../domain/ids.js'
 import { mayApprove, reviewModeOf, reviewVersion } from '../domain/review.js'
-import {
-  type Actor,
-  type Block,
-  type BlockId,
-  type Doc,
-  type DocType,
-  type Proposal,
-  REVIEW_TYPES,
-  type ReviewMode,
-  type ReviewType,
-  type SectionValue,
-  type StructuredInterface,
+import type {
+  Actor,
+  Block,
+  BlockId,
+  Doc,
+  DocType,
+  Proposal,
+  ReviewMode,
+  ReviewType,
+  SectionValue,
+  StructuredInterface,
 } from '../domain/types.js'
 import { schemaFor } from '../schema/validate.js'
 import { suggestedCommand } from '../session/review.js'
 import type { ReadOps, WriteOps } from '../store/backend.js'
 import { renderDoc } from '../view/render.js'
 import { authorize } from './authz.js'
-import { type CoreContext, mustBlock, progressEntry, runSystem } from './tx.js'
+import { type CoreContext, mustBlock, progressEntry } from './tx.js'
 
 // ───────────────────────────── changed-since note ─────────────────────────────
 
@@ -117,99 +117,51 @@ export async function docAtVersion(
 
 // ───────────────────────────── filing ─────────────────────────────
 
-const docKey = (b: BlockId, type: ReviewType) => `${b}/${type}`
-
 /**
- * File (or refresh) the review of a block's design or plan, if its table row is not `off` and
- * its current version is newer than the approved one. One pending proposal per block and doc:
- * a newer version replaces the pending one's payload and note instead of stacking. Idempotent.
+ * A design or plan write, inside its transaction (`writeDoc`): file the new version for review
+ * when its table row is not `off` and the writer's role does not approve reviews (the approvers'
+ * own writes are not filed). One pending proposal per block and doc: a newer version replaces
+ * the pending one's payload and note, keeping its id (the review list stays stable); after a
+ * rejection the next version gets a new proposal. The note's "changed since" is computed against
+ * the approved version, read from the committed history (`read`: the backend's read side).
  */
-export async function fileReview(
+export async function fileReviewOnWrite(
   ctx: CoreContext,
+  t: WriteOps,
   by: Actor,
-  blockId: BlockId,
+  b: Block,
   type: ReviewType,
+  cur: Doc,
 ): Promise<Proposal | null> {
   if (ctx.config.policies.review[type] === 'off') return null
-  const read = ctx.backend.read
-  const b = await read.getBlock(blockId)
-  const version = b?.docVersions[type] ?? 0
-  if (!b || !version || version <= (b.reviewed?.[type] ?? 0)) return null
-  const filed = (await read.listProposals()).filter(
+  if (mayApprove(ctx.config.policies.review, by.role)) return null
+  const version = cur.version
+  const base = b.reviewed?.[type] ?? 0
+  if (version <= base) return null
+  const pending = (await t.listProposals({ status: 'pending' })).find(
     (p) => p.source === 'review' && p.blockId === b.id && p.kind === type,
   )
-  // This version is already pending, or was rejected (a rejection stands until a new version).
-  if (filed.some((p) => p.status !== 'accepted' && reviewVersion(p) === version)) return null
-  const pending = filed.find((p) => p.status === 'pending')
-  const cur = await read.getDoc(b.id, type)
-  if (!cur) return null
-  const base = b.reviewed?.[type] ?? 0
-  const old = base ? await docAtVersion(read, b.id, type, base) : null
+  const old = base ? await docAtVersion(ctx.backend.read, b.id, type, base) : null
   const what =
     base && !old
       ? `changes since v${base} unknown (no history)`
       : changedSince(schemaFor(ctx.config, b.kind, type), old, cur)
   const note = `${type} v${version} of '${b.title}': ${what}`
   const payload = { command: 'review.approve', args: { block: b.id, type, version } }
-  const spec = { command: 'review.file', major: false, target: docKey(b.id, type) }
-  const { result } = await runSystem(ctx, by, spec, async (t) => {
-    const p: Proposal = pending
-      ? { ...pending, payload, note }
-      : {
-          id: opaqueId('prop'),
-          kind: type,
-          source: 'review',
-          blockId: b.id,
-          payload,
-          note,
-          status: 'pending',
-          createdAt: ctx.clock.now(),
-        }
-    await t.putProposal(p)
-    return p
-  })
-  return result
-}
-
-/** Docs written by roles that do not approve reviews are filed; the approvers' own are not. */
-const filesFor = (ctx: CoreContext, role: string) => !mayApprove(ctx.config.policies.review, role)
-
-/**
- * `block.create` with an inline design or plan, by a role that does not approve reviews: file
- * them now (the session-end path would miss a block created and finished in one call).
- */
-export async function fileCreated(
-  ctx: CoreContext,
-  by: Actor,
-  block: BlockId,
-  types: readonly ReviewType[],
-): Promise<Proposal[]> {
-  if (!filesFor(ctx, by.role)) return []
-  const out: Proposal[] = []
-  for (const type of types) {
-    const p = await fileReview(ctx, by, block, type)
-    if (p) out.push(p)
-  }
-  return out
-}
-
-/** A session ends: file every design and plan whose current version it wrote. */
-export async function fileSessionReviews(ctx: CoreContext, sessionId: string): Promise<Proposal[]> {
-  // `backend.read` afresh each time: filing commits, and a held reader may predate it.
-  const s = await ctx.backend.read.getSession(sessionId)
-  if (!s || !filesFor(ctx, s.role)) return []
-  const by: Actor = { sessionId: s.id, role: s.role, ...(s.agent ? { agent: s.agent } : {}) }
-  const out: Proposal[] = []
-  for (const b of await ctx.backend.read.listBlocks())
-    for (const type of REVIEW_TYPES) {
-      if (ctx.config.policies.review[type] === 'off') continue
-      if (b.docVersions[type] <= (b.reviewed?.[type] ?? 0)) continue
-      const doc = await ctx.backend.read.getDoc(b.id, type)
-      if (doc?.by.sessionId !== s.id) continue
-      const p = await fileReview(ctx, by, b.id, type)
-      if (p) out.push(p)
-    }
-  return out
+  const p: Proposal = pending
+    ? { ...pending, payload, note }
+    : {
+        id: opaqueId('prop'),
+        kind: type,
+        source: 'review',
+        blockId: b.id,
+        payload,
+        note,
+        status: 'pending',
+        createdAt: ctx.clock.now(),
+      }
+  await t.putProposal(p)
+  return p
 }
 
 // ───────────────────────────── approval ─────────────────────────────

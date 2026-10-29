@@ -169,7 +169,8 @@ describe('core scenario', () => {
     const done = (await core.blockRequestDone(w1, { id: payments.id, digest })).result as Block
     expect(done.status).toBe('done')
     expect(done.doneAt).toBeTruthy()
-    expect((await core.backend.read.listProposals({ status: 'pending' })).length).toBe(1)
+    const queued = await core.backend.read.listProposals({ status: 'pending' })
+    expect(queued.filter((p) => p.source !== 'review').length).toBe(1)
     // billing cannot close while invoices is open
     await expect(
       core.blockSetStatus(mgr, { id: billing.id, status: 'done', digest }),
@@ -202,7 +203,9 @@ describe('core scenario', () => {
     expect(reclosed.digestStale).toBeUndefined()
 
     // review queue: accept marks it; audit has everything attributed
-    const pending = await core.backend.read.listProposals({ status: 'pending' })
+    const pending = (await core.backend.read.listProposals({ status: 'pending' })).filter(
+      (p) => p.source !== 'review',
+    )
     await core.proposalResolve(mgr, { id: pending[0]?.id as string, accept: true })
     expect((await core.backend.read.listProposals({ status: 'accepted' })).length).toBe(1)
     const audit = await core.backend.read.readAudit()
@@ -338,6 +341,7 @@ describe('activate on spawn (policies.yaml status.activate_on_spawn)', () => {
     await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
       /A worker spawned on it activates it; or set it active first, then done/,
     )
-    expect(await core.backend.read.listProposals()).toHaveLength(0)
+    const queued = await core.backend.read.listProposals()
+    expect(queued.filter((p) => p.source !== 'review')).toHaveLength(0)
   })
 })

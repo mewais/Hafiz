@@ -11,7 +11,9 @@ import type { ComplianceWhen } from './compliance.js'
 const pln: Actor = { sessionId: 'p1', role: 'planner' }
 
 async function setup() {
-  const core = new Core({ config: loadConfig(), backend: new MemoryBackend(), clock: fixedClock() })
+  const config = loadConfig()
+  config.policies.review.plan = 'off' // the planner's plan would be filed: only compliance here
+  const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
   const { result: init } = await core.projectInit(pln, { name: 'Shop', originFingerprint: 'fp' })
   const { result: block } = await core.blockCreate(pln, {
     parent: init.root.id,

@@ -36,7 +36,7 @@ review:
   # only: siblings and parents go on). design gates spawning the planner or a worker on the
   # block, plan gates workers, done gates the transition itself (set_status asks for
   # confirmation, a worker's done request waits for the manager).
-  design: queue      # filed when the session that wrote the design ends, or on block.create
+  design: queue      # filed on every design write by a non-approver (doc or inline on block.create)
   plan:   queue
   done:   gate       # default holds done for confirmation (previously confirm_done: ask)
   drafts: queue      # condenser/drafter proposals; off | queue (drafts never gate)
