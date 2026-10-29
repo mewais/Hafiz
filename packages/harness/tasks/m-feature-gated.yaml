@@ -25,7 +25,7 @@ expect_after:
   1: { tracked: "==1", designer_sessions: ">=1" }
   2: { "planner_sessions or planner_docs_written": ">=1" }
 expect:
-  tracked: "==1" # the manager started tracking itself (hafiz_track_project)
+  tracked: "==1" # the manager started tracking itself (its first hafiz_block_create)
   blocks_created: ">=3" # the feature and its two parts
   designer_sessions: "1..3" # the feature's (which onboards the brownfield repo first), re-spawns
   planner_sessions: ">=1"
@@ -40,13 +40,11 @@ mock:
   - turn: 1
     roles:
       manager:
-        - calls:
-            - tool: hafiz_track_project
-              args: { name: Toy Shop, reason: Multi-part feature with subagents }
+        # the first block create tracks the repo; the block goes under the root
         - calls:
             - tool: hafiz_block_create
               as: feat
-              args: { parent: "{b.root}", title: Coupon codes, kind: feature }
+              args: { title: Coupon codes, kind: feature }
         - calls:
             - tool: task
               args:

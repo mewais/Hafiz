@@ -35,7 +35,8 @@ export interface NeedsConfirmation {
 }
 
 export interface BlockCreateArgs {
-  parent: BlockId
+  /** Default: the root block. */
+  parent?: BlockId
   title: string
   kind?: string
   order?: number
@@ -50,7 +51,8 @@ export async function blockCreate(
 ): Promise<CommandResult<Block>> {
   const spec = { command: 'block.create', major: true, target: args.title }
   return runAs(ctx, by, spec, async (t, notices) => {
-    const parent = await mustBlock(t, args.parent)
+    const root = (await t.getProject())?.rootBlockId
+    const parent = await mustBlock(t, (args.parent ?? root) as BlockId)
     const kinds = ctx.config.kinds
     const kind = args.kind ?? kinds.default_kind
     const kindDef = kinds.kinds[kind]

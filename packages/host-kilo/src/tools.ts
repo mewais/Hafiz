@@ -13,8 +13,7 @@ import {
   toolsForRole,
 } from '@hafiz/core'
 import { runTool } from '@hafiz/gateway-mcp'
-import { z } from 'zod'
-import type { KiloToolContext, KiloToolDefinition, KiloToolResult } from './kilo.js'
+import type { KiloToolContext, KiloToolDefinition } from './kilo.js'
 import type { SessionRegistry } from './sessions.js'
 
 /** Roles any Kilo agent can be managed as: the role agents plus the two defaults. */
@@ -57,33 +56,18 @@ export interface NativeToolsOptions {
    * the harness): role, block and each section with its measured size and cap.
    */
   rejectionLog?: string | undefined
+  /**
+   * Untracked repo: `UNTRACKED_TOOL` called before a registry exists starts tracking first (it
+   * throws a HafizToolError to refuse) and resolves to a line for the tool's reply.
+   */
+  startTracking?: (args: Record<string, unknown>, ctx: KiloToolContext) => Promise<string>
 }
 
-/** The one tool an untracked git repo gets (primary agents only; see install.ts). */
-export const TRACK_TOOL = 'hafiz_track_project'
-
-export const TRACK_DESCRIPTION =
-  'Start tracking this git repo with Hafiz: a shared project memory (block tree, designs, plans, ' +
-  'progress) that keeps multi-step work and subagents coordinated across sessions. Call it ' +
-  'yourself, without asking, when the task is multi-step or will spawn subagents; never for ' +
-  'one-off tasks (a question, a small edit). Then tell the user in one line: ' +
-  '"Tracking this repo with Hafiz as `<name>`".'
-
-export function trackTool(
-  execute: (
-    args: { name: string; reason?: string },
-    ctx: KiloToolContext,
-  ) => Promise<KiloToolResult>,
-): KiloToolDefinition {
-  return {
-    description: TRACK_DESCRIPTION,
-    args: {
-      name: z.string().min(1).max(80).describe('Short project name (the product or repo name)'),
-      reason: z.string().max(300).optional().describe('One line: why this work is worth tracking'),
-    },
-    execute,
-  }
-}
+/**
+ * The one tool an untracked git repo shows (primary agents under the manager role): creating the
+ * first block starts tracking, then creates the block (plugin.ts).
+ */
+export const UNTRACKED_TOOL = 'hafiz_block_create'
 
 /**
  * The `tool` hook map. Visibility per agent is Kilo's permission system (see install.ts);
@@ -100,10 +84,14 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
       args: all.spec.shape(config, all),
       async execute(args: Record<string, unknown>, ctx: KiloToolContext) {
         const sid = ctx.sessionID
+        const tracking =
+          !registry() && name === UNTRACKED_TOOL && opts.startTracking
+            ? await opts.startTracking(args, ctx)
+            : undefined
         const sessions = registry()
         if (!sessions)
           throw new HafizToolError(
-            `${name}: Hafiz is not tracking this repo yet; call ${TRACK_TOOL} first.`,
+            `${name}: Hafiz is not tracking this repo yet; creating the first block (${UNTRACKED_TOOL}) starts it.`,
           )
         const open = await sessions.open(sid, { agent: ctx.agent })
         const role = sessions.get(sid)?.role
@@ -129,7 +117,8 @@ export function nativeTools(opts: NativeToolsOptions): Record<string, KiloToolDe
           } catch {} // a diagnostics sink never fails the call
         }
         if (r.isError) throw new HafizToolError(r.text)
-        return { title: name, output: r.text, metadata: { hafiz_role: role } }
+        const output = tracking ? `${r.text}\n${tracking}` : r.text
+        return { title: name, output, metadata: { hafiz_role: role } }
       },
     }
   }

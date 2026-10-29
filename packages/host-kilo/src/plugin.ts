@@ -1,15 +1,15 @@
 // The Kilo plugin, in one of three modes per directory (the decision is cached):
 // - outside git: no hooks at all;
-// - an untracked git repo: near-zero cost. In-memory nudge, plus one tool, `hafiz_track_project`,
-//   for primary agents. Calling it runs `hafiz init` and switches this instance to managed mode
-//   immediately (see `untrackedHooks`);
+// - an untracked git repo: near-zero cost. In-memory nudge, plus one tool, `hafiz_block_create`,
+//   for primary agents. Creating the first block runs `hafiz init` and switches this instance to
+//   managed mode immediately, then creates the block (see `untrackedHooks`);
 // - a tracked repo: installs config, registers the Hafiz tools (plugin-native, resolved per
 //   calling session), observes sessions, captures subagent reports and shapes requests through
 //   the selected RequestShaper, and runs the mechanical checks on Kilo's own tools (checks.ts).
 
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   type Actor,
@@ -32,6 +32,7 @@ import type {
   Hooks,
   KiloEvent,
   KiloMessageWithParts,
+  KiloToolContext,
   Plugin,
   PluginInput,
   PluginOptions,
@@ -43,7 +44,7 @@ import { ConversationShaper } from './shaper/core.js'
 import { TransformHooksShaper } from './shaper/hooks.js'
 import { EmbeddedProxy, SESSION_HEADER } from './shaper/proxy.js'
 import type { ShaperSetting } from './shaper/types.js'
-import { HafizToolError, nativeTools, TRACK_TOOL, trackTool } from './tools.js'
+import { HafizToolError, nativeTools, UNTRACKED_TOOL } from './tools.js'
 
 export interface HafizPluginDeps {
   env?: NodeJS.ProcessEnv
@@ -178,7 +179,7 @@ export function createHafizPlugin(deps: HafizPluginDeps = {}): Plugin {
 }
 
 /**
- * The managed plugin for a tracked project. `late`: built mid-session by hafiz_track_project,
+ * The managed plugin for a tracked project. `late`: built mid-session by the first block create,
  * after Kilo ran the `config` hook and read the tool list. The untracked hooks already installed
  * the agents and permissions and registered the tools; this instance shapes through the
  * transform hooks only (the embedded proxy needs provider URLs re-pointed at startup).
@@ -464,14 +465,20 @@ export function setToolVisibility(
   }
 }
 
+/** The project name tracking gives an untracked repo: its directory's name. */
+export const projectNameOf = (worktree: string): string =>
+  basename(worktree).replace(/\.git$/, '') || 'project'
+
 /**
- * An untracked git repo. Costs nothing per request beyond the track tool's definition (~90
- * tokens) and, once, the nudge line. Kilo reads agents, permissions and the tool list once at
- * startup, so everything managed mode needs is put in place now (the config hook installs the
- * role agents and permissions; the Hafiz tools are registered) and kept invisible: every request
- * hides the Hafiz tools but `hafiz_track_project`. Calling that tool initialises the project and
- * builds the managed hooks; from the next request on every hook delegates to them and the tools
- * are shown instead.
+ * An untracked git repo. Costs nothing per request beyond one tool's definition and, once, the
+ * nudge line. Kilo reads agents, permissions and the tool list once at startup, so everything
+ * managed mode needs is put in place now (the config hook installs the role agents and
+ * permissions; the Hafiz tools are registered) and kept invisible: every request hides the Hafiz
+ * tools but `hafiz_block_create`. Creating the first block tracks the repo (the same
+ * `initProject` as `hafiz init`, named after the repo; onboarding heuristic; a `changed` entry
+ * on the root), builds the managed hooks, opens the caller's session, and then creates the block
+ * under the root in the same call; from the next request on every hook delegates to the managed
+ * hooks and every Hafiz tool shows.
  */
 function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks {
   const { input, options, env, log, hafiz } = ctx
@@ -484,35 +491,27 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
   // session.created before tracking: replayed so parents and agents are known afterwards
   const noted = new Map<string, { id: string; parentID?: string; agent?: string }>()
 
-  const hafizTools =
-    mode === 'native'
-      ? nativeTools({
-          config,
-          sessions: () => managed?.sessions,
-          rejectionLog: env.HAFIZ_REJECTION_LOG,
-        })
-      : {}
-  const hafizNames = Object.keys(hafizTools)
-
   const roleOf = (agent: string | undefined): string => {
     if (agent && agentRoleNames(config).includes(agent)) return agent
     const r = config.hafiz.host.kilo.default_role
     return r && r !== 'none' ? r : 'user'
   }
 
-  const track = trackTool(async (args, tctx) => {
-    if (noted.get(tctx.sessionID)?.parentID)
+  /** The first block create in this repo: track it, then let the call create the block. */
+  const startTracking = async (args: Record<string, unknown>, tctx: KiloToolContext) => {
+    if (noted.get(tctx.sessionID)?.parentID || roleOf(tctx.agent) !== 'manager')
       throw new HafizToolError(
-        `${TRACK_TOOL} is for the primary agent; a subagent cannot start tracking.`,
+        `${UNTRACKED_TOOL}: this repo is not tracked yet, and only the primary (manager) agent starts tracking it.`,
       )
     const already = !!tracking
     tracking ??= (async () => {
       const by: Actor = {
         sessionId: tctx.sessionID,
-        role: roleOf(tctx.agent),
+        role: 'manager',
         ...(tctx.agent ? { agent: tctx.agent } : {}),
       }
-      const r = await initProject({ cwd: input.directory, name: args.name, env, by })
+      const name = projectNameOf(worktree)
+      const r = await initProject({ cwd: input.directory, name, env, by })
       const project = resolveProject(input.directory, env)
       const storeConfig = loadConfig(configDirs(project.storeDir, env))
       detection.set(input.directory, { kind: 'tracked', project, config: storeConfig })
@@ -526,36 +525,44 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
       r = await tracking
     } catch (e) {
       tracking = undefined
-      throw new HafizToolError(`${TRACK_TOOL}: ${e instanceof Error ? e.message : String(e)}`)
+      throw new HafizToolError(
+        `${UNTRACKED_TOOL}: could not start tracking: ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
-    if (already)
-      return {
-        title: TRACK_TOOL,
-        output: `Already tracking this repo with Hafiz as \`${r.name}\`.`,
-      }
+    if (already) return ''
     const m = managed as Managed
     // Open the caller now: the daemon starts, and its next request is managed.
-    const opened = await m.sessions.open(tctx.sessionID, { agent: tctx.agent })
-    if (opened && args.reason)
+    if (await m.sessions.open(tctx.sessionID, { agent: tctx.agent }))
       await m.sessions
         .call(tctx.sessionID, 'system.progress', {
           block: r.rootBlockId,
           kind: 'changed',
-          text: `Tracking with Hafiz: ${args.reason}`,
+          text: `Tracking with Hafiz: started with block '${String(args.title ?? '')}'.`,
         })
-        .catch((e) => log(`hafiz: could not record the tracking reason: ${String(e)}`))
+        .catch((e) => log(`hafiz: could not record the start of tracking: ${String(e)}`))
     const tail = r.onboarding
-      ? ' Existing code: onboarding is pending until tracked work starts (your view will say).'
+      ? ' Existing code: onboarding is due (your view says what it asks).'
       : ''
-    return {
-      title: TRACK_TOOL,
-      output: `Hafiz now tracks this repo as \`${r.name}\` (${r.id}); your Hafiz tools, rules and project view apply from your next step.${tail}`,
-      metadata: { hafiz_project: r.id },
-    }
+    return `Hafiz now tracks this repo as \`${r.name}\` (${r.id}); this block was created under its root, and your Hafiz tools, rules and project view apply from your next step.${tail}`
+  }
+
+  const allTools = nativeTools({
+    config,
+    sessions: () => managed?.sessions,
+    rejectionLog: env.HAFIZ_REJECTION_LOG,
+    startTracking,
   })
+  // MCP mode serves the role tools from servers a later start installs; the first block create
+  // is native either way.
+  const hafizTools =
+    mode === 'native'
+      ? allTools
+      : Object.fromEntries(Object.entries(allTools).filter(([n]) => n === UNTRACKED_TOOL))
+  const hafizNames = Object.keys(hafizTools)
+  const untrackedHidden = hafizNames.filter((n) => n !== UNTRACKED_TOOL)
 
   const out: Hooks = {
-    tool: { [TRACK_TOOL]: track, ...hafizTools },
+    tool: hafizTools,
 
     async config(cfg) {
       installConfig(cfg, {
@@ -566,7 +573,7 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
         hafiz,
         tools: mode,
         env: passEnv(env),
-        untracked: { trackTool: TRACK_TOOL },
+        untracked: { tool: UNTRACKED_TOOL },
       })
       if (usesKiloLlm(config.hafiz.llm)) {
         const llm = config.hafiz.llm
@@ -609,9 +616,10 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
       return (managed?.hooks ?? nudge)['experimental.chat.system.transform']?.(i, o)
     },
     async 'experimental.chat.messages.transform'(i, o) {
-      // on Kilo's own message objects, before the shaper may replace them with copies
-      if (managed) setToolVisibility(o.messages, [TRACK_TOOL], hafizNames)
-      else setToolVisibility(o.messages, hafizNames, [TRACK_TOOL])
+      // on Kilo's own message objects, before the shaper may replace them with copies; the
+      // first block create tracks the repo, and from the next request every Hafiz tool shows
+      if (managed) setToolVisibility(o.messages, [], hafizNames)
+      else setToolVisibility(o.messages, untrackedHidden, [UNTRACKED_TOOL])
       return managed?.hooks['experimental.chat.messages.transform']?.(i, o)
     },
     async dispose() {

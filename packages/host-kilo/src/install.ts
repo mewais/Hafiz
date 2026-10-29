@@ -10,9 +10,9 @@
 // shipped, subagents spawned on a block) get the rules ahead of the envelope from the shaper.
 //
 // In an untracked git repo (`untracked: true`) the same agents and permissions are installed up
-// front, because Kilo reads both once at startup: tracking mid-session (hafiz_track_project) can
-// then switch a session to managed mode without a restart. Until then the plugin hides every
-// Hafiz tool but the track tool per request (plugin.ts). MCP servers and the compaction change
+// front, because Kilo reads both once at startup: tracking mid-session (the first
+// hafiz_block_create) can then switch a session to managed mode without a restart. Until then the
+// plugin hides every Hafiz tool but that one per request (plugin.ts). MCP servers and the compaction change
 // are left out until a later start finds the project.
 import { agentRoleNames, type Config, rulesFor } from '@hafiz/core'
 import type { KiloConfig } from './kilo.js'
@@ -34,8 +34,11 @@ export interface InstallPlan {
   tools?: KiloToolsMode
   /** Proxy: returns the base URL to use instead of `baseURL` for provider `id`. */
   wrap?: (id: string, baseURL: string) => string
-  /** Untracked git repo: also allow `trackTool` to primary agents; no MCP servers, no compaction. */
-  untracked?: { trackTool: string }
+  /**
+   * Untracked git repo: also allow `tool` (the native first block create, which starts tracking)
+   * to primary agents, whatever the tools mode; no MCP servers, no compaction.
+   */
+  untracked?: { tool: string }
 }
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
@@ -163,9 +166,10 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
   // Role agents: prompt = the user's own prompt (if any) + rules, tools = exactly the role's
   // allowlist.
   // Untracked: primary agents (the manager agent, and others under the default role) may start
-  // tracking; subagents never (their `hafiz_*` deny covers it).
-  const track: PermMap = plan.untracked ? { [plan.untracked.trackTool]: 'allow' } : {}
-  const noTrack: PermMap = plan.untracked ? { [plan.untracked.trackTool]: 'deny' } : {}
+  // tracking by creating the first block (native mode: their role allows it already). Subagents
+  // keep their role's own list, which must hold after tracking too; the tool refuses them while
+  // the repo is untracked.
+  const track: PermMap = plan.untracked ? { [plan.untracked.tool]: 'allow' } : {}
 
   cfg.agent ??= {}
   const nonRoleSubagents = new Set<string>(KILO_BUILTIN_SUBAGENTS)
@@ -179,7 +183,7 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
     const theirs = cfg.agent[role] ?? {}
     const perm = layer(asMap(theirs.permission), {
       ...rolePermission(config, role, mode),
-      ...(role === 'manager' ? track : noTrack),
+      ...(role === 'manager' ? track : {}),
       task: role === 'manager' ? 'allow' : 'deny',
     })
     cfg.agent[role] = {
@@ -205,10 +209,7 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
   // become managed only when spawned on a block (task's `block`); otherwise a call is refused.
   for (const name of nonRoleSubagents) {
     const theirs = cfg.agent[name] ?? {}
-    const ours = {
-      ...(subagentRole ? rolePermission(config, subagentRole, mode) : denyAll(mode)),
-      ...noTrack,
-    }
+    const ours = subagentRole ? rolePermission(config, subagentRole, mode) : denyAll(mode)
     cfg.agent[name] = { ...theirs, permission: layer(asMap(theirs.permission), ours) }
   }
 
@@ -217,9 +218,7 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
   const base = asMap(cfg.permission)
   const global = layer(
     base,
-    defaultRole
-      ? { ...rolePermission(config, defaultRole, mode), ...track }
-      : { ...denyAll(mode), ...noTrack },
+    defaultRole ? { ...rolePermission(config, defaultRole, mode), ...track } : denyAll(mode),
   )
   cfg.permission = { ...global, ...storeDenies(plan.storeDir, base) }
 

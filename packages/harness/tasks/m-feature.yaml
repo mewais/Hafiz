@@ -12,7 +12,7 @@ turns:
       per part, and a worker subagent implementing each part (spawned on its block). Keep the
       work in src/. Discounts apply before tax, always.
 expect:
-  tracked: "==1" # the manager started tracking itself (hafiz_track_project)
+  tracked: "==1" # the manager started tracking itself (its first hafiz_block_create)
   blocks_created: ">=5" # the feature and its four parts
   manager_decisions: ">=1" # "Discounts apply before tax, always."
   designer_sessions: "<=3" # none needed; one that onboards first and a re-spawn are legitimate
@@ -28,14 +28,11 @@ mock:
   - turn: 1
     roles:
       manager:
-        - calls:
-            - tool: hafiz_track_project
-              args: { name: Toy Shop, reason: Multi-part feature with subagents }
+        # the first block create tracks the repo; the block goes under the root
         - calls:
             - tool: hafiz_block_create
               as: feat
               args:
-                parent: "{b.root}"
                 title: Order discounts
                 kind: feature
                 design:

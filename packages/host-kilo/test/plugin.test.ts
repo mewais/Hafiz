@@ -172,7 +172,7 @@ describe('plugin: nudge in an untracked repo', () => {
     const tripped = await transform()
     expect(tripped).toHaveLength(2)
     expect(tripped[1]).toMatch(
-      /^Hafiz: this session has 0 tool calls across 0 files in a repo Hafiz is not tracking.*hafiz_track_project/,
+      /^Hafiz: this session has 0 tool calls across 0 files in a repo Hafiz is not tracking.*hafiz_block_create/,
     )
     // once: not again on the next request, nor after much more activity
     expect(await transform()).toEqual(['You are Kilo.'])
@@ -241,7 +241,7 @@ describe('plugin: Hafiz rules in agent prompts', () => {
     expect(prompted).toEqual(['manager', 'designer', 'planner', 'worker', 'build'])
     // untracked: build is not managed yet, so its prompt stays as the user wrote it
     const untracked: KiloConfig = { agent: { build: { prompt: 'House style.' } } }
-    installConfig(untracked, { ...plan, untracked: { trackTool: 'hafiz_track_project' } })
+    installConfig(untracked, { ...plan, untracked: { tool: 'hafiz_block_create' } })
     expect(untracked.agent?.build?.prompt).toBe('House style.')
   })
 })

@@ -188,7 +188,7 @@ sections:
 | Command | Semantics |
 |---|---|
 | `project.init(name, root_design?)` | create project + root; write pointer; init git store |
-| `block.create(parent, title, kind, design?, plan?)` | atomic (journaled) |
+| `block.create(parent?, title, kind, design?, plan?)` | atomic (journaled); `parent` defaults to the root |
 | `block.update / block.move` | CAS; epoch |
 | `block.set_status(id, status, {digest?, reason?, blocked_on?, confirmed?})` | guards; `done→active` allowed |
 | `block.request_done(id, digest)` | worker path; enqueues or auto-applies |
@@ -448,7 +448,7 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   a `progress` entry of kind `report` on the worker's block, verbatim up to a cap, with the rest
   spilled to the store. Mechanical, unconditional, no LLM.
 - **Nudge**: counter thresholds in an untracked repo (never in a tracked project, whatever its tree size) →
-  one-line notice naming `hafiz_track_project`, once per session. With
+  one-line notice naming `hafiz_block_create` (the first one tracks the repo), once per session. With
   no Hafiz project the plugin takes a cheap path: it returns four tiny hooks, keeps the
   counters in memory and, when a threshold trips, appends the line to the session's next system
   prompt (`system.transform`), once. No daemon, config change or proxy is ever started.
@@ -607,8 +607,9 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   HEAD of the *calling session's* worktree (the daemon's startup checkout only as a fallback).
   `hafiz doctor` measures drift in the worktree it runs in. Separate clones of one remote share a
   fingerprint but are separate projects; linking them is out of scope.
-- **Starting**: `hafiz init` and the Kilo plugin's `hafiz_track_project` run the same
-  `initProject` (gateway-mcp). A repo with commits and at least `onboarding.min_source_files`
+- **Starting**: `hafiz init` and the Kilo plugin's first `hafiz_block_create` in an untracked repo
+  run the same `initProject` (gateway-mcp; the plugin names the project after the repo directory
+  and then creates the block under the root in the same call, which also makes onboarding due). A repo with commits and at least `onboarding.min_source_files`
   tracked source files starts with `Project.onboarding: pending`, which asks nothing yet (a
   one-off fix spawns no designer). The first tracked work (`block.create`, a session opened on a
   block by a non-user role, or a non-design doc write on the root) sets it to `due` in the same
@@ -666,7 +667,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 | Install (`config` hook, stable) | `agent.<role>` definitions (prompt = the user's own prompt for that agent, if any, then a separator comment and the role rules + `rules/common.md`: always appended, never replaced; `permission` `hafiz_*: deny` + allow for exactly the role's tools, `permission.task` for who may delegate); the default role's rules appended the same way to a primary agent that has its own `prompt` (tracked repos); default-role tool permissions for non-Hafiz agents; slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions. Kilo uses an agent's `prompt` instead of its model-specific system prompt, so agents without one (`build` as shipped, subagents spawned on a block, anything managed after mid-session tracking) get the rules from the shaper, ahead of the envelope |
 | Tools (`tool` hook, stable) | **plugin-native** catalogue tools (`TOOL_SPECS` in core, also used by the MCP gateway; execution shared via `runTool`). Plugin tools are global, so each is registered once with the union of what the managed roles may do (enum values, inputs, description sentences) and every call is routed with the caller's own role. Each call resolves the calling Kilo session → Hafiz session (`session.open` with the Kilo id; role from the agent, parent from `parentID`, spawned block from the `hafiz:block=<id>` marker the `task` check writes) and dispatches with that session's token, so attribution and focus are per session. `host.kilo.tools: mcp` keeps the per-role MCP servers instead |
 | Default roles | `host.kilo.default_role` (default `manager`) manages non-role primary agents (`build`, `plan`, custom) as that role: tools, session, and the role's rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`) does the same for non-role subagents (`general`, `explore`) **only** when spawned on a block (`task`'s `block`); otherwise they are unmanaged. `none` disables either |
-| Untracked git repo | near-zero cost: in-memory nudge plus one tool, `hafiz_track_project` (`name`, `reason?`), allowed to primary agents only. Kilo reads agents, permissions and the tool list once at startup, so the plugin installs the role agents and permissions and registers every Hafiz tool up front, and on each request hides all but the track tool by setting `tools[name] = false` on the user message objects `experimental.chat.messages.transform` receives (Kilo filters the request's tools by that field after the hook; the objects are re-read from its database every step, so nothing persists). The tool runs `initProject`, starts the daemon, opens the caller's session and builds the managed hooks; from the next request (same turn) every hook delegates to them and the visibility flips. Outside git: no hooks |
+| Untracked git repo | near-zero cost: in-memory nudge plus one visible tool, `hafiz_block_create`, whose first call tracks the repo; only the primary agent under the manager role may make it (a subagent's is refused). Kilo reads agents, permissions and the tool list once at startup, so the plugin installs the role agents and permissions and registers every Hafiz tool up front, and on each request hides all but `hafiz_block_create` by setting `tools[name] = false` on the user message objects `experimental.chat.messages.transform` receives (Kilo filters the request's tools by that field after the hook; the objects are re-read from its database every step, so nothing persists). The first call runs `initProject` (named after the repo directory; onboarding heuristic), builds the managed hooks, opens the caller's session (the daemon starts), writes a `changed` progress entry on the root, and then creates the block under the root as the caller; from the next request (same turn) every hook delegates to the managed hooks and every Hafiz tool shows. `hafiz init` stays the CLI's way in. Outside git: no hooks |
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |

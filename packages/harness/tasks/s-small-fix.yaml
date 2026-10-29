@@ -14,7 +14,7 @@ turns:
       always shown with two digits). Fix it and make sure the tests pass.
 expect:
   hafiz_writes: "<=2" # the rules ask the manager for one `changed` entry
-  tracked: "==0" # the manager may peek at Hafiz or call hafiz_track_project; no project may be created
+  tracked: "==0" # the manager may peek at Hafiz; it creates no block, so no project may be created
   blocks_created: "==0"
   files_written: ">=1"
   tool_calls: ">=2"

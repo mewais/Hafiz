@@ -30,12 +30,13 @@ plugin on its next start.
 
 ## Start a project
 
-Nothing to do. In a git repo Hafiz does not track yet, Kilo's primary agents get one extra tool,
-`hafiz_track_project`, and nothing else from Hafiz (no daemon, no view, a one-line nudge at
-most). When a task turns multi-step or will spawn subagents, the agent calls it on its own (never
-for one-off questions or small edits) and tells you in one line: "Tracking this repo with Hafiz
-as `<name>`". The same Kilo session continues managed from its next step: the project view, the
-manager's rules and the Hafiz tools, no restart. The TUI panel is always there: it
+Nothing to do. In a git repo Hafiz does not track yet, Kilo's primary agents see one Hafiz tool,
+`hafiz_block_create`, and nothing else from Hafiz (no daemon, no view, a one-line nudge at
+most). When a task turns multi-step or will spawn subagents, the agent creates its first block on
+its own (never for one-off questions or small edits): that call tracks the repo (a project named
+after the repo directory, exactly what `hafiz init` creates) and then creates the block under the
+root. The same Kilo session continues managed from its next step: the project view, the
+manager's rules and all its Hafiz tools, no restart. The TUI panel is always there: it
 reads `Hafiz · untracked` until that call completes, then shows the tree at once (driven by Kilo's
 events, no polling; tracking started outside Kilo, e.g. `hafiz init` in a terminal, shows at the
 next TUI start). Only what Kilo reads once at startup waits for its next start: shaping runs
@@ -44,9 +45,9 @@ was, a condenser routed through Kilo is available only if the user-level config 
 with `host.kilo.tools: mcp` the Hafiz tools wait too.
 
 If the repo already has code (commits and at least `onboarding.min_source_files` tracked source
-files, default 5), the project starts with onboarding pending: the manager first has the designer
-describe the codebase as it is in the root design, importing what current work touches and
-stubbing what it only calls. An empty repo starts fresh and the manager designs with you.
+files, default 5), the project starts with onboarding pending: the first designer spawned, on
+whatever block, first describes the codebase as it is in the root design, importing what current
+work touches and stubbing what it only calls, then designs its block. An empty repo starts fresh and the manager designs with you.
 
 To start one by hand:
 
@@ -68,7 +69,7 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 
 - The plugin adds four agents: **manager**, **designer**, **planner**, **worker**. Plain Kilo
   agents (`build`, `plan`, ...) act as the manager by default (`host.kilo.default_role`), so you
-  can just start talking; the agent starts tracking on its own once the work is multi-step.
+  can just start talking; the agent starts tracking (its first block) once the work is multi-step.
 - The manager delegates one block per subagent: Kilo's `task` tool takes a required `block`
   (a block id, or `none` for a helper outside Hafiz). Hafiz refuses a spawn that does not fit the
   block (a worker before there is a plan, anyone on a done block) or that copies the block into
@@ -89,14 +90,14 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 
 ## Agent tools
 
-Agents reach Hafiz through ten tools; each role sees only its own, narrowed to what it may do
+Agents reach Hafiz through nine tools; each role sees only its own, narrowed to what it may do
 (`config/default/roles.yaml`). Their descriptions carry the mechanics; the rules in
 `config/default/rules/` say when to use them.
 
 | Tool | Does | Roles |
 |---|---|---|
 | `hafiz_block_read` | read a block at a zoom; no id: the tree; `explain`: why it shows as it does | all |
-| `hafiz_block_create` | create a block, optionally with its design and plan | manager, designer, planner |
+| `hafiz_block_create` | create a block (under the root by default), optionally with its design and plan; in an untracked repo the first one tracks it | manager, designer, planner |
 | `hafiz_block_edit` | rename, change kind or order, move | manager |
 | `hafiz_block_set_status` | planned → active → done, blocked, dropped; a worker's `done` is a request the policy closes or queues | manager, worker (done only) |
 | `hafiz_doc` | patch a design or plan (`replace` for a whole rewrite); an existing doc needs `expected_version` | manager (plan), designer (design), planner (plan) |
@@ -104,7 +105,6 @@ Agents reach Hafiz through ten tools; each role sees only its own, narrowed to w
 | `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
 | `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
 | `hafiz_review` | list, accept or reject (with a note) proposals in the review queue; design and plan reviews only under `approver: manager` | manager |
-| `hafiz_track_project` | start tracking an untracked repo | primary agents, untracked repos only |
 
 Dependencies between blocks are not a tool: a design's `interface.consumes` entries name their
 providing block, and every design write keeps the block's `depends_on` edges in step with them.

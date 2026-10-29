@@ -231,9 +231,9 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     name: 'hafiz_block_create',
     commands: ['block.create'],
     description: (cfg) =>
-      `New planned block under parent; kind (default ${cfg.kinds.default_kind}) picks its doc sections. design, plan: {section: value} as in hafiz_doc; ${sectionsHint(cfg, ['design', 'plan'], { caps: 'required' })}.`,
+      `New planned block under parent (default root); kind (default ${cfg.kinds.default_kind}) picks its sections. design, plan: {section: value}; ${sectionsHint(cfg, ['design', 'plan'], { caps: 'required' })}.`,
     shape: () => ({
-      parent: z.string(),
+      parent: z.string().optional(),
       title: z.string(),
       kind: z.string().optional(),
       design: sectionsArg().optional(),

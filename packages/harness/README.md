@@ -7,8 +7,9 @@ expected-vs-actual scores come out of the Hafiz store. Private, not published.
 Per task and repeat: temp workdir with the toy shop repo, then one `kilo run --agent … -m
 provider/model` per user turn (turns 2+ continue the same Kilo session). The harness does not
 stand in for the plugin or the manager. By default the repo is **untracked**: nothing Hafiz exists
-before Kilo starts, and the manager calls `hafiz_track_project` when work turns multi-step (the
-brownfield repo is then `onboarding: pending`, exactly as after `hafiz init`). A task with
+before Kilo starts, and the manager's first `hafiz_block_create` tracks the repo when work turns
+multi-step (the brownfield repo is then onboarding, exactly as after `hafiz init` and a first
+block). A task with
 `setup.tracked: true` (S, L) starts as a tracked project: the real `hafiz init`, and for a seed a
 short-lived daemon that creates the tree and is closed before Kilo starts. In both cases the
 Kilo plugin finds or starts the project daemon itself (project pointer, socket under

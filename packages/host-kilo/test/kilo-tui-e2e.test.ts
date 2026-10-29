@@ -263,8 +263,10 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     spawnSync('tmux', ['kill-session', '-t', 'hafiz'], { env })
   }, 150000)
 
-  it('an untracked repo shows "untracked", then the tracked tree right after hafiz_track_project, no restart', async () => {
-    const fresh = tmp('hafiz-tui-untracked-')
+  it('an untracked repo shows "untracked", then the tracked tree right after the first hafiz_block_create, no restart', async () => {
+    // the project is named after the repo's directory
+    const fresh = join(tmp('hafiz-tui-untracked-'), 'Fresh')
+    mkdirSync(fresh)
     execFileSync('git', ['init', '-q'], { cwd: fresh })
     const marker = 'track this multi-step build'
     const results = (r: RecordedRequest) =>
@@ -278,11 +280,11 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
       if (results(req) === 0)
         return {
           toolCalls: [
-            { name: 'hafiz_track_project', arguments: { name: 'Fresh', reason: 'Multi-step.' } },
+            { name: 'hafiz_block_create', arguments: { title: 'Build', kind: 'feature' } },
           ],
           delayMs: 6000,
         }
-      return { text: 'Tracking this repo with Hafiz as `Fresh`.', delayMs: 20000 }
+      return { text: 'Tracking this repo with Hafiz: created Build.', delayMs: 20000 }
     }
     const t = tui(['--agent', 'build', '--prompt', marker], fresh)
     try {
@@ -300,7 +302,7 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
       expect(f2).toMatch(/◆ Fresh/)
       expect(f2).not.toContain('Hafiz · untracked')
       // the model's follow-up is still held back: the switch came from the tool event
-      expect(f2).not.toContain('Tracking this repo with Hafiz as')
+      expect(f2).not.toContain('Tracking this repo with Hafiz:')
     } finally {
       spawnSync('tmux', ['kill-session', '-t', 'hafiz'], { env })
       try {

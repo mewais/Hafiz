@@ -79,7 +79,7 @@ export const taskSchema = z.object({
       /**
        * Run `hafiz init` (and the seed) before Kilo starts: the repo is already a tracked project.
        * Default false: the repo is untracked and the manager starts tracking with
-       * `hafiz_track_project` when work turns multi-step, as a real user's agent would.
+       * its first `hafiz_block_create` when work turns multi-step, as a real user's agent would.
        */
       tracked: z.boolean().default(false),
       /** Seed the formatMoney bug and its failing test (the S task's job); default false: green suite. */

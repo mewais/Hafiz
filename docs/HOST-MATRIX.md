@@ -236,7 +236,8 @@ against a mock LLM; corrections to the above in bold):**
   `user.tools[name] !== false`, where `user` is the turn's user message *object* that
   `experimental.chat.messages.transform` also receives (resolved before the hook, filtered after
   it, re-read from the database every step). The untracked plugin registers everything up front
-  and toggles visibility there, so the request right after `hafiz_track_project` already carries
+  and toggles visibility there, so the request right after the first `hafiz_block_create` (which
+  tracks the repo) already carries
   the manager's tools, rules and envelope.
 
 **TUI panel and `kilo` LLM provider (verified with the real TUI under tmux and `kilo run`,
@@ -268,7 +269,7 @@ dialog layer (0), so esc steps back a view; the route's layer sets `enabled: () 
 real-TUI test drives list → detail → reject prompt → esc → esc → `a` and sees the list redraw
 empty. The panel is registered at every TUI start whatever the tracking state
 (`Hafiz · off (not a git repo)`, `Hafiz · untracked`, `connecting…`, or the tree) and has no timer:
-a completed `hafiz_track_project` tool part (`message.part.updated`, `part.type: tool`,
+a completed `hafiz_block_create` tool part (`message.part.updated`, `part.type: tool`,
 `state.status: completed`) resolves the pointer once and switches it to tracked, and
 `message.part.updated` (Hafiz tool completed), `message.updated`, `session.idle|status|created`
 refresh it. Tracking started outside Kilo shows at the next TUI start; changes made outside Kilo

@@ -11,8 +11,8 @@ const config = loadConfig()
 const agentRoles = agentRoleNames(config)
 const mentioned = (text: string) => [...new Set(text.match(/\bhafiz_[a-z_]+\b/g) ?? [])]
 const own = (role: string) => (config.rules[config.roles.roles[role]?.rules as string] ?? '').trim()
-/** Host tools outside the catalogue a role's rules may name (Kilo's track tool, primaries only). */
-const HOST_TOOLS: Record<string, string[]> = { manager: ['hafiz_track_project'] }
+/** Host tools outside the catalogue a role's rules may name (none: tracking is the first block). */
+const HOST_TOOLS: Record<string, string[]> = {}
 
 describe('rules files', () => {
   it.each(agentRoles)('%s rules mention only tools the role has (on Kilo)', (role) => {

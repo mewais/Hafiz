@@ -141,7 +141,8 @@ describe('tasks', () => {
     })
     for (const t of loadTasks(undefined, ['m-feature', 'm-feature-gated'])) {
       expect(t.expect.tracked).toBe('==1')
-      expect(t.mock[0]?.roles.manager?.[0]?.calls?.[0]?.tool).toBe('hafiz_track_project')
+      // the first block create tracks the repo
+      expect(t.mock[0]?.roles.manager?.[0]?.calls?.[0]?.tool).toBe('hafiz_block_create')
     }
   })
 

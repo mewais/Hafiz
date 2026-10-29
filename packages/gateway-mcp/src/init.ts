@@ -1,5 +1,6 @@
 // Start tracking a repo: create a store and write the pointer into git's common dir. Shared by
-// `hafiz init` and the Kilo plugin's `hafiz_track_project` tool, so both do exactly the same.
+// `hafiz init` and the Kilo plugin's first `hafiz_block_create` in an untracked repo, so both do
+// exactly the same.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'

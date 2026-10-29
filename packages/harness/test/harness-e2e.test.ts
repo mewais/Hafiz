@@ -53,7 +53,7 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     if (!r.passed) console.error(JSON.stringify(r.expectations.filter((e) => !e.pass)), r.error)
     expect(r.passed).toBe(true)
     expect(r.metrics.total).toMatchObject({
-      tracked: 1, // the scripted manager called hafiz_track_project; the harness never ran init
+      tracked: 1, // the scripted manager's first block create tracked it; the harness never ran init
       blocks_created: 5,
       decisions: 1,
       done_requests: 4,
@@ -91,19 +91,20 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
     expect(r.passed).toBe(true)
     expect(r.turns).toHaveLength(3)
     expect(r.metrics.total).toMatchObject({
-      sessions: 7,
+      sessions: 6, // manager, one designer (it onboards too), a planner, three workers
       decisions_standing: 1,
       threads_opened: 1,
       threads_parked: 1,
       threads_open_at_end: 0,
       done_requests: 3,
     })
-    expect(r.metrics.roles.designer).toMatchObject({ docs_written: 2 })
+    // the one designer writes the root design (onboarding) and refines Checkout
+    expect(r.metrics.roles.designer).toMatchObject({ sessions: 1, docs_written: 2 })
     expect(r.metrics.roles.planner).toMatchObject({ docs_written: 2 })
     // the workers were spawned on planned blocks and nobody activated them by hand
     expect(r.metrics.roles.manager?.hafiz_writes).toBe(3) // decision, thread open, thread park
     // each subagent's transcript is saved
-    expect(r.transcripts).toHaveLength(6)
+    expect(r.transcripts).toHaveLength(5)
     expect(existsSync(join(out, 'l-seeded-tree-1', r.transcripts[0] as string))).toBe(true)
   }, 300000)
 

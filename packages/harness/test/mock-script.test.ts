@@ -115,7 +115,7 @@ describe('the task set', () => {
 
   it('scripts each role with tools that role has', () => {
     const config = loadConfig()
-    const host = new Set(['task', 'write', 'edit', 'bash', 'read', 'hafiz_track_project'])
+    const host = new Set(['task', 'write', 'edit', 'bash', 'read'])
     for (const t of loadTasks())
       for (const turn of t.mock)
         for (const [role, steps] of Object.entries(turn.roles)) {

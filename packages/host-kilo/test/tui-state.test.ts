@@ -1,5 +1,5 @@
 // The panel's state machine driven by fake Kilo events: untracked -> tracked on a completed
-// hafiz_track_project part, daemon down -> connecting -> recovers on the next event. Fake timers
+// first hafiz_block_create part, daemon down -> connecting -> recovers on the next event. Fake timers
 // prove nothing is scheduled while idle (no polling, no intervals).
 import type { ResolvedProject } from '@hafiz/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -65,7 +65,7 @@ describe('TuiPanel', () => {
     located = { kind: 'off' }
     const { panel, spy } = open()
     expect(panel.kind).toBe('off')
-    panel.onEvent(toolPart('hafiz_track_project', 'completed'))
+    panel.onEvent(toolPart('hafiz_block_create', 'completed'))
     expect(panel.kind).toBe('off')
     located = { kind: 'untracked' }
     const p2 = open().panel
@@ -73,8 +73,8 @@ describe('TuiPanel', () => {
     for (const e of [
       { type: 'session.idle' },
       toolPart('bash', 'completed'),
-      toolPart('hafiz_track_project', 'running'),
-      toolPart('hafiz_track_project', 'error'),
+      toolPart('hafiz_block_create', 'running'),
+      toolPart('hafiz_block_create', 'error'),
     ])
       p2.onEvent(e)
     expect(p2.kind).toBe('untracked')
@@ -92,7 +92,7 @@ describe('TuiPanel', () => {
     let changes = 0
     panel.subscribe(() => changes++)
     located = { kind: 'tracked', project }
-    panel.onEvent(toolPart('hafiz_track_project', 'completed'))
+    panel.onEvent(toolPart('hafiz_block_create', 'completed'))
     expect(panel.kind).toBe('connecting') // tracked, first read in flight
     await vi.advanceTimersByTimeAsync(0)
     expect(panel.kind).toBe('tracked')
@@ -145,10 +145,10 @@ describe('TuiPanel', () => {
 
     located = { kind: 'untracked' }
     const p2 = open().panel
-    p2.onEvent(toolPart('hafiz_track_project', 'completed')) // still no pointer (e.g. refused)
+    p2.onEvent(toolPart('hafiz_block_create', 'completed')) // still no pointer (e.g. refused)
     expect(p2.kind).toBe('untracked')
     located = { kind: 'tracked', project }
-    p2.onEvent(toolPart('hafiz_track_project', 'completed'))
+    p2.onEvent(toolPart('hafiz_block_create', 'completed'))
     expect(p2.store).toBeDefined()
     p2.dispose()
   })
