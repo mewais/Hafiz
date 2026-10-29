@@ -70,10 +70,12 @@ async function seeded(taskId: string) {
   return { core, b, m, open, view, spawn, task }
 }
 
+const MGR = 'Onboarding is due: the next designer you spawn writes the root design first.'
+const DES = 'Onboarding: this repo had code before Hafiz tracked it. Write the root design first'
 const line = (text: string, id: string) => text.split('\n').find((l) => l.includes(`[${id}]`))
 
 describe('dry run: L, turn 1 (seeded tree, queue reviews)', () => {
-  it('walks onboarding, the Checkout refinement, the planner and three workers', async () => {
+  it('walks the Checkout refinement (which onboards), the planner and three workers', async () => {
     const { core, b, m, open, view, spawn } = await seeded('l-seeded-tree')
     const totals = b.totals as string
     const pricing = b.pricing as string
@@ -81,7 +83,7 @@ describe('dry run: L, turn 1 (seeded tree, queue reviews)', () => {
 
     // the manager: onboarding is due (the seed is tracked work), and each block says what it needs
     let mv = await view(m)
-    expect(mv).toContain('Onboarding pending')
+    expect(mv).toContain(MGR)
     expect(line(mv, pricing)).toMatch(/planned · needs plan/)
     expect(line(mv, orders)).toMatch(/planned · needs plan/)
     expect(line(mv, totals)).toMatch(/planned$/) // designed and planned: a worker may start
@@ -95,23 +97,27 @@ describe('dry run: L, turn 1 (seeded tree, queue reviews)', () => {
     expect(await spawn('planner', pricing)).toBe('ok')
     expect(await spawn('worker', totals)).toBe('ok')
 
-    // onboarding designer on the root: describes the code, which clears the directive
-    const d0 = await open('d0', 'designer', b.root)
-    await core.dispatch(d0, 'doc.write', {
+    // the Checkout designer is the first one spawned: it onboards (root design first), then
+    // refines its block; it sees the leaves' designs (planned descendants at DESIGN)
+    const d1 = await open('d1', 'designer', b.checkout)
+    const dv = await view(d1)
+    expect(dv.split('\n')[1]).toContain(DES)
+    expect(dv).toContain('priceCart(cart: Cart, rules?: PriceRule[]): PricedCart')
+    expect(dv).toContain('Orders.placeOrder(cart: Cart): PricedOrder')
+    await core.dispatch(d1, 'doc.write', {
       block: b.root,
       type: 'design',
       sections: { overview: 'A shop library.', topology: ['cart -> money'] },
     })
-    await core.sessionEnd('d0')
-    mv = await view(m)
-    expect(mv).not.toContain('Onboarding pending')
-
-    // the Checkout designer sees the leaves' designs (planned descendants at DESIGN)
-    const d1 = await open('d1', 'designer', b.checkout)
-    const dv = await view(d1)
-    expect(dv).toContain('priceCart(cart: Cart, rules?: PriceRule[]): PricedCart')
-    expect(dv).toContain('Orders.placeOrder(cart: Cart): PricedOrder')
+    expect(await view(d1)).not.toContain(DES)
+    await core.dispatch(d1, 'doc.patch', {
+      block: b.checkout,
+      type: 'design',
+      sections: { constraints: ['Money is integer cents.'] },
+    })
     await core.sessionEnd('d1')
+    mv = await view(m)
+    expect(mv).not.toContain(MGR)
 
     // the planner on Pricing sees the design it plans and the interfaces it plans against
     const p = await open('p', 'planner', pricing)
@@ -179,7 +185,7 @@ describe('dry run: M gated, turn 1 (untracked brownfield, design gate)', () => {
     })
     await core.sessionOpen({ id: 'm', host: 'kilo', role: 'manager' })
     // nothing is asked before tracked work starts
-    expect((await core.contextFor(mgr)).text).not.toContain('Onboarding pending')
+    expect((await core.contextFor(mgr)).text).not.toContain(MGR)
     const feat = (
       await core.dispatch(mgr, 'block.create', {
         parent: result.root.id,
@@ -188,11 +194,19 @@ describe('dry run: M gated, turn 1 (untracked brownfield, design gate)', () => {
       })
     ).result as { id: string }
     let mv = (await core.contextFor(mgr)).text
-    expect(mv).toContain('Onboarding pending')
+    expect(mv).toContain(MGR)
     expect(line(mv, feat.id)).toMatch(/planned · needs design · feature/)
-    // the designer writes the feature design and a child: both wait for the user
+    // one designer, on the feature: the root design first (onboarding), then the feature design
+    // and a child; all wait for the user
     await core.sessionOpen({ id: 'd', host: 'kilo', role: 'designer', spawnedBlock: feat.id })
     const d: Actor = { sessionId: 'd', role: 'designer' }
+    expect((await core.contextFor(d)).text).toContain(DES)
+    await core.dispatch(d, 'doc.write', {
+      block: result.root.id,
+      type: 'design',
+      sections: { overview: 'A shop library.', topology: ['cart -> money'] },
+    })
+    expect((await core.contextFor(mgr)).text).not.toContain(MGR)
     const design = { purpose: 'p', scope: ['in: x'], interface: { provides: [], consumes: [] } }
     await core.dispatch(d, 'doc.write', { block: feat.id, type: 'design', sections: design })
     await core.dispatch(d, 'block.create', { parent: feat.id, title: 'Catalogue', design })
@@ -200,6 +214,11 @@ describe('dry run: M gated, turn 1 (untracked brownfield, design gate)', () => {
     mv = (await core.contextFor(mgr)).text
     show('manager, design gate', mv)
     expect(line(mv, feat.id)).toMatch(/review design/)
+    // filed on write: the root, the feature and its child, one review each
+    const reviews = (await core.reviewList({ sessionId: 'u', role: 'user' })).filter(
+      (x) => x.source === 'review',
+    )
+    expect(reviews.map((x) => x.kind)).toEqual(['design', 'design', 'design'])
     // the design reviews belong to the user: the manager's list does not show them as its job
     expect(
       (await core.reviewList(mgr, 'pending', true)).filter((x) => x.source === 'review'),

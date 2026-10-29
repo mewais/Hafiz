@@ -1,4 +1,5 @@
-// Brownfield onboarding: the project flag, the manager-only directive and its automatic end.
+// Brownfield onboarding: the project flag, the manager's and the designer's directives and its
+// automatic end.
 import { describe, expect, it } from 'vitest'
 import { Core } from '../commands/core.js'
 import { loadConfig } from '../config/load.js'
@@ -11,6 +12,8 @@ import { expectGolden, viewGolden } from './fixtures/golden.js'
 import { loadSnapshot } from './snapshot.js'
 
 const config = loadConfig()
+const MGR = 'Onboarding is due: the next designer you spawn writes the root design first.'
+const DES = 'Onboarding: this repo had code before Hafiz tracked it. Write the root design first'
 const mgr: Actor = { sessionId: 'm1', role: 'manager', agent: 'build' }
 const pln: Actor = { sessionId: 'p1', role: 'planner', agent: 'planner' }
 const des: Actor = { sessionId: 'd1', role: 'designer', agent: 'designer' }
@@ -23,10 +26,10 @@ async function project(onboarding: boolean) {
     id: 'prj_legacy',
     ...(onboarding ? { onboarding } : {}),
   })
-  const view = async (role: string) =>
+  const view = async (role: string, on = result.root.id) =>
     buildView(await loadSnapshot(core.backend.read), config, estimatorTokenizer, {
       role,
-      focus: { blocks: [result.root.id], computed: false },
+      focus: { blocks: [on], computed: false },
     })
   return { core, root: result.root, view }
 }
@@ -35,7 +38,7 @@ describe('brownfield onboarding', () => {
   it('pending until tracked work starts: no directive for a one-off fix', async () => {
     const { core, view } = await project(true)
     expect((await core.backend.read.getProject())?.onboarding).toBe('pending')
-    expect((await view('manager')).text).not.toContain('Onboarding pending')
+    expect((await view('manager')).text).not.toContain(MGR)
     // sessions without a spawn block, and a user-opened one, are not tracked work
     await core.sessionOpen({ id: 'm1', host: 'test', role: 'manager' })
     await core.sessionOpen({ id: 'u1', host: 'test', role: 'user', spawnedBlock: 'whatever' })
@@ -44,16 +47,18 @@ describe('brownfield onboarding', () => {
 
   it('block.create makes it due', async () => {
     const { core, root, view } = await project(true)
-    await core.blockCreate(mgr, { parent: root.id, title: 'Payments' })
+    const { result: pay } = await core.blockCreate(mgr, { parent: root.id, title: 'Payments' })
     expect((await core.backend.read.getProject())?.onboarding).toBe('due')
-    expect((await view('manager')).text).toContain('Onboarding pending')
+    expect((await view('manager')).text).toContain(MGR)
+    // a designer spawned on the feature block is the one that onboards: no spawn on the root
+    expect((await view('designer', pay.id)).text).toContain(DES)
   })
 
   it('a session opened on a block by a non-user role makes it due', async () => {
     const { core, root, view } = await project(true)
     await core.sessionOpen({ id: 'd1', host: 'test', role: 'designer', spawnedBlock: root.id })
     expect((await core.backend.read.getProject())?.onboarding).toBe('due')
-    expect((await view('manager')).text).toContain('Onboarding pending')
+    expect((await view('manager')).text).toContain(MGR)
   })
 
   it('a non-design doc write on the root makes it due', async () => {
@@ -66,7 +71,7 @@ describe('brownfield onboarding', () => {
     expect((await core.backend.read.getProject())?.onboarding).toBe('due')
   })
 
-  it('due: the manager view carries the directive, other roles do not', async () => {
+  it('due: the manager and the designer carry their directives, other roles none', async () => {
     const { core, root, view } = await project(true)
     await core.docWrite(pln, {
       block: root.id,
@@ -80,18 +85,23 @@ describe('brownfield onboarding', () => {
       .join('legacy')
       .replace(/hash="[0-9a-f]{12}"/, 'hash="<hash>"')
     expectGolden('onboarding-manager-pending.md', golden)
-    // one line pointing at the rules, which hold what to do
-    expect(v.text).toContain(
-      "Onboarding pending: this repo had code before Hafiz started tracking it; follow your rules' Onboarding",
-    )
-    for (const role of ['designer', 'worker', 'planner'])
-      expect((await view(role)).text).not.toContain('Onboarding pending')
+    // one line each: the manager spawns no separate designer, the next one writes the root first
+    expect(v.text).toContain(MGR)
+    expect(v.text).not.toContain(DES)
+    const d = (await view('designer')).text
+    expect(d.split('\n')[1]).toContain(DES) // the top of its view, whatever block it is on
+    expect(d).toContain('then your block.')
+    for (const role of ['worker', 'planner']) {
+      expect((await view(role)).text).not.toContain(MGR)
+      expect((await view(role)).text).not.toContain(DES)
+    }
   })
 
   it('the first root design completes it: flag cleared, progress entry (no decision), directive gone', async () => {
     const { core, root, view } = await project(true)
     await core.blockCreate(mgr, { parent: root.id, title: 'Payments' })
-    expect((await view('manager')).text).toContain('Onboarding pending')
+    expect((await view('manager')).text).toContain(MGR)
+    expect((await view('designer')).text).toContain(DES)
     await core.docWrite(des, {
       block: root.id,
       type: 'design',
@@ -106,7 +116,8 @@ describe('brownfield onboarding', () => {
       ['changed', expect.stringContaining('Onboarded existing codebase')],
     ])
     expect(progress[0]?.entry.by).toMatchObject({ role: 'designer' })
-    expect((await view('manager')).text).not.toContain('Onboarding pending')
+    expect((await view('manager')).text).not.toContain(MGR)
+    expect((await view('designer')).text).not.toContain(DES)
     // later root designs record nothing more
     await core.docPatch(des, {
       block: root.id,
@@ -120,7 +131,7 @@ describe('brownfield onboarding', () => {
   it('greenfield: no flag, no directive, nothing recorded on the first root design', async () => {
     const { core, root, view } = await project(false)
     expect((await core.backend.read.getProject())?.onboarding).toBeUndefined()
-    expect((await view('manager')).text).not.toContain('Onboarding pending')
+    expect((await view('manager')).text).not.toContain(MGR)
     await core.docWrite(des, {
       block: root.id,
       type: 'design',

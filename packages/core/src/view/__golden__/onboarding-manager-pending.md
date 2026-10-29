@@ -1,5 +1,5 @@
 <hafiz hash="<hash>" role="manager">
-Onboarding pending: this repo had code before Hafiz started tracking it; follow your rules' Onboarding before new work.
+Onboarding is due: the next designer you spawn writes the root design first.
 
 # Legacy [legacy] active
 </hafiz>

@@ -214,16 +214,16 @@ describe('untracked git repo', () => {
     const p = await daemon().service.core.backend.read.getProject()
     expect(p?.onboarding).toBe('pending')
     // a one-off fix needs no designer: nothing is asked until tracked work starts
-    expect((await system(hooks, 'ses_b')).join('\n')).not.toContain('Onboarding pending')
+    expect((await system(hooks, 'ses_b')).join('\n')).not.toContain('Onboarding is due')
     const core = daemon().service.core
     await core.blockCreate(
       { sessionId: 'ses_b', role: 'manager' },
       { parent: p?.rootBlockId as string, title: 'Payments' },
     )
     const sys = (await system(hooks, 'ses_b')).join('\n')
-    expect(sys).toContain('Onboarding pending')
+    expect(sys).toContain('Onboarding is due')
     // the rules (injected: the agent's prompt predates tracking) say what onboarding means
-    expect(sys).toContain('first spawn the designer once on\nthe root block')
+    expect(sys).toContain('the next designer you spawn writes\nthe root design first')
   })
 })
 

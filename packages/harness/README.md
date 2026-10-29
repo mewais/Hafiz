@@ -29,9 +29,10 @@ reviews set to `gate`, run as designer, then planner, then workers across three 
 designs that match the code (`Cart`, `Orders`, `Inventory` and money exist; the three leaves are
 missing work: `Cart.lineTotals()`/`subtotalCents()`, `priceCart(cart): PricedCart` with no rules
 yet, `Orders.placeOrder` recording a priced order), `provides`/`consumes` from which the edges
-derive, and a plan for Cart totals only. The root has no design, so onboarding is pending: turn 1
-is satisfiable by exactly the onboarding designer, one designer refinement of Checkout, one
-planner for Pricing and Orders, and three workers. Seed nodes take `design:` and `plan:` as
+derive, and a plan for Cart totals only. The root has no design, so onboarding is pending, and
+the first designer spawned (on any block) writes the root design before its own: turn 1 is
+satisfiable by exactly one designer refinement of Checkout (which onboards), one planner for
+Pricing and Orders, and three workers. Seed nodes take `design:` and `plan:` as
 section maps, validated by Core like any write.
 
 ## Tiers and fail-fast
@@ -135,8 +136,8 @@ condensations. Expectations use `>=1`, `<=2`, `==3`, `1..3` against totals or `w
 role (a role with no session counts 0), and `a or b`. They assert that the pipeline happened and
 nothing pathological did, not one shape of it: a manager that runs a tester and a coder per block
 has twice the worker sessions, one that re-spawns the designer once has one more designer
-session. So sessions and done requests are lower bounds, designer sessions `<=4` (L and M gated
-`1..4`: onboarding is part of the job on the brownfield repo), threads and `cap_rejections <=2`
+session. So sessions and done requests are lower bounds, designer sessions `<=3` (L and M gated
+`1..3`: onboarding rides on the first designer spawn on the brownfield repo), threads and `cap_rejections <=2`
 upper bounds, and `spawns_rejected ==0`. S stays strict: it is about not over-tracking
 (`hafiz_writes <=2`, the rules ask for one `changed` entry; no project, no block). M's prompt
 states a decision ("Discounts apply before tax, always.") so `manager_decisions >=1`.

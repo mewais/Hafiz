@@ -15,7 +15,7 @@ expect:
   tracked: "==1" # the manager started tracking itself (hafiz_track_project)
   blocks_created: ">=5" # the feature and its four parts
   manager_decisions: ">=1" # "Discounts apply before tax, always."
-  designer_sessions: "<=4" # none needed; onboarding and a re-spawn are legitimate
+  designer_sessions: "<=3" # none needed; one that onboards first and a re-spawn are legitimate
   worker_sessions: ">=4" # one per part; a tester and a coder per part is legitimate too
   worker_done_requests: ">=4"
   worker_progress_min: ">=1"

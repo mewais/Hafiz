@@ -356,12 +356,21 @@ export function buildView(
 
 // ───────────────────────────── explain ─────────────────────────────
 
-/** `hafiz.yaml onboarding.directive` once tracked work has started on a brownfield project (`onboarding: due`). */
+/**
+ * `hafiz.yaml onboarding.directive` for `role` once tracked work has started on a brownfield
+ * project (`onboarding: due`): the role's own line, or the one line for `onboarding.roles`.
+ */
 export function onboardingDirective(snap: Snapshot, config: Config, role: string): string {
   const o = config.hafiz.onboarding
   const p = snap.project
-  if (p?.onboarding !== 'due' || !o.directive || !o.roles.includes(role)) return ''
-  return o.directive.trim().replace(/\{root\}/g, p.rootBlockId)
+  if (p?.onboarding !== 'due') return ''
+  const line =
+    typeof o.directive === 'string'
+      ? o.roles.includes(role)
+        ? o.directive
+        : ''
+      : (o.directive[role] ?? '')
+  return line.trim().replace(/\{root\}/g, p.rootBlockId)
 }
 
 function fmtAttrs(a: Attrs): string {

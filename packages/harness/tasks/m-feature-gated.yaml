@@ -27,7 +27,7 @@ expect_after:
 expect:
   tracked: "==1" # the manager started tracking itself (hafiz_track_project)
   blocks_created: ">=3" # the feature and its two parts
-  designer_sessions: "1..4" # the onboarding designer (brownfield repo), the feature, a re-spawn
+  designer_sessions: "1..3" # the feature's (which onboards the brownfield repo first), re-spawns
   planner_sessions: ">=1"
   worker_sessions: ">=2" # one per part; a tester and a coder per part is legitimate too
   worker_done_requests: ">=2"
@@ -35,7 +35,8 @@ expect:
   cap_rejections: "<=2"
   spawns_rejected: "==0"
 mock:
-  # onboarding, then the feature designed with its two parts (turn 1), planned (turn 2), built (turn 3)
+  # the feature designed with its two parts after the root (onboarding; turn 1), planned (turn 2),
+  # built (turn 3)
   - turn: 1
     roles:
       manager:
@@ -49,29 +50,21 @@ mock:
         - calls:
             - tool: task
               args:
-                description: Onboarding
-                subagent_type: designer
-                block: "{b.root}"
-                prompt: "[[turn:{turn}]] Onboarding: describe the existing code in the root design."
-        - calls:
-            - tool: task
-              args:
                 description: Design coupon codes
                 subagent_type: designer
                 block: "{b.feat}"
                 prompt: "[[turn:{turn}]] Design coupon codes in two parts (block {b.feat})."
         - text: The design is written and awaits your review.
-      designer:root:
+      # onboarding is due: the root design first, then the feature
+      designer:
         - calls:
             - tool: hafiz_doc
               args:
-                block: "{block}"
+                block: "{b.root}"
                 type: design
                 sections:
                   overview: A small TypeScript shop library (cart, orders, inventory, money) with node:test tests.
                   topology: ["src/cart.ts Cart -> src/money.ts addMoney", "src/orders.ts Orders.place -> Inventory.take"]
-        - text: Root design written from the existing code.
-      designer:
         - calls:
             - tool: hafiz_doc
               args:
@@ -94,7 +87,7 @@ mock:
                 <<: *child
                 title: Apply coupon in cart total
                 design: { purpose: "The cart total less the coupon's percentage.", scope: ["in: src/cart.ts"], interface: { provides: [{ name: "Cart.totalCents(coupon?)", type: method }], consumes: [{ name: couponPercent, block: Coupon catalogue }] } }
-        - text: Design written, with a child block per part.
+        - text: Root design written from the existing code; feature designed, with a child block per part.
   - turn: 2
     roles:
       manager:

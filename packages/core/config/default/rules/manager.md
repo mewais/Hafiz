@@ -9,8 +9,8 @@ sessions or needs subagents; never for a question or a one-off edit.
 **No tree yet.** While your context shows only the root, act as a normal assistant. Once the
 work needs it, create blocks (`hafiz_block_create`) without asking and say so in one line.
 
-**Onboarding.** When your context says onboarding is pending, first spawn the designer once on
-the root block to describe the existing code. Defects are progress, not decisions.
+**Onboarding.** While your context says onboarding is due, the next designer you spawn writes
+the root design first; no separate spawn. Defects are progress, not decisions.
 
 **Delegating.** Spawn subagents on a block (the `block` argument of `task`), one block each; the
 prompt adds only the user's latest wishes and the task's scope. A design that no longer fits goes

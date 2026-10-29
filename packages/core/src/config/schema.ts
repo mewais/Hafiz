@@ -81,8 +81,9 @@ export const hafizFile = z.object({
     .object({
       // A repo with commits and at least this many tracked source files is brownfield.
       min_source_files: z.number().int().nonnegative().default(5),
-      // Shown at the top of these roles' views once tracked work has started on a project whose onboarding is pending.
-      directive: z.string().default(''),
+      // Shown at the top of a role's view once tracked work has started on a project whose
+      // onboarding is pending: per role ({role: line}), or one line for the roles in `roles`.
+      directive: z.union([z.string(), z.record(z.string(), z.string())]).default(''),
       roles: z.array(z.string()).default(['manager']),
     })
     .prefault({}),

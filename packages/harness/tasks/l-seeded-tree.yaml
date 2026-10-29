@@ -1,9 +1,9 @@
 # L: a seeded multi-level tree on the brownfield toy repo. The tree is what a designer and a
 # planner would have left: real designs that match the code (Cart, Orders and money exist; the
 # three leaves are missing work), a plan for Cart totals only. The root has no design yet, so the
-# project is `onboarding: pending` and the manager has the designer describe the code once.
-# Turn 1 is then satisfiable by exactly: the onboarding designer, one designer refinement of
-# Checkout, one planner for Pricing and Orders, and three workers. Later the user opens a side
+# project is `onboarding: pending` and the first designer spawned describes the code in the root
+# design before its own block. Turn 1 is then satisfiable by exactly: one designer refining
+# Checkout (which onboards), one planner for Pricing and Orders, and three workers. Later the user opens a side
 # discussion that should become a standing decision and one that should be parked as a thread.
 id: l-seeded-tree
 size: L
@@ -131,9 +131,9 @@ turns:
 expect_after:
   1: { worker_sessions: ">=3" }
 expect:
-  # the onboarding designer (the root has no design), the Checkout refinement, and room for one
-  # re-spawn each; a tester and a coder per leaf is legitimate, so sessions are lower bounds
-  designer_sessions: "1..4"
+  # the Checkout refinement (which writes the root design first: onboarding), and room for
+  # re-spawns; a tester and a coder per leaf is legitimate, so sessions are lower bounds
+  designer_sessions: "1..3"
   planner_sessions: ">=1"
   worker_sessions: ">=3"
   planner_docs_written: ">=2"
@@ -148,13 +148,6 @@ mock:
   - turn: 1
     roles:
       manager:
-        - calls:
-            - tool: task
-              args:
-                description: Onboarding
-                subagent_type: designer
-                block: "{b.root}"
-                prompt: "[[turn:{turn}]] Onboarding: describe the existing code in the root design."
         - calls:
             - tool: task
               args:
@@ -181,19 +174,17 @@ mock:
               args: { <<: *spawn, description: Pricing, block: "{b.pricing}", prompt: "[[turn:{turn}]] Implement pricing in src/." }
             - tool: task
               args: { <<: *spawn, description: Orders, block: "{b.orders}", prompt: "[[turn:{turn}]] Implement orders in src/." }
-        - text: Onboarded, design refined, plans written, and the three leaf blocks implemented.
-      # the onboarding designer, on the root (`role:<var>`: a session spawned on that block)
-      designer:root:
+        - text: Onboarded with the design refinement, plans written, and the three leaf blocks implemented.
+      # the first designer spawned onboards: the root design first, then its own block
+      designer:
         - calls:
             - tool: hafiz_doc
               args:
-                block: "{block}"
+                block: "{b.root}"
                 type: design
                 sections:
                   overview: A small TypeScript shop library (cart, orders, inventory, money) with node:test tests.
                   topology: ["src/cart.ts Cart -> src/money.ts addMoney", "src/orders.ts Orders.place -> Inventory.take, Cart.totalCents"]
-        - text: Root design written from the existing code.
-      designer:
         - calls:
             - tool: hafiz_doc
               args:
@@ -201,7 +192,7 @@ mock:
                 type: design
                 expected_version: 1
                 sections: { constraints: ["Money is integer cents.", "No card data is stored."] }
-        - text: Checkout design updated.
+        - text: Root design written from the existing code; Checkout design updated.
       planner:
         - calls:
             - tool: hafiz_doc

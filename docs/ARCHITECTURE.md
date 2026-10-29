@@ -612,10 +612,12 @@ interface LLMProvider { complete(prompt, {model: 'cheap'|'default', maxTokens}) 
   tracked source files starts with `Project.onboarding: pending`, which asks nothing yet (a
   one-off fix spawns no designer). The first tracked work (`block.create`, a session opened on a
   block by a non-user role, or a non-design doc write on the root) sets it to `due` in the same
-  transaction. While `due`, the roles in `onboarding.roles` (manager) get `onboarding.directive`
-  at the top of their view (spawn the
-  designer once on the root to describe the codebase as it is), and the first root design write
-  clears the flag and writes a `changed` progress entry "Onboarded existing codebase" (Hafiz never records decisions).
+  transaction. While `due`, each role named in `onboarding.directive` gets its line at the top of
+  its view: the manager "the next designer you spawn writes the root design first" (no separate
+  spawn), and a designer spawned on *any* block "write the root design first (describe the code
+  as it is), then your block". The spawn table still admits a designer on the root. The first
+  root design write clears the flag and writes a `changed` progress entry "Onboarded existing
+  codebase" (Hafiz never records decisions).
 
 `storage-sqlite` implements the same interface and passes the same conformance suite: one SQLite
 file (`<store>/hafiz.sqlite`, `node:sqlite`), rows per entity, append-only `logs`/`audit` tables, and a
