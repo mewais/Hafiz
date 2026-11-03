@@ -143,8 +143,9 @@ Guards are config (`policies.status`), composed from registered predicates. Defa
   awaits review: hafiz review --accept prop_…". The writer named is the role the spawn table
   first admits in that state. The user is held by the table like any role (a plan needs a
   design) but not by the gates it approves (`mayApprove`: its own writes count as accepted; so
-  for `approver: manager`). `block.create`'s inline plan is how a planner splits work (each new
-  child comes with its plan) and is not checked; schema migrations rewrite docs as they are.
+  for `approver: manager`). An inline plan on `block.create` is a plan write too: it needs the design
+  inline in the same call (unless the kind has no design), so a planner splits by creating bare
+  children and reporting that they need designs. Schema migrations rewrite docs as they are.
 
 ### 3.3 Epochs and re-emission
 
@@ -205,7 +206,7 @@ sections:
 | Command | Semantics |
 |---|---|
 | `project.init(name, root_design?)` | create project + root; write pointer; init git store |
-| `block.create(parent?, title, kind, design?, plan?)` | atomic (journaled); `parent` defaults to the root. Inline `design`/`plan` follow the `doc.write:<type>` grants of the caller's role (the tool omits the property without the grant) |
+| `block.create(parent?, title, kind, design?, plan?)` | atomic (journaled); `parent` defaults to the root. Inline `design`/`plan` follow the `doc.write:<type>` grants of the caller's role (the tool omits the property without the grant, and `plan` without the design's grant too); an inline plan needs the design in place (§3.2) |
 | `block.update / block.move` | CAS; epoch |
 | `block.set_status(id, status, {digest?, reason?, blocked_on?, confirmed?})` | guards; `done→active` allowed |
 | `block.request_done(id, digest)` | worker path; enqueues or auto-applies |

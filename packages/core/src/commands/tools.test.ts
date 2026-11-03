@@ -176,7 +176,7 @@ describe('hafiz_block_create inline docs follow the doc.write grants', () => {
   it.each([
     ['manager', ['parent', 'title', 'kind']],
     ['designer', ['parent', 'title', 'kind', 'design']],
-    ['planner', ['parent', 'title', 'kind', 'plan']],
+    ['planner', ['parent', 'title', 'kind']], // an inline plan needs the design inline too
     ['user', ['parent', 'title', 'kind', 'design', 'plan']],
   ])('%s sees %j', (role, expected) => {
     expect(props(tool(role, 'hafiz_block_create'))).toEqual(expected)

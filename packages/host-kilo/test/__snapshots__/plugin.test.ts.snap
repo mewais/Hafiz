@@ -92,7 +92,7 @@ exports[`plugin: config hook > installs agents, permissions, commands and compac
         },
         "task": "deny",
       },
-      "prompt": "<2751 chars>",
+      "prompt": "<2798 chars>",
     },
     "worker": {
       "description": "Hafiz worker: implements one planned block",

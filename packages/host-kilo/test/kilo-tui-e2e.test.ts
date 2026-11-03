@@ -86,8 +86,13 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     }
     await mk(root, 'Auth', 'active')
     const billing = await mk(root, 'Billing', 'active')
-    // planned on creation (a plan doc.write would need the design first, ARCHITECTURE §3.2)
+    // designed and planned on creation (a plan needs the design, ARCHITECTURE §3.2)
     payments = await mk(billing, 'Payments', 'active', {
+      design: {
+        purpose: 'Take card payments.',
+        scope: ['in: charges'],
+        interface: { provides: [] },
+      },
       plan: {
         steps: [
           { id: 's1', title: 'Model' },

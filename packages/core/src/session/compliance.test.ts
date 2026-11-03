@@ -15,11 +15,15 @@ async function setup() {
   config.policies.review.plan = 'off' // the planner's plan would be filed: only compliance here
   const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
   const { result: init } = await core.projectInit(pln, { name: 'Shop', originFingerprint: 'fp' })
-  const { result: block } = await core.blockCreate(pln, {
-    parent: init.root.id,
-    title: 'Payments',
-    plan: { steps: [{ id: 's1', title: 'go' }], acceptance: ['works'] },
-  })
+  const { result: block } = await core.blockCreate(
+    { sessionId: 'cli', role: 'user' },
+    {
+      parent: init.root.id,
+      title: 'Payments',
+      design: { purpose: 'pay', scope: ['in: charges'], interface: { provides: [] } },
+      plan: { steps: [{ id: 's1', title: 'go' }], acceptance: ['works'] },
+    },
+  )
   await core.blockSetStatus(
     { sessionId: 'm1', role: 'manager' },
     { id: block.id, status: 'active' },

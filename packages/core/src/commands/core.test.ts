@@ -7,6 +7,7 @@ import type { Actor, Block } from '../domain/types.js'
 import { MemoryBackend } from '../store/memory.js'
 import { Core } from './core.js'
 
+const user: Actor = { sessionId: 'cli', role: 'user' }
 const mgr: Actor = { sessionId: 'm1', role: 'manager', agent: 'manager' }
 const des: Actor = { sessionId: 'd1', role: 'designer', agent: 'designer' }
 const pln: Actor = { sessionId: 'p1', role: 'planner', agent: 'planner' }
@@ -53,13 +54,11 @@ describe('core scenario', () => {
     const p0 = await core.backend.read.getProject()
     expect(p0?.epoch).toBe(1)
 
-    // planner creates blocks; designer writes designs; worker may not create blocks
-    const billing = (await core.blockCreate(pln, { parent: root.id, title: 'Billing', plan }))
-      .result
-    const invoices = (await core.blockCreate(pln, { parent: billing.id, title: 'Invoices', plan }))
-      .result
-    const payments = (await core.blockCreate(pln, { parent: billing.id, title: 'Payments', plan }))
-      .result
+    // planner creates blocks; designer writes designs, then the planner plans; worker may not
+    // create blocks
+    const billing = (await core.blockCreate(pln, { parent: root.id, title: 'Billing' })).result
+    const invoices = (await core.blockCreate(pln, { parent: billing.id, title: 'Invoices' })).result
+    const payments = (await core.blockCreate(pln, { parent: billing.id, title: 'Payments' })).result
     await expect(core.blockCreate(w1, { parent: root.id, title: 'nope' })).rejects.toBeInstanceOf(
       ForbiddenError,
     )
@@ -78,6 +77,8 @@ describe('core scenario', () => {
     await expect(
       core.docWrite(w1, { block: payments.id, type: 'design', sections: design('x') }),
     ).rejects.toBeInstanceOf(ForbiddenError)
+    for (const b of [billing, invoices, payments])
+      await core.docWrite(pln, { block: b.id, type: 'plan', sections: plan })
     expect(await core.backend.read.listEdges()).toEqual([
       { from: payments.id, to: invoices.id, kind: 'depends_on' },
     ])
@@ -296,7 +297,9 @@ describe('activate on spawn (policies.yaml status.activate_on)', () => {
   async function tree() {
     const { core, root } = await setup()
     const feat = (await core.blockCreate(pln, { parent: root.id, title: 'Checkout' })).result
-    const leaf = (await core.blockCreate(pln, { parent: feat.id, title: 'Totals', plan })).result
+    const leaf = (
+      await core.blockCreate(user, { parent: feat.id, title: 'Totals', design: design('t'), plan })
+    ).result
     return { core, root, feat, leaf }
   }
   const status = async (core: Core, id: string) => (await core.backend.read.getBlock(id))?.status
@@ -325,7 +328,14 @@ describe('activate on spawn (policies.yaml status.activate_on)', () => {
     config.policies.status.activate_on.spawn = []
     const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
     const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
-    const leaf = (await core.blockCreate(pln, { parent: result.root.id, title: 'T', plan })).result
+    const leaf = (
+      await core.blockCreate(user, {
+        parent: result.root.id,
+        title: 'T',
+        design: design('t'),
+        plan,
+      })
+    ).result
     await core.sessionOpen({ id: 'w1', host: 't', role: 'worker', spawnedBlock: leaf.id })
     expect(await status(core, leaf.id)).toBe('planned')
     await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
@@ -337,7 +347,14 @@ describe('activate on spawn (policies.yaml status.activate_on)', () => {
     const config = loadConfig()
     const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
     const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
-    const leaf = (await core.blockCreate(pln, { parent: result.root.id, title: 'T', plan })).result
+    const leaf = (
+      await core.blockCreate(user, {
+        parent: result.root.id,
+        title: 'T',
+        design: design('t'),
+        plan,
+      })
+    ).result
     await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
       /A worker spawned on it activates it; or set it active first, then done/,
     )

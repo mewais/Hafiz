@@ -84,7 +84,18 @@ export async function blockCreate(
     await t.putBlock(block, -1)
     await onboardingDue(t)
     if (args.design) await writeDoc(ctx, t, by, block, 'design', args.design, 0, notices)
-    if (args.plan) await writeDoc(ctx, t, by, block, 'plan', args.plan, 0, notices)
+    // an inline plan is a plan write: it needs the design (inline above, or none in the kind)
+    if (args.plan) {
+      await requireDoc(
+        ctx,
+        t,
+        by,
+        block,
+        'design',
+        `cannot write the plan of ${block.title} [${block.id}]`,
+      )
+      await writeDoc(ctx, t, by, block, 'plan', args.plan, 0, notices)
+    }
     return block
   })
 }

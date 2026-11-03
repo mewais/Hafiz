@@ -107,7 +107,7 @@ Agents reach Hafiz through nine tools; each role sees only its own, narrowed to 
 | Tool | Does | Roles |
 |---|---|---|
 | `hafiz_block_read` | read a block at a zoom; no id: the tree; `explain`: why it shows as it does | all |
-| `hafiz_block_create` | create a block (under the root by default), with an inline design or plan for roles that may write that doc (designer, planner); in an untracked repo the manager's first one tracks it (any other role's is refused with the way in) | manager, designer, planner |
+| `hafiz_block_create` | create a block (under the root by default), with an inline design for the designer (a plan inline only with its design); in an untracked repo the manager's first one tracks it (any other role's is refused with the way in) | manager, designer, planner |
 | `hafiz_block_edit` | rename, change kind or order, move | manager |
 | `hafiz_block_set_status` | planned → active → done, blocked, dropped; a worker's `done` is a request the policy closes or queues | manager, worker (done only) |
 | `hafiz_doc` | patch a design or plan (`replace` for a whole rewrite); an existing doc needs `expected_version` | manager (plan), designer (design), planner (plan) |

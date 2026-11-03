@@ -27,10 +27,11 @@ async function as(d: DaemonHandle, id: string, role: string, spawnedBlock?: stri
 
 async function seed(u: DaemonClient) {
   const root = (await u.treeList())[0]?.id as string
-  // planned on creation (a doc.write of a plan would need the design first, §3.2)
+  // designed and planned on creation (a plan needs the design, §3.2)
   const { result } = await u.dispatch<{ id: string }>('block.create', {
     parent: root,
     title: 'Billing',
+    design: { purpose: 'p', scope: ['in: x'], interface: { provides: [] } },
     plan: {
       steps: [
         { id: 's1', title: 'Model' },
@@ -145,7 +146,11 @@ describe('review queue over the daemon (CLI and TUI)', () => {
     config.policies.review.design = 'gate'
     const d = await boot({ config })
     const u = await as(d, 'cli', 'user')
-    const { block } = await seed(u)
+    // a bare block: its designer writes the first design
+    const root = (await u.treeList())[0]?.id as string
+    const block = (
+      await u.dispatch<{ id: string }>('block.create', { parent: root, title: 'Billing' })
+    ).result.id
     const m = await as(d, 'mgr', 'manager')
     const v = await as(d, 'kilo-tui', 'viewer')
     let n = 0

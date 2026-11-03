@@ -137,6 +137,13 @@ const readableZooms = (cfg: Config) =>
 const STATUSES = ['planned', 'active', 'blocked', 'done', 'dropped'] as const
 const BLOCKED_ON = ['block', 'thread', 'user', 'external'] as const
 const INLINE_DOCS = ['design', 'plan'] as const
+
+/**
+ * The docs a role may pass inline on block.create: those it may write with doc.write, each with
+ * every doc before it (a new block's inline plan needs its design inline, §3.2).
+ */
+const inlineDocs = (t: { can(command: string, q?: string): boolean }) =>
+  INLINE_DOCS.filter((_, i) => INLINE_DOCS.slice(0, i + 1).every((x) => t.can('doc.write', x)))
 const DOC_TYPES = ['design', 'plan', 'digest'] as const
 const THREAD_ACTIONS = ['open', 'append', 'park', 'resume', 'resolve'] as const
 const REVIEW_ACTIONS = {
@@ -232,7 +239,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     name: 'hafiz_block_create',
     commands: ['block.create'],
     description: (cfg, t) => {
-      const inline = INLINE_DOCS.filter((d) => t.can('doc.write', d))
+      const inline = inlineDocs(t)
       return sentences(
         `New planned block under parent (default root); kind (default ${cfg.kinds.default_kind}) picks its sections.`,
         inline.length > 0 &&
@@ -243,10 +250,8 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       parent: z.string().optional(),
       title: z.string(),
       kind: z.string().optional(),
-      // inline docs only for roles holding doc.write:<type>
-      ...Object.fromEntries(
-        INLINE_DOCS.filter((d) => t.can('doc.write', d)).map((d) => [d, sectionsArg().optional()]),
-      ),
+      // inline docs only for roles holding doc.write:<type> (a plan also needs the design's)
+      ...Object.fromEntries(inlineDocs(t).map((d) => [d, sectionsArg().optional()])),
     }),
     route: (a) => ({
       command: 'block.create',

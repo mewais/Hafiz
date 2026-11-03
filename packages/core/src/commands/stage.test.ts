@@ -100,10 +100,17 @@ describe('a plan needs its design (doc.write / doc.patch)', () => {
     await core.docWrite(user, { block, type: 'plan', sections: plan })
   })
 
-  it('a planner’s split: a new child’s plan comes inline with its creation', async () => {
+  it('an inline plan on block.create is a plan write: it needs the design too', async () => {
     const { core, block } = await setup()
-    const child = await core.blockCreate(pln, { parent: block, title: 'Invoices', plan })
-    expect(child.result.docVersions.plan).toBe(1)
+    await expect(core.blockCreate(pln, { parent: block, title: 'Invoices', plan })).rejects.toThrow(
+      /cannot write the plan of Invoices \[invoices-\w+\]: Invoices has no design yet; the designer writes it/,
+    )
+    // nothing was created; a planner splits by creating bare children, designed next
+    expect((await core.backend.read.listBlocks()).map((b) => b.title)).not.toContain('Invoices')
+    await core.blockCreate(pln, { parent: block, title: 'Invoices' })
+    // with the design inline (a role holding both grants) it passes
+    const both = await core.blockCreate(user, { parent: block, title: 'Refunds', design, plan })
+    expect(both.result.docVersions).toMatchObject({ design: 1, plan: 1 })
   })
 })
 
@@ -148,7 +155,8 @@ describe('done needs its plan (block.request_done / block.set_status done)', () 
 
   it('a block with children needs no plan of its own', async () => {
     const { core, block } = await designed({ done: 'off' })
-    const kid = (await core.blockCreate(user, { parent: block, title: 'Kid', plan })).result.id
+    const kid = (await core.blockCreate(user, { parent: block, title: 'Kid', design, plan })).result
+      .id
     await core.blockSetStatus(user, { id: kid, status: 'dropped', reason: 'not needed' })
     await core.blockSetStatus(user, { id: block, status: 'done', digest })
   })
@@ -204,8 +212,8 @@ describe('work starting on a write (status.activate_on.write)', () => {
     config.policies.status.activate_on.write = []
     const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
     const { result } = await core.projectInit(user, { name: 'S', originFingerprint: 'fp' })
-    const id = (await core.blockCreate(user, { parent: result.root.id, title: 'T', plan })).result
-      .id
+    const id = (await core.blockCreate(user, { parent: result.root.id, title: 'T', design, plan }))
+      .result.id
     await core.progressAppend(wrk, { block: id, kind: 'found', text: 'x' })
     expect((await core.backend.read.getBlock(id))?.status).toBe('planned')
   })
