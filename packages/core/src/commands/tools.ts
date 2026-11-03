@@ -136,6 +136,7 @@ const readableZooms = (cfg: Config) =>
 
 const STATUSES = ['planned', 'active', 'blocked', 'done', 'dropped'] as const
 const BLOCKED_ON = ['block', 'thread', 'user', 'external'] as const
+const INLINE_DOCS = ['design', 'plan'] as const
 const DOC_TYPES = ['design', 'plan', 'digest'] as const
 const THREAD_ACTIONS = ['open', 'append', 'park', 'resume', 'resolve'] as const
 const REVIEW_ACTIONS = {
@@ -230,14 +231,22 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     name: 'hafiz_block_create',
     commands: ['block.create'],
-    description: (cfg) =>
-      `New planned block under parent (default root); kind (default ${cfg.kinds.default_kind}) picks its sections. design, plan: {section: value}; ${sectionsHint(cfg, ['design', 'plan'], { caps: 'required' })}.`,
-    shape: () => ({
+    description: (cfg, t) => {
+      const inline = INLINE_DOCS.filter((d) => t.can('doc.write', d))
+      return sentences(
+        `New planned block under parent (default root); kind (default ${cfg.kinds.default_kind}) picks its sections.`,
+        inline.length > 0 &&
+          `${inline.join(', ')}: {section: value}; ${sectionsHint(cfg, inline, { caps: 'required' })}.`,
+      )
+    },
+    shape: (_cfg, t) => ({
       parent: z.string().optional(),
       title: z.string(),
       kind: z.string().optional(),
-      design: sectionsArg().optional(),
-      plan: sectionsArg().optional(),
+      // inline docs only for roles holding doc.write:<type>
+      ...Object.fromEntries(
+        INLINE_DOCS.filter((d) => t.can('doc.write', d)).map((d) => [d, sectionsArg().optional()]),
+      ),
     }),
     route: (a) => ({
       command: 'block.create',
@@ -343,11 +352,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       expected_version: z.number().optional(),
       ...(t.choices.some((d) => t.can('doc.write', d)) ? { replace: z.boolean().optional() } : {}),
     }),
-    route: (a) => ({
+    route: (a, t) => ({
       command: a.replace === true ? 'doc.write' : 'doc.patch',
       args: {
         ...pick(a, ['block', 'type', 'sections', 'expected_version']),
         require_version: true,
+        // a role that may write the doc starts it with a patch; others only adjust one
+        ...(a.replace !== true && t.can('doc.write', String(a.type)) ? { create: true } : {}),
       },
     }),
   },

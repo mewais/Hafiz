@@ -39,7 +39,7 @@ async function project(policies?: Record<string, unknown>) {
   // reviews are filed for blocks created with a design by a role that does not approve them
   const mgr = await DaemonClient.connect(d.socketPath)
   cleanup.push(() => mgr.close())
-  await mgr.openSession({ id: 'mgr', host: 'test', role: 'manager' })
+  await mgr.openSession({ id: 'des', host: 'test', role: 'designer' })
   return { d, user, mgr, root, rootBlock, env }
 }
 

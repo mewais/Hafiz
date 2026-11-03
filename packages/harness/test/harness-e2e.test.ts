@@ -58,7 +58,7 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
       decisions: 1,
       done_requests: 4,
       done_with_digest: 4,
-      reports: 4,
+      reports: 6, // four workers, the designer and the planner
       cap_rejections: 0,
     })
     expect(r.metrics.roles.worker).toMatchObject({
@@ -77,9 +77,17 @@ describe.skipIf(!enabled)('harness, mock mode, real Kilo (HAFIZ_KILO_E2E=1)', ()
       .split('\n')
       .filter(Boolean)
       .map((l) => JSON.parse(l))
-    expect(sent).toHaveLength(4)
-    expect(sent[0]).toMatchObject({ role: 'manager', agent: 'worker' })
-    expect(sent[0].block).toBeTruthy()
+    // the designer and the planner first (the manager writes neither), then a worker per part
+    expect(sent.map((x: { agent: string }) => x.agent)).toEqual([
+      'designer',
+      'planner',
+      'worker',
+      'worker',
+      'worker',
+      'worker',
+    ])
+    expect(sent[2]).toMatchObject({ role: 'manager', agent: 'worker' })
+    expect(sent[2].block).toBeTruthy()
     expect(r.rejected).toEqual([])
     expect(r.metrics.total.spawns_rejected).toBe(0)
     expect(r.filesChanged).toHaveLength(4)

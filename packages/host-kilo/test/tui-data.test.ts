@@ -101,7 +101,7 @@ describe('TUI review actions', () => {
       const ds = await DaemonClient.connect(d.socketPath)
       cleanup.push(() => ds.close())
       await ds.openSession({ id, host: 'test', role: 'designer', spawnedBlock: block })
-      await ds.dispatch('doc.patch', {
+      await ds.dispatch('doc.write', {
         block,
         type: 'design',
         sections: {

@@ -2,6 +2,7 @@
 
 import { ValidationError } from '../domain/errors.js'
 import type { Actor, Block, BlockId, Doc, DocType, SectionValue } from '../domain/types.js'
+import { authorize } from './authz.js'
 import { type CommandResult, type CoreContext, isMinor, mustBlock, runAs, writeDoc } from './tx.js'
 
 export interface DocWriteArgs {
@@ -14,6 +15,8 @@ export interface DocWriteArgs {
    * an agent never overwrites a document it has not seen). CLI and system writes leave it off.
    */
   requireVersion?: boolean
+  /** doc.patch only: a missing document is created (needs the doc.write grant too). */
+  create?: boolean
 }
 
 function checkVersioned(b: Block, args: DocWriteArgs): void {
@@ -53,6 +56,11 @@ export async function docPatch(
     const b = await mustBlock(t, args.block)
     checkVersioned(b, args)
     const cur = await t.getDoc(b.id, args.type)
+    if (!cur && args.create) authorize(ctx.config, by.role, 'doc.write', args.type)
+    else if (!cur)
+      throw new ValidationError(
+        `no ${args.type} on ${b.id} yet; the ${args.type === 'design' ? 'designer' : args.type === 'plan' ? 'planner' : 'worker'} writes it, or use doc.write`,
+      )
     const merged = { ...(cur?.sections ?? {}), ...args.sections }
     return writeDoc(ctx, t, by, b, args.type, merged, args.expectedVersion, notices)
   })

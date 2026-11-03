@@ -188,12 +188,12 @@ sections:
 | Command | Semantics |
 |---|---|
 | `project.init(name, root_design?)` | create project + root; write pointer; init git store |
-| `block.create(parent?, title, kind, design?, plan?)` | atomic (journaled); `parent` defaults to the root |
+| `block.create(parent?, title, kind, design?, plan?)` | atomic (journaled); `parent` defaults to the root. Inline `design`/`plan` follow the `doc.write:<type>` grants of the caller's role (the tool omits the property without the grant) |
 | `block.update / block.move` | CAS; epoch |
 | `block.set_status(id, status, {digest?, reason?, blocked_on?, confirmed?})` | guards; `done→active` allowed |
 | `block.request_done(id, digest)` | worker path; enqueues or auto-applies |
 | `edge.add / edge.remove` | epoch; CLI only (agents' edges are derived from designs, below) |
-| `doc.write / doc.patch(block, type, …, expected_version, require_version?)` | full/section replace; validate; CAS; epoch. A design write sets the block's `depends_on` edges to the blocks its `interface.consumes[].block` name (id, or a title matching one block); unknown names → a notice |
+| `doc.write / doc.patch(block, type, …, expected_version, require_version?)` | full/section replace (a patch adjusts an existing doc and never creates one: a missing doc is an error naming its writer; the agent tool starts a doc by patch only for a role holding `doc.write:<type>`); validate; CAS; epoch. A design write sets the block's `depends_on` edges to the blocks its `interface.consumes[].block` name (id, or a title matching one block); unknown names → a notice |
 | `progress.append(block, entry, step?)` | append-only; `step: {id, status}` also appends that plan step's event in the same transaction (no epoch, no CAS) |
 | `decision.record(block, {title, decision, rationale, standing?, supersedes?})` | append-only; epoch |
 | `thread.open / park(gist) / resume / resolve` | minor |

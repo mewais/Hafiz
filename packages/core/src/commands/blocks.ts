@@ -51,6 +51,10 @@ export async function blockCreate(
 ): Promise<CommandResult<Block>> {
   const spec = { command: 'block.create', major: true, target: args.title }
   return runAs(ctx, by, spec, async (t, notices) => {
+    // Inline docs follow the doc.write grants: a role that cannot write a design or plan
+    // through hafiz_doc cannot slip one in through block.create either.
+    for (const type of ['design', 'plan'] as const)
+      if (args[type]) authorize(ctx.config, by.role, 'doc.write', type)
     const root = (await t.getProject())?.rootBlockId
     const parent = await mustBlock(t, (args.parent ?? root) as BlockId)
     const kinds = ctx.config.kinds

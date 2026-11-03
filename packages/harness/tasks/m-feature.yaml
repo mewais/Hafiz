@@ -32,30 +32,23 @@ mock:
         - calls:
             - tool: hafiz_block_create
               as: feat
-              args:
-                title: Order discounts
-                kind: feature
-                design:
-                  purpose: Let shoppers pay less through coupon codes and bulk-quantity rules.
-                  scope: ["in: coupons, bulk rule, cart and order integration", "out: payment"]
-                  interface: { provides: [{ name: applyDiscounts(cart), type: fn }], consumes: [] }
+              args: { title: Order discounts, kind: feature }
+        # designs and plans are the designer's and planner's: the designer onboards and creates
+        # the part blocks with their designs, the planner writes their plans
         - calls:
-            - tool: hafiz_block_create
-              as: coupons
-              args: &child
-                parent: "{b.feat}"
-                title: Coupon codes
-                design: { purpose: One part of order discounts., scope: ["in: this part only"], interface: { provides: [], consumes: [] } }
-                plan: { steps: [{ id: s1, title: Model coupons }, { id: s2, title: Validate and apply }], acceptance: [tests pass] }
-            - tool: hafiz_block_create
-              as: bulk
-              args: { <<: *child, title: Bulk quantity rule }
-            - tool: hafiz_block_create
-              as: cartint
-              args: { <<: *child, title: Cart integration }
-            - tool: hafiz_block_create
-              as: summary
-              args: { <<: *child, title: Order summary lines }
+            - tool: task
+              args:
+                description: Design the discount parts
+                subagent_type: designer
+                block: "{b.feat}"
+                prompt: "[[turn:{turn}]] Design order discounts and create one child block per part (block {b.feat})."
+        - calls:
+            - tool: task
+              args:
+                description: Plan the discount parts
+                subagent_type: planner
+                block: "{b.feat}"
+                prompt: "[[turn:{turn}]] Plan each part of the order discounts feature (block {b.feat})."
         - calls:
             - tool: hafiz_decision_record
               args:
@@ -86,6 +79,55 @@ mock:
             - tool: task
               args: { <<: *spawn, description: Order summary, block: "{b.summary}", prompt: "[[turn:{turn}]] Show discounts in order summaries in src/." }
         - text: All four parts of the discount feature are implemented and reported.
+      designer:
+        - calls:
+            - tool: hafiz_doc
+              args:
+                block: "{b.root}"
+                type: design
+                sections:
+                  overview: A small TypeScript shop library (cart, orders, inventory, money) with node:test tests.
+                  topology: ["src/cart.ts Cart -> src/money.ts addMoney", "src/orders.ts Orders.place -> Inventory.take"]
+        - calls:
+            - tool: hafiz_doc
+              args:
+                block: "{block}"
+                type: design
+                sections:
+                  purpose: Let shoppers pay less through coupon codes and bulk-quantity rules.
+                  scope: ["in: coupons, bulk rule, cart and order integration", "out: payment"]
+                  interface: { provides: [{ name: applyDiscounts(cart), type: fn }], consumes: [] }
+        - calls:
+            - tool: hafiz_block_create
+              as: coupons
+              args: &child
+                parent: "{block}"
+                title: Coupon codes
+                design: { purpose: One part of order discounts., scope: ["in: this part only"], interface: { provides: [], consumes: [] } }
+            - tool: hafiz_block_create
+              as: bulk
+              args: { <<: *child, title: Bulk quantity rule }
+            - tool: hafiz_block_create
+              as: cartint
+              args: { <<: *child, title: Cart integration }
+            - tool: hafiz_block_create
+              as: summary
+              args: { <<: *child, title: Order summary lines }
+        - text: Order discounts designed, with a child block per part.
+      planner:
+        - calls:
+            - tool: hafiz_doc
+              args: &plan
+                block: "{b.coupons}"
+                type: plan
+                sections: { steps: [{ id: s1, title: Model coupons }, { id: s2, title: Validate and apply }], acceptance: [tests pass] }
+            - tool: hafiz_doc
+              args: { <<: *plan, block: "{b.bulk}" }
+            - tool: hafiz_doc
+              args: { <<: *plan, block: "{b.cartint}" }
+            - tool: hafiz_doc
+              args: { <<: *plan, block: "{b.summary}" }
+        - text: Plans written for all four parts.
       worker:
         - calls:
             - tool: hafiz_progress_append

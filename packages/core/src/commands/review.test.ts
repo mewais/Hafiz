@@ -13,6 +13,7 @@ import type { DispatchSink } from './hooks.js'
 
 const user: Actor = { sessionId: 'cli', role: 'user' }
 const mgr: Actor = { sessionId: 'm1', role: 'manager' }
+const pl: Actor = { sessionId: 'p1', role: 'planner' }
 const design = {
   purpose: 'money in',
   scope: ['in: invoices'],
@@ -37,6 +38,7 @@ async function setup(review: Partial<ReviewPolicy> = {}) {
   const root = result.root.id
   const block = (await core.blockCreate(user, { parent: root, title: 'Billing' })).result
   await core.sessionOpen({ id: 'm1', host: 't', role: 'manager' })
+  await core.sessionOpen({ id: 'p1', host: 't', role: 'planner' })
   let n = 0
   const reviews = async () =>
     (await core.backend.read.listProposals({ status: 'pending' })).filter(
@@ -57,7 +59,9 @@ async function setup(review: Partial<ReviewPolicy> = {}) {
     return filed
   }
   const designs = (sections: Record<string, unknown>) =>
-    round('designer', (by) => core.docPatch(by, { block: block.id, type: 'design', sections }))
+    round('designer', (by) =>
+      core.docPatch(by, { block: block.id, type: 'design', sections, create: true }),
+    )
   const node = async () =>
     (await core.treeSummary(user)).nodes.find((x) => x.id === block.id) as NonNullable<
       Awaited<ReturnType<Core['treeSummary']>>['nodes'][number]
@@ -181,10 +185,10 @@ describe('review table: design and plan rows', () => {
     expect(await heading()).not.toMatch(/review design/)
   })
 
-  it('a plan the manager writes under plan: gate holds workers until accepted, which pins it', async () => {
+  it('a plan the planner writes under plan: gate holds workers until accepted, which pins it', async () => {
     const { core, block, read, node } = await setup({ plan: 'gate' })
     await core.docWrite(user, { block: block.id, type: 'design', sections: design })
-    await core.dispatch(mgr, 'doc.patch', { block: block.id, type: 'plan', sections: plan })
+    await core.docWrite(pl, { block: block.id, type: 'plan', sections: plan })
     const [p] = (await core.reviewList(user)).filter((x) => x.source === 'review')
     expect(p).toMatchObject({ kind: 'plan', version: 1, mode: 'gate' })
     expect((await node()).review?.plan).toMatchObject({ status: 'pending', mode: 'gate' })
@@ -196,7 +200,7 @@ describe('review table: design and plan rows', () => {
   it("the approver's own writes are not filed (approver: manager; the user always)", async () => {
     const { core, block, read } = await setup({ plan: 'gate', approver: 'manager' })
     await core.docWrite(user, { block: block.id, type: 'design', sections: design })
-    await core.dispatch(mgr, 'doc.patch', { block: block.id, type: 'plan', sections: plan })
+    await core.docWrite(user, { block: block.id, type: 'plan', sections: plan })
     expect((await read().listProposals()).filter((p) => p.source === 'review')).toEqual([])
   })
 
@@ -211,7 +215,7 @@ describe('review table: design and plan rows', () => {
       (p) => p.source === 'review',
     )
     expect(pending.map((p) => [p.blockId, p.kind])).toEqual([[ledger.id, 'design']])
-    await core.dispatch(mgr, 'block.create', { parent: root, title: 'Tax', design }, s)
+    await core.dispatch(user, 'block.create', { parent: root, title: 'Tax', design }, s)
     await core.dispatch(user, 'block.create', { parent: root, title: 'Fees', design }, s)
     expect((await read().listProposals({ status: 'pending' })).length).toBe(1)
   })

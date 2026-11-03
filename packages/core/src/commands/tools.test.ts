@@ -94,7 +94,14 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
     'hafiz_doc',
     { block: 'b', type: 'design', sections: {}, expected_version: 2 },
     'doc.patch',
-    { block: 'b', type: 'design', sections: {}, expectedVersion: 2, requireVersion: true },
+    {
+      block: 'b',
+      type: 'design',
+      sections: {},
+      expectedVersion: 2,
+      requireVersion: true,
+      create: true,
+    },
   ],
   [
     'designer',
@@ -164,6 +171,22 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
   ['manager', 'hafiz_review', { action: 'accept', id: 'p' }, 'proposal.accept', { id: 'p' }],
   ['manager', 'hafiz_review', { action: 'reject', id: 'p' }, 'proposal.reject', { id: 'p' }],
 ]
+
+describe('hafiz_block_create inline docs follow the doc.write grants', () => {
+  it.each([
+    ['manager', ['parent', 'title', 'kind']],
+    ['designer', ['parent', 'title', 'kind', 'design']],
+    ['planner', ['parent', 'title', 'kind', 'plan']],
+    ['user', ['parent', 'title', 'kind', 'design', 'plan']],
+  ])('%s sees %j', (role, expected) => {
+    expect(props(tool(role, 'hafiz_block_create'))).toEqual(expected)
+  })
+
+  it("the manager's description names neither", () => {
+    const t = tool('manager', 'hafiz_block_create')
+    expect(t.spec.description(config, t)).not.toMatch(/design|\bplan\b/)
+  })
+})
 
 describe('tool catalogue → commands', () => {
   it.each(CASES)('%s %s %j → %s', (role, name, args, command, coreArgs) => {

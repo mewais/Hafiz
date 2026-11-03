@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from '../config/load.js'
 import { fixedClock } from '../domain/clock.js'
-import { ValidationError } from '../domain/errors.js'
+import { ForbiddenError, ValidationError } from '../domain/errors.js'
 import type { Actor } from '../domain/types.js'
 import { MemoryBackend } from '../store/memory.js'
 import { Core } from './core.js'
@@ -37,7 +37,7 @@ describe('doc versions for agent writes', () => {
         requireVersion: true,
         ...(expectedVersion !== undefined ? { expectedVersion } : {}),
       })
-    await w(design([]))
+    await core.docWrite(des, { block: c, type: 'design', sections: design([]) })
     const e = await w({ purpose: 'q' }).catch((x) => x)
     expect(e).toBeInstanceOf(ValidationError)
     expect(e.message).toMatch(/already exists \(version 1\): pass expected_version: 1/)
@@ -99,3 +99,64 @@ describe('dependencies derived from the design', () => {
     expect(text).toMatch(new RegExp(`Depends on: ${a}`))
   })
 })
+
+describe('inline docs and patches never bypass the writers', () => {
+  const mgr: Actor = { sessionId: 'm1', role: 'manager', agent: 'manager' }
+  const plan = { steps: [{ id: 's1', title: 'x' }], acceptance: ['ok'] }
+
+  it('block.create refuses an inline design or plan without the doc.write grant', async () => {
+    const { core, root } = await setup()
+    const d = design([])
+    await expect(
+      core.blockCreate(mgr, { parent: root, title: 'X', design: d }),
+    ).rejects.toBeInstanceOf(ForbiddenError)
+    await expect(core.blockCreate(mgr, { parent: root, title: 'X', plan })).rejects.toBeInstanceOf(
+      ForbiddenError,
+    )
+    await expect(core.blockCreate(des, { parent: root, title: 'X', plan })).rejects.toBeInstanceOf(
+      ForbiddenError,
+    )
+    expect(
+      (await core.blockCreate(des, { parent: root, title: 'D', design: d })).result.docVersions
+        .design,
+    ).toBe(1)
+    expect(
+      (await core.blockCreate(user, { parent: root, title: 'U', design: d, plan })).result
+        .docVersions.plan,
+    ).toBe(1)
+    expect((await core.blockCreate(mgr, { parent: root, title: 'Plain' })).result.title).toBe(
+      'Plain',
+    )
+  })
+
+  it('doc.patch adjusts an existing doc and never creates one', async () => {
+    const { core, a } = await setup()
+    await expect(core.docPatch(mgr, { block: a, type: 'plan', sections: plan })).rejects.toThrow(
+      /no plan on .* yet; the planner writes it, or use doc.write/,
+    )
+    await expect(
+      core.docPatch(des, { block: a, type: 'design', sections: design([]) }),
+    ).rejects.toThrow(/no design on .* yet; the designer writes it/)
+    await core.docWrite(user, { block: a, type: 'plan', sections: plan })
+    expect(
+      (await core.docPatch(mgr, { block: a, type: 'plan', sections: { acceptance: ['b'] } })).result
+        .version,
+    ).toBe(2)
+    // the agent tool's patch may start a doc only for a role holding doc.write
+    expect(
+      (await core.docPatch(des, { block: a, type: 'design', sections: design([]), create: true }))
+        .result.version,
+    ).toBe(1)
+    await expect(
+      core.docPatch(mgr, {
+        block: core_b(await core.backend.read.listBlocks()),
+        type: 'plan',
+        sections: plan,
+        create: true,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError)
+  })
+})
+
+const core_b = (bs: Array<{ id: string; title: string }>) =>
+  bs.find((b) => b.title === 'Billing')?.id as string

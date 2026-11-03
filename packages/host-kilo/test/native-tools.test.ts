@@ -154,6 +154,7 @@ describe('cap rejections (HAFIZ_REJECTION_LOG)', () => {
     const { hooks, blocks } = await live(undefined, { HAFIZ_REJECTION_LOG: file })
     await session(hooks, 'ses_m', 'manager', 'Ship it')
     await session(hooks, 'ses_w', 'worker', `hafiz:block=${blocks[0]} go`, 'ses_m')
+    await session(hooks, 'ses_p', 'planner', `hafiz:block=${blocks[1]} plan`, 'ses_m')
     const long = 'word '.repeat(400)
     await expect(
       tool(hooks, 'hafiz_progress_append').execute(
@@ -168,7 +169,7 @@ describe('cap rejections (HAFIZ_REJECTION_LOG)', () => {
           type: 'plan',
           sections: { steps: [{ id: 's1', title: 'x' }], acceptance: [long] },
         },
-        ctx('ses_m', 'manager'),
+        ctx('ses_p', 'planner'),
       ),
     ).rejects.toThrow(/over the cap/)
     const lines = readFileSync(file, 'utf8')
@@ -183,7 +184,7 @@ describe('cap rejections (HAFIZ_REJECTION_LOG)', () => {
       sections: [{ section: 'progress', cap: expect.any(Number) }],
     })
     expect(lines[1]).toMatchObject({
-      role: 'manager',
+      role: 'planner',
       block: blocks[1],
       command: 'doc.patch',
       sections: [{ section: 'plan.acceptance', cap: 200 }],
