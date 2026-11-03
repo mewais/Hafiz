@@ -106,7 +106,7 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     // a designer session writes Reporting's design and ends: one review in the queue
     const ds = await DaemonClient.connect(daemon.socketPath)
     await ds.openSession({ id: 'ds1', host: 'test', role: 'designer', spawnedBlock: reporting })
-    await ds.dispatch('doc.patch', {
+    await ds.dispatch('doc.write', {
       block: reporting,
       type: 'design',
       sections: {
