@@ -7,6 +7,7 @@ import type { Actor, Block } from '../domain/types.js'
 import { MemoryBackend } from '../store/memory.js'
 import { Core } from './core.js'
 
+const user: Actor = { sessionId: 'cli', role: 'user' }
 const mgr: Actor = { sessionId: 'm1', role: 'manager', agent: 'manager' }
 const des: Actor = { sessionId: 'd1', role: 'designer', agent: 'designer' }
 const pln: Actor = { sessionId: 'p1', role: 'planner', agent: 'planner' }
@@ -53,13 +54,11 @@ describe('core scenario', () => {
     const p0 = await core.backend.read.getProject()
     expect(p0?.epoch).toBe(1)
 
-    // planner creates blocks; designer writes designs; worker may not create blocks
-    const billing = (await core.blockCreate(pln, { parent: root.id, title: 'Billing', plan }))
-      .result
-    const invoices = (await core.blockCreate(pln, { parent: billing.id, title: 'Invoices', plan }))
-      .result
-    const payments = (await core.blockCreate(pln, { parent: billing.id, title: 'Payments', plan }))
-      .result
+    // planner creates blocks; designer writes designs, then the planner plans; worker may not
+    // create blocks
+    const billing = (await core.blockCreate(pln, { parent: root.id, title: 'Billing' })).result
+    const invoices = (await core.blockCreate(pln, { parent: billing.id, title: 'Invoices' })).result
+    const payments = (await core.blockCreate(pln, { parent: billing.id, title: 'Payments' })).result
     await expect(core.blockCreate(w1, { parent: root.id, title: 'nope' })).rejects.toBeInstanceOf(
       ForbiddenError,
     )
@@ -78,6 +77,8 @@ describe('core scenario', () => {
     await expect(
       core.docWrite(w1, { block: payments.id, type: 'design', sections: design('x') }),
     ).rejects.toBeInstanceOf(ForbiddenError)
+    for (const b of [billing, invoices, payments])
+      await core.docWrite(pln, { block: b.id, type: 'plan', sections: plan })
     expect(await core.backend.read.listEdges()).toEqual([
       { from: payments.id, to: invoices.id, kind: 'depends_on' },
     ])
@@ -109,14 +110,36 @@ describe('core scenario', () => {
           text: `finding ${i}`,
         }),
       ),
-      core.stepSet(w1, { block: payments.id, stepId: 's1', status: 'done' }),
-      core.stepSet(w2, { block: payments.id, stepId: 's2', status: 'doing' }),
+      core.progressAppend(w1, {
+        block: payments.id,
+        kind: 'done',
+        text: 'model done',
+        step: { id: 's1', status: 'done' },
+      }),
+      core.progressAppend(w2, {
+        block: payments.id,
+        kind: 'found',
+        text: 'webhooks started',
+        step: { id: 's2', status: 'doing' },
+      }),
     ])
     expect((await core.backend.read.getProject())?.epoch).toBe(epochBefore)
-    expect((await core.backend.read.readLog(payments.id, 'progress')).length).toBe(10)
+    expect((await core.backend.read.readLog(payments.id, 'progress')).length).toBe(12)
+    const steps = await core.backend.read.readLog(payments.id, 'steps')
+    expect(steps.map((e) => [e.entry.stepId, e.entry.status]).sort()).toEqual([
+      ['s1', 'done'],
+      ['s2', 'doing'],
+    ])
+    // an unknown step refuses the whole entry: neither log is written
     await expect(
-      core.stepSet(w1, { block: payments.id, stepId: 'nope', status: 'done' }),
+      core.progressAppend(w1, {
+        block: payments.id,
+        kind: 'done',
+        text: 'x',
+        step: { id: 'nope', status: 'done' },
+      }),
     ).rejects.toThrow(/known: s1, s2/)
+    expect((await core.backend.read.readLog(payments.id, 'progress')).length).toBe(12)
 
     // standing decision; superseding
     const d1 = (
@@ -147,7 +170,8 @@ describe('core scenario', () => {
     const done = (await core.blockRequestDone(w1, { id: payments.id, digest })).result as Block
     expect(done.status).toBe('done')
     expect(done.doneAt).toBeTruthy()
-    expect((await core.backend.read.listProposals({ status: 'pending' })).length).toBe(1)
+    const queued = await core.backend.read.listProposals({ status: 'pending' })
+    expect(queued.filter((p) => p.source !== 'review').length).toBe(1)
     // billing cannot close while invoices is open
     await expect(
       core.blockSetStatus(mgr, { id: billing.id, status: 'done', digest }),
@@ -180,7 +204,9 @@ describe('core scenario', () => {
     expect(reclosed.digestStale).toBeUndefined()
 
     // review queue: accept marks it; audit has everything attributed
-    const pending = await core.backend.read.listProposals({ status: 'pending' })
+    const pending = (await core.backend.read.listProposals({ status: 'pending' })).filter(
+      (p) => p.source !== 'review',
+    )
     await core.proposalResolve(mgr, { id: pending[0]?.id as string, accept: true })
     expect((await core.backend.read.listProposals({ status: 'accepted' })).length).toBe(1)
     const audit = await core.backend.read.readAudit()
@@ -214,7 +240,7 @@ describe('core scenario', () => {
       parentSessionId: 'host-1',
     })
     expect(w.focus.blocks).toEqual([b.id])
-    await core.focusSet({ sessionId: 'host-1', role: 'manager' }, { blocks: [a.id, b.id] })
+    await core.focusSet({ sessionId: 'host-1', role: 'user' }, { blocks: [a.id, b.id] })
     await core.sessionEnd('host-1')
     const again = await core.sessionOpen({ id: 'host-1', host: 'test', role: 'manager' })
     expect(again.focus).toEqual({ blocks: [a.id, b.id], computed: false })
@@ -264,5 +290,75 @@ describe('core scenario', () => {
         sections: { overview: 'x', topology: ['a'], bogus: 'y' },
       }),
     ).rejects.toThrow(/unknown section/)
+  })
+})
+
+describe('activate on spawn (policies.yaml status.activate_on)', () => {
+  async function tree() {
+    const { core, root } = await setup()
+    const feat = (await core.blockCreate(pln, { parent: root.id, title: 'Checkout' })).result
+    const leaf = (
+      await core.blockCreate(user, { parent: feat.id, title: 'Totals', design: design('t'), plan })
+    ).result
+    return { core, root, feat, leaf }
+  }
+  const status = async (core: Core, id: string) => (await core.backend.read.getBlock(id))?.status
+
+  it('a worker session opened on a planned block activates it and its planned ancestors', async () => {
+    const { core, feat, leaf } = await tree()
+    const epoch = (await core.backend.read.getProject())?.epoch ?? 0
+    await core.sessionOpen({ id: 'w1', host: 't', role: 'worker', spawnedBlock: leaf.id })
+    expect(await status(core, leaf.id)).toBe('active')
+    expect(await status(core, feat.id)).toBe('active')
+    expect((await core.backend.read.getProject())?.epoch).toBe(epoch + 1)
+    // and so its done request is a legal transition
+    const r = await core.blockRequestDone(w1, { id: leaf.id, digest })
+    expect((r.result as Block).status).toBe('done')
+  })
+
+  it('designer and planner spawns leave the status alone (design is not work started)', async () => {
+    const { core, leaf } = await tree()
+    await core.sessionOpen({ id: 'd1', host: 't', role: 'designer', spawnedBlock: leaf.id })
+    await core.sessionOpen({ id: 'p1', host: 't', role: 'planner', spawnedBlock: leaf.id })
+    expect(await status(core, leaf.id)).toBe('planned')
+  })
+
+  it('an empty activate_on.spawn keeps the block planned; done then names the remedy', async () => {
+    const config = autoConfig()
+    config.policies.status.activate_on.spawn = []
+    const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
+    const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
+    const leaf = (
+      await core.blockCreate(user, {
+        parent: result.root.id,
+        title: 'T',
+        design: design('t'),
+        plan,
+      })
+    ).result
+    await core.sessionOpen({ id: 'w1', host: 't', role: 'worker', spawnedBlock: leaf.id })
+    expect(await status(core, leaf.id)).toBe('planned')
+    await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
+      /planned, so its work has not started\. Set it active first, then done/,
+    )
+  })
+
+  it('under review.done: gate a done request on a planned block fails at once, with the remedy', async () => {
+    const config = loadConfig()
+    const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
+    const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
+    const leaf = (
+      await core.blockCreate(user, {
+        parent: result.root.id,
+        title: 'T',
+        design: design('t'),
+        plan,
+      })
+    ).result
+    await expect(core.blockRequestDone(w1, { id: leaf.id, digest })).rejects.toThrow(
+      /A worker spawned on it activates it; or set it active first, then done/,
+    )
+    const queued = await core.backend.read.listProposals()
+    expect(queued.filter((p) => p.source !== 'review')).toHaveLength(0)
   })
 })

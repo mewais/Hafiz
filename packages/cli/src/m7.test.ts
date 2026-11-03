@@ -198,7 +198,10 @@ describe('hafiz doctor: drift and wiring', () => {
     const head = git(cwd, 'rev-parse', 'HEAD').trim()
     const id = await seed(io, async (core, root) => {
       const me = userActor()
-      const b = (await core.blockCreate(me, { parent: root, title: 'Billing' })).result
+      const plan = { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] }
+      const design = { purpose: 'p', scope: ['in: x'], interface: { provides: [] } }
+      const b = (await core.blockCreate(me, { parent: root, title: 'Billing', design, plan }))
+        .result
       await core.blockSetStatus(me, { id: b.id, status: 'active' })
       await core.blockSetStatus(me, {
         id: b.id,

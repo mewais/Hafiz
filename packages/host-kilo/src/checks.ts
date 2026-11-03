@@ -4,7 +4,9 @@
 // - `task` takes a required `block` (a block id, or `none` for a helper outside Hafiz); the id is
 //   resolved and carried to the child as the `hafiz:block=<id>` marker (sessions.ts);
 // - the spawned role must fit the block's state (`policies.yaml spawn.roles_by_state`), where a
-//   design or plan held by a `gate` review (`policies.yaml review`) counts as not there yet;
+//   design or plan held by a `gate` review (`policies.yaml review`) counts as not there yet. Core
+//   enforces the same table on the writes themselves (a plan needs the design, done the plan:
+//   domain/stage.ts); this check is early feedback for a spawn, in the same words;
 // - the prompt passes the block, not its contents (no `<hafiz…>`, at most
 //   `host.kilo.delegation_prompt_cap` tokens);
 // - only the child's `hafiz-report` reaches the parent (its full text is in the store), plus a
@@ -16,11 +18,13 @@ import {
   blockList,
   type Config,
   estimatorTokenizer,
-  gatingReview,
+  heldSays,
   isAllowed,
   matchBlock,
-  type ReviewType,
+  notReady,
+  REVIEW_TYPES,
   type SpawnState,
+  stageOf,
   type Tokenizer,
   type TreeSummary,
   type TreeSummaryNode,
@@ -40,6 +44,10 @@ export const BLOCK_ARG_DESCRIPTION =
 /** Kilo's `task` result: `<task id=… state="completed">…<task_result>…</task_result>`. */
 export const TASK_RESULT =
   /<task id="([^"]+)" state="completed">\n(?:<summary>[\s\S]*?<\/summary>\n)?<task_result>\n?([\s\S]*?)\n?<\/task_result>/
+
+/** The handback line for a child that may finish its block and did not, nor said what blocks it. */
+export const UNFINISHED =
+  'ended without a done request or a blocked entry: the block is not finished; read the report, then spawn a worker on it again or record what blocks it'
 
 const REPORT = /```hafiz-report\n[\s\S]*?\n```/g
 
@@ -70,32 +78,6 @@ const STATE_SAYS: Record<SpawnState, string> = {
   has_plan: 'it is planned',
   done: 'it is done; reopen it first (hafiz_block_set_status active, with a reason)',
   dropped: 'it is dropped',
-}
-
-/**
- * The block's state for spawning. `held`: the doc a `gate` review holds (design or plan); until
- * it is accepted the block counts as not having it, so only the roles before it may be spawned.
- */
-export function spawnState(
-  node: Pick<TreeSummaryNode, 'status' | 'docs'>,
-  held?: ReviewType,
-): SpawnState {
-  if (node.status === 'done' || node.status === 'dropped') return node.status
-  if (!node.docs.design || held === 'design') return 'no_design'
-  if (!node.docs.plan || held === 'plan') return 'no_plan'
-  return 'has_plan'
-}
-
-/** What a refused spawn says about a gated review: what waits, and the fix. */
-function reviewSays(
-  node: TreeSummaryNode,
-  g: NonNullable<ReturnType<typeof gatingReview>>,
-): string {
-  const doc = `${g.type} of ${node.title} (v${g.review.version})`
-  if (g.review.status === 'pending')
-    return `${doc} awaits review: hafiz review --accept ${g.review.proposal}`
-  const why = g.review.resolutionNote ? `: ${g.review.resolutionNote}` : ''
-  return `${doc} was rejected${why}; revise it (it is filed for review again)`
 }
 
 type Fields = Record<string, { annotate?: (a: Record<string, unknown>) => unknown }>
@@ -150,12 +132,19 @@ export function createChecks(o: ChecksOptions) {
   }
 
   /** The block `ref` names, resolved as the parent sees the tree. */
-  async function resolve(parent: string, ref: string): Promise<TreeSummaryNode> {
+  async function resolve(
+    parent: string,
+    ref: string,
+  ): Promise<{ node: TreeSummaryNode; children: TreeSummaryNode[] }> {
     const { nodes } = await sessions.call<TreeSummary>(parent, 'tree.summary', {
       recentDecisions: 0,
     })
     const m = matchBlock(nodes, ref)
-    if ('id' in m) return nodes.find((n) => n.id === m.id) as TreeSummaryNode
+    if ('id' in m)
+      return {
+        node: nodes.find((n) => n.id === m.id) as TreeSummaryNode,
+        children: nodes.filter((n) => n.parentId === m.id),
+      }
     if ('ambiguous' in m)
       return refuse(`task: block '${ref}' is ambiguous (${m.by}):\n${blockList(m.ambiguous)}`)
     return refuse(`task: no block '${ref}'. Valid block ids:\n${blockList(nodes)}`)
@@ -196,11 +185,19 @@ export function createChecks(o: ChecksOptions) {
       refuse(
         `task: '${agent}' is not managed by Hafiz here, so it cannot work on a block; pass ${BLOCK_ARG}: "${NO_BLOCK}".`,
       )
-    const node = await resolve(parent, ref)
-    const gate = gatingReview(config.policies.review, node.review)
-    const state = spawnState(node, gate?.type)
+    const { node, children } = await resolve(parent, ref)
+    // the state table (domain/stage.ts, as Core's writes check it): a doc held by an open gate
+    // review counts as not there yet, so only the roles before it may be spawned
+    const state = stageOf(config, node, node.review)
     const allowed = config.policies.spawn.roles_by_state[state] ?? []
-    const says = gate && state !== spawnState(node) ? reviewSays(node, gate) : STATE_SAYS[state]
+    const open = children.filter((c) => c.status !== 'done' && c.status !== 'dropped')
+    // the doc the block lacks, if it is written but held by its review: the same text Core gives
+    const held = REVIEW_TYPES.map((t) => notReady(config, node, t, node.review)).find(Boolean)
+    const says = held?.held
+      ? heldSays(node.title, held.type, held.held)
+      : state === 'no_plan' && open.length
+        ? `its work is in its children (${open.map((c) => `${c.title} [${c.id}]`).join(', ')}): spawn on those; it has no plan of its own yet (the planner writes one only for integration)`
+        : STATE_SAYS[state]
     if (!allowed.includes('*') && !allowed.includes(role as string))
       refuse(
         `task: no ${role} on ${node.title} [${node.id}]: ${says}. ${
@@ -284,7 +281,7 @@ export function createChecks(o: ChecksOptions) {
             'progress.append:blocked',
             'block.set_status:blocked',
           ].includes(c)
-        if (done && !done.some(says)) lines.push('ended without a done request or a blocked entry')
+        if (done && !done.some(says)) lines.push(UNFINISHED)
       }
       const start = (m.index as number) + m[0].indexOf('<task_result>') + '<task_result>'.length
       const end = (m.index as number) + m[0].length - '</task_result>'.length

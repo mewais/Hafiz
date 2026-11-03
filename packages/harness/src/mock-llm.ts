@@ -34,7 +34,7 @@ export interface MockLlmOptions {
   /** Delay between streamed chunks (ms). */
   chunkDelayMs?: number
   /** Reply when the script is empty. */
-  fallback?: ScriptedReply | ((req: RecordedRequest) => ScriptedReply)
+  fallback?: ScriptedReply | ((req: RecordedRequest) => ScriptedReply | Promise<ScriptedReply>)
 }
 
 export interface MockLlm {
@@ -59,7 +59,7 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
   const delay = opts.chunkDelayMs ?? 0
   let callSeq = 0
 
-  const next = (req: RecordedRequest): ScriptedReply => {
+  const next = async (req: RecordedRequest): Promise<ScriptedReply> => {
     const q = queue.shift()
     if (q) return q
     const f = opts.fallback ?? { text: 'ok' }
@@ -248,7 +248,7 @@ export async function startMockLlm(opts: MockLlmOptions = {}): Promise<MockLlm> 
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-model', object: 'model' }] }))
       } else if (path.endsWith('/chat/completions') || path.endsWith('/messages')) {
-        const reply = next(rec)
+        const reply = await next(rec)
         if (reply.delayMs) await sleep(reply.delayMs)
         if (reply.status) {
           res.writeHead(reply.status, { 'content-type': 'application/json' })

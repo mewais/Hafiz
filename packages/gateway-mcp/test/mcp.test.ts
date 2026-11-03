@@ -93,6 +93,12 @@ const plan = {
   ],
   acceptance: ['it works'],
 }
+/** The user designs and plans a block the manager created: done needs its plan. */
+async function planned(d: DaemonHandle, block: string) {
+  const user = { sessionId: 'cli', role: 'user' }
+  await d.service.core.docWrite(user, { block, type: 'design', sections: design('x') })
+  await d.service.core.docWrite(user, { block, type: 'plan', sections: plan })
+}
 const digest = {
   outcome: 'Implemented.',
   interface_delta: ['none'],
@@ -111,7 +117,6 @@ const KILO_TOOLS: Record<string, string[]> = {
     'hafiz_decision_record',
     'hafiz_thread',
     'hafiz_review',
-    'hafiz_focus_set',
   ],
   designer: [
     'hafiz_block_read',
@@ -122,13 +127,7 @@ const KILO_TOOLS: Record<string, string[]> = {
     'hafiz_thread',
   ],
   planner: ['hafiz_block_read', 'hafiz_block_create', 'hafiz_doc', 'hafiz_thread'],
-  worker: [
-    'hafiz_block_read',
-    'hafiz_block_set_status',
-    'hafiz_step_set',
-    'hafiz_progress_append',
-    'hafiz_thread',
-  ],
+  worker: ['hafiz_block_read', 'hafiz_block_set_status', 'hafiz_progress_append', 'hafiz_thread'],
 }
 const CONTEXT = ['hafiz_context_for', 'hafiz_context_delta']
 const TOOLS: Record<string, string[]> = {
@@ -152,7 +151,7 @@ describe('mcp tool lists', () => {
       expect(await a.tools()).toEqual(expected)
     }
     const u = await agent(d, 'user', { HAFIZ_SESSION_ID: 's-user' })
-    expect(await u.tools()).toHaveLength(14)
+    expect(await u.tools()).toHaveLength(12)
   })
 
   it('serving Kilo (host.kilo.tools: mcp), leaves out the context reads Kilo injects', async () => {
@@ -214,8 +213,6 @@ describe('mcp scenario', () => {
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const a = (await planner.json('hafiz_block_create', { parent: root, title: 'Catalog' })).id
     const b = (await planner.json('hafiz_block_create', { parent: root, title: 'Checkout' })).id
-    for (const id of [a, b])
-      await planner.json('hafiz_doc', { block: id, type: 'plan', sections: plan, replace: true })
     await designer.json('hafiz_doc', {
       block: a,
       type: 'design',
@@ -231,6 +228,9 @@ describe('mcp scenario', () => {
         interface: { ...checkout.interface, consumes: [{ name: 'list()', block: a }] },
       },
     })
+    // planned against the designs (a plan write needs its block's design)
+    for (const id of [a, b])
+      await planner.json('hafiz_doc', { block: id, type: 'plan', sections: plan, replace: true })
     // patching an existing doc needs the version the writer saw
     const stale = await designer.call('hafiz_doc', {
       block: a,
@@ -285,8 +285,18 @@ describe('mcp scenario', () => {
           text: `checkout change ${i}`,
         }),
       ),
-      w1.json('hafiz_step_set', { block: a, step_id: 's1', status: 'done' }),
-      w2.json('hafiz_step_set', { block: b, step_id: 's1', status: 'doing' }),
+      w1.json('hafiz_progress_append', {
+        block: a,
+        kind: 'done',
+        text: 'catalog step done',
+        step: { id: 's1', status: 'done' },
+      }),
+      w2.json('hafiz_progress_append', {
+        block: b,
+        kind: 'found',
+        text: 'checkout step started',
+        step: { id: 's1', status: 'doing' },
+      }),
     ])
 
     // per-role views differ, and each worker sees its own block
@@ -341,6 +351,7 @@ describe('mcp scenario', () => {
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Search' })).id
+    await planned(d, blk)
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: blk })
     await w.call('hafiz_block_set_status', { id: blk, status: 'done', digest })
@@ -356,7 +367,6 @@ describe('mcp scenario', () => {
     const b = (await mgr.json('hafiz_block_create', { parent: root, title: 'Beta' })).id
     await mgr.json('hafiz_block_set_status', { id: a, status: 'active' })
     await mgr.json('hafiz_block_set_status', { id: b, status: 'active' })
-    await mgr.json('hafiz_focus_set', { blocks: [b] })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: a })
     const before = (await w.call('hafiz_context_for')).text
     const mBefore = await mgr.json('hafiz_session_status')
@@ -367,7 +377,8 @@ describe('mcp scenario', () => {
     const after = (await w2.call('hafiz_context_for')).text
     expect(after.replace(/\[view.*\]/, '')).toBe(before.replace(/\[view.*\]/, ''))
     const mAfter = await mgr2.json('hafiz_session_status')
-    expect(mAfter.session.focus).toEqual({ blocks: [b], computed: false })
+    expect(mAfter.session.focus).toEqual(mBefore.session.focus)
+    expect(mAfter.session.focus.blocks).toEqual(expect.arrayContaining([a, b]))
     expect(mAfter.session.counters.tool_calls_hafiz).toBeGreaterThanOrEqual(
       mBefore.session.counters.tool_calls_hafiz,
     )
@@ -400,6 +411,7 @@ describe('mcp confirmation', () => {
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { elicit, config })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Ship' })).id
+    await planned(d, blk)
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     return { mgr, blk }
   }
@@ -432,6 +444,7 @@ describe('mcp confirmation', () => {
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { config })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Ship' })).id
+    await planned(d, blk)
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: blk }, { config })
     const r = await w.json('hafiz_block_set_status', { id: blk, status: 'done', digest })

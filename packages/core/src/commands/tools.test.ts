@@ -94,7 +94,14 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
     'hafiz_doc',
     { block: 'b', type: 'design', sections: {}, expected_version: 2 },
     'doc.patch',
-    { block: 'b', type: 'design', sections: {}, expectedVersion: 2, requireVersion: true },
+    {
+      block: 'b',
+      type: 'design',
+      sections: {},
+      expectedVersion: 2,
+      requireVersion: true,
+      create: true,
+    },
   ],
   [
     'designer',
@@ -105,10 +112,10 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
   ],
   [
     'worker',
-    'hafiz_step_set',
-    { block: 'b', step_id: 's1', status: 'done' },
-    'step.set',
-    { block: 'b', stepId: 's1', status: 'done' },
+    'hafiz_progress_append',
+    { block: 'b', kind: 'done', text: 't', step: { id: 's1', status: 'done' } },
+    'progress.append',
+    { block: 'b', kind: 'done', text: 't', step: { id: 's1', status: 'done' } },
   ],
   [
     'worker',
@@ -154,11 +161,32 @@ const CASES: Array<[string, string, Record<string, unknown>, string, Record<stri
     'thread.resolve',
     { id: 't', outcome: 'o' },
   ],
-  ['manager', 'hafiz_review', { action: 'list' }, 'proposal.list', { status: 'pending' }],
+  [
+    'manager',
+    'hafiz_review',
+    { action: 'list' },
+    'review.list',
+    { status: 'pending', resolvable: true },
+  ],
   ['manager', 'hafiz_review', { action: 'accept', id: 'p' }, 'proposal.accept', { id: 'p' }],
   ['manager', 'hafiz_review', { action: 'reject', id: 'p' }, 'proposal.reject', { id: 'p' }],
-  ['manager', 'hafiz_focus_set', { blocks: ['a'] }, 'focus.set', { blocks: ['a'] }],
 ]
+
+describe('hafiz_block_create inline docs follow the doc.write grants', () => {
+  it.each([
+    ['manager', ['parent', 'title', 'kind']],
+    ['designer', ['parent', 'title', 'kind', 'design']],
+    ['planner', ['parent', 'title', 'kind']], // an inline plan needs the design inline too
+    ['user', ['parent', 'title', 'kind', 'design', 'plan']],
+  ])('%s sees %j', (role, expected) => {
+    expect(props(tool(role, 'hafiz_block_create'))).toEqual(expected)
+  })
+
+  it("the manager's description names neither", () => {
+    const t = tool('manager', 'hafiz_block_create')
+    expect(t.spec.description(config, t)).not.toMatch(/design|\bplan\b/)
+  })
+})
 
 describe('tool catalogue → commands', () => {
   it.each(CASES)('%s %s %j → %s', (role, name, args, command, coreArgs) => {
@@ -166,7 +194,8 @@ describe('tool catalogue → commands', () => {
   })
 
   it('covers every command each tool declares, and only catalogue commands', () => {
-    const reached = new Set(CASES.map((c) => c[3]))
+    // the review list is the read that `proposal.list` grants
+    const reached = new Set(CASES.map((c) => (c[3] === 'review.list' ? 'proposal.list' : c[3])))
     const commands = new Set(COMMAND_SPECS.map((c) => c.command))
     for (const s of TOOL_SPECS)
       for (const c of s.commands) {
@@ -221,7 +250,6 @@ describe('tool catalogue per role', () => {
       'hafiz_decision_record',
       'hafiz_thread',
       'hafiz_review',
-      'hafiz_focus_set',
     ])
     expect(names('manager', 'mcp')).toEqual([
       ...common,
@@ -245,7 +273,6 @@ describe('tool catalogue per role', () => {
     expect(names('worker', 'kilo')).toEqual([
       'hafiz_block_read',
       'hafiz_block_set_status',
-      'hafiz_step_set',
       'hafiz_progress_append',
       'hafiz_thread',
     ])
@@ -290,6 +317,11 @@ describe('tool catalogue per role', () => {
     expect(ddoc.spec.description(config, ddoc)).toMatch(/consumes/)
 
     expect(tool('designer', 'hafiz_progress_append').choices).toEqual(['found', 'question'])
+    // roles that log finished work mark plan steps with the same entry
+    expect(props(tool('designer', 'hafiz_progress_append'))).not.toContain('step')
+    const wp = tool('worker', 'hafiz_progress_append')
+    expect(props(wp)).toContain('step')
+    expect(wp.spec.description(config, wp)).toMatch(/also marks that plan step/)
     expect(tool('manager', 'hafiz_progress_append').choices).not.toContain('report')
     // the worker may not list the tree: id is required
     const wr = tool('worker', 'hafiz_block_read')

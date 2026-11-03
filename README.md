@@ -30,12 +30,13 @@ plugin on its next start.
 
 ## Start a project
 
-Nothing to do. In a git repo Hafiz does not track yet, Kilo's primary agents get one extra tool,
-`hafiz_track_project`, and nothing else from Hafiz (no daemon, no view, a one-line nudge at
-most). When a task turns multi-step or will spawn subagents, the agent calls it on its own (never
-for one-off questions or small edits) and tells you in one line: "Tracking this repo with Hafiz
-as `<name>`". The same Kilo session continues managed from its next step: the project view, the
-manager's rules and the Hafiz tools, no restart. The TUI panel is always there: it
+Nothing to do. In a git repo Hafiz does not track yet, Kilo's primary agents see one Hafiz tool,
+`hafiz_block_create`, and nothing else from Hafiz (no daemon, no view, a one-line nudge at
+most). When a task turns multi-step or will spawn subagents, the agent creates its first block on
+its own (never for one-off questions or small edits): that call tracks the repo (a project named
+after the repo directory, exactly what `hafiz init` creates) and then creates the block under the
+root. The same Kilo session continues managed from its next step: the project view, the
+manager's rules and all its Hafiz tools, no restart. The TUI panel is always there: it
 reads `Hafiz · untracked` until that call completes, then shows the tree at once (driven by Kilo's
 events, no polling; tracking started outside Kilo, e.g. `hafiz init` in a terminal, shows at the
 next TUI start). Only what Kilo reads once at startup waits for its next start: shaping runs
@@ -43,10 +44,15 @@ through the transform hooks rather than the embedded proxy, Kilo's own auto-comp
 was, a condenser routed through Kilo is available only if the user-level config asked for it, and
 with `host.kilo.tools: mcp` the Hafiz tools wait too.
 
+Only the manager (or a plain agent acting as it) starts tracking. A designer, planner or worker
+you talk to directly in an untracked repo sees the same tool, and its call answers "this repo is
+not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the
+manager agent" (its nudge says the same); nothing is started.
+
 If the repo already has code (commits and at least `onboarding.min_source_files` tracked source
-files, default 5), the project starts with onboarding pending: the manager first has the designer
-describe the codebase as it is in the root design, importing what current work touches and
-stubbing what it only calls. An empty repo starts fresh and the manager designs with you.
+files, default 5), the project starts with onboarding pending: the first designer spawned, on
+whatever block, first describes the codebase as it is in the root design, importing what current
+work touches and stubbing what it only calls, then designs its block. An empty repo starts fresh and the manager designs with you.
 
 To start one by hand:
 
@@ -68,12 +74,17 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 
 - The plugin adds four agents: **manager**, **designer**, **planner**, **worker**. Plain Kilo
   agents (`build`, `plan`, ...) act as the manager by default (`host.kilo.default_role`), so you
-  can just start talking; the agent starts tracking on its own once the work is multi-step.
+  can just start talking; the agent starts tracking (its first block) once the work is multi-step.
 - The manager delegates one block per subagent: Kilo's `task` tool takes a required `block`
   (a block id, or `none` for a helper outside Hafiz). Hafiz refuses a spawn that does not fit the
   block (a worker before there is a plan, anyone on a done block) or that copies the block into
   the prompt. A worker's final message ends with a `hafiz-report` block; Hafiz stores the whole
   reply in the block's progress log and hands the manager only that block.
+- You may also drive the roles yourself: talk to the designer, then the planner, then a worker.
+  The same order holds on every write, not only on spawns: a plan is refused until its block has
+  a design (and, under `design: gate`, until you accept it), done until it has a plan (likewise
+  under `plan: gate`); the refusal names the missing step or the `hafiz review --accept` that
+  clears it. A worker's first progress, step or thread on a planned block starts it (active).
 - Anything agents want to change that needs a human (a finished design or plan, marking a block
   done, a proposed digest, a missing protocol call) lands in the **review queue**: `hafiz review`
   lists it, `hafiz review --show ID` prints the design or plan under review,
@@ -89,24 +100,21 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
 
 ## Agent tools
 
-Agents reach Hafiz through twelve tools; each role sees only its own, narrowed to what it may do
+Agents reach Hafiz through nine tools; each role sees only its own, narrowed to what it may do
 (`config/default/roles.yaml`). Their descriptions carry the mechanics; the rules in
 `config/default/rules/` say when to use them.
 
 | Tool | Does | Roles |
 |---|---|---|
 | `hafiz_block_read` | read a block at a zoom; no id: the tree; `explain`: why it shows as it does | all |
-| `hafiz_block_create` | create a block, optionally with its design and plan | manager, designer, planner |
+| `hafiz_block_create` | create a block (under the root by default), with an inline design for the designer (a plan inline only with its design); in an untracked repo the manager's first one tracks it (any other role's is refused with the way in) | manager, designer, planner |
 | `hafiz_block_edit` | rename, change kind or order, move | manager |
 | `hafiz_block_set_status` | planned → active → done, blocked, dropped; a worker's `done` is a request the policy closes or queues | manager, worker (done only) |
 | `hafiz_doc` | patch a design or plan (`replace` for a whole rewrite); an existing doc needs `expected_version` | manager (plan), designer (design), planner (plan) |
-| `hafiz_step_set` | mark a plan step doing / done / skipped | worker |
-| `hafiz_progress_append` | one finding on a block's progress log | manager, designer (found, question), worker |
+| `hafiz_progress_append` | one finding on a block's progress log; `step` also marks a plan step doing / done / skipped | manager, designer (found, question), worker |
 | `hafiz_decision_record` | a choice made and why; `standing` makes it binding on every agent | manager, designer |
 | `hafiz_thread` | open, append, park (with a gist), resume, resolve a discussion | manager, designer, planner, worker (open, park) |
 | `hafiz_review` | list, accept or reject (with a note) proposals in the review queue; design and plan reviews only under `approver: manager` | manager |
-| `hafiz_focus_set` | centre the context on chosen blocks | manager |
-| `hafiz_track_project` | start tracking an untracked repo | primary agents, untracked repos only |
 
 Dependencies between blocks are not a tool: a design's `interface.consumes` entries name their
 providing block, and every design write keeps the block's `depends_on` edges in step with them.
@@ -184,10 +192,26 @@ review:
   approver: user     # user | manager: who accepts or rejects design and plan reviews
 ```
 
-A design or plan is filed when the agent session that wrote it ends (or when a block is created
-with one); a newer version replaces the pending proposal. Accepting pins the version on the
-block; the next review says which sections changed since it. `hafiz doctor` warns about the
-retired `hafiz.yaml confirm_done` (`ask` reads as `done: gate`, `auto` as `done: queue`).
+A design or plan is filed as it is written (`hafiz_doc`, or inline on `hafiz_block_create`) by
+any role but the approver, so a gate holds from that write on; a newer version replaces the
+pending proposal. A gate holds the writes of the next stage too, whoever drives them: a plan
+write while the design waits, a done while the plan waits (the approver's own writes count as
+accepted). Accepting pins the version on the
+block; the next review says which sections changed since it.
+
+Work starting is policy as well: a block turns active when a worker is spawned on it or writes to
+it (progress, a step, a thread):
+
+```yaml
+status:
+  activate_on:
+    spawn: [worker]
+    write: [worker]
+```
+
+`hafiz doctor` warns about retired settings: `hafiz.yaml confirm_done` (`ask` reads as
+`done: gate`, `auto` as `done: queue`) and `status.activate_on_spawn` (read as
+`activate_on.spawn`).
 
 ## Where data lives
 

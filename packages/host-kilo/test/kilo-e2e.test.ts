@@ -11,7 +11,7 @@ import { type Io, run } from '@hafiz/cli'
 import { loadConfig, resolveProject } from '@hafiz/core'
 import { DaemonClient, type DaemonHandle, readLock, startDaemon } from '@hafiz/gateway-mcp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { TRACK_TOOL, toolNamesForRole } from '../src/index.js'
+import { toolNamesForRole, UNTRACKED_TOOL } from '../src/index.js'
 import { type MockLlm, type RecordedRequest, type ScriptedReply, startMockLlm } from './mock-llm.js'
 
 const BIN = process.env.HAFIZ_KILO_BIN
@@ -335,9 +335,9 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
     expect(texts.some((t) => t.startsWith(prose))).toBe(true)
   }, 120000)
 
-  // ── untracked repo: hafiz_track_project switches the running session to managed mode ──
+  // ── untracked repo: the first hafiz_block_create tracks it and switches the session ──
 
-  it('in an untracked repo the agent tracks it, and its next request is managed', async () => {
+  it('in an untracked repo the agent tracks it with its first block, and its next request is managed', async () => {
     const fresh = tmp('hafiz-kilo-untracked-')
     execFileSync('git', ['init', '-q'], { cwd: fresh })
     const marker = 'track this multi-step build'
@@ -347,12 +347,12 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
         return {
           toolCalls: [
             {
-              name: TRACK_TOOL,
-              arguments: { name: 'Fresh', reason: 'Multi-step build.' },
+              name: UNTRACKED_TOOL,
+              arguments: { title: 'Build', kind: 'feature' },
             },
           ],
         }
-      return { text: 'Tracking this repo with Hafiz as `Fresh`.' }
+      return { text: 'Tracking this repo with Hafiz; created the Build block.' }
     }
     const r = await kilo('auto', marker, 'build', fresh)
     try {
@@ -361,8 +361,8 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
       const reqs = mock.requests.filter((q) => q.raw.includes(marker) && toolsOf(q).length)
       const first = reqs.find((q) => toolResults(q) === 0)
       const next = reqs.find((q) => toolResults(q) > 0)
-      // before: only the track tool, no envelope
-      expect(first && hafizTools(first)).toEqual([TRACK_TOOL])
+      // before: only the first block create, no envelope
+      expect(first && hafizTools(first)).toEqual([UNTRACKED_TOOL])
       expect(systemOf(first as RecordedRequest)).not.toContain('<hafiz hash=')
       // the very next request of the same turn: envelope, rules and the manager's tools
       const config = loadConfig()
@@ -372,6 +372,9 @@ describe.skipIf(!enabled)('real Kilo CLI (HAFIZ_KILO_E2E=1)', () => {
       )
       expect(systemOf(next as RecordedRequest)).toContain('# Hafiz rules — manager')
       expect(next?.raw).toContain('Hafiz now tracks this repo as')
+      expect(next?.raw).toContain('this block was created under its root')
+      // the block is in the view the same turn
+      expect(systemOf(next as RecordedRequest)).toMatch(/# Build \[build-\w+\] planned/)
       expect(existsSync(join(fresh, '.git', 'hafiz', 'project.yaml'))).toBe(true)
     } finally {
       // the plugin started a real daemon for the new project; stop it

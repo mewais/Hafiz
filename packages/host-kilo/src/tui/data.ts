@@ -61,7 +61,7 @@ export type Located =
 /**
  * Finds the Hafiz pointer of `dir`: `$(git rev-parse --git-common-dir)/hafiz/project.yaml`, else a
  * legacy `<repo>/.hafiz/project.yaml`. The git dir is resolved once per process; `locate()` is
- * then only file-system checks, called at startup and when a Hafiz track tool completes.
+ * then only file-system checks, called at startup and when a block create completes untracked.
  */
 export function projectLocator(dir: string, env: NodeJS.ProcessEnv): () => Located {
   const common = gitCommonDir(dir)

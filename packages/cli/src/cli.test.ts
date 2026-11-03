@@ -75,12 +75,12 @@ describe('cli', () => {
 
     out.length = err.length = 0
     expect(await run(['show', child.id, '--zoom', 'FULL'], io)).toBe(0)
-    expect(out.join('\n').split('\n')[0]).toBe(`# Billing [${child.id}] planned`)
+    expect(out.join('\n').split('\n')[0]).toBe(`# Billing [${child.id}] planned · needs plan`)
     expect(out.join('\n')).toContain('Purpose: second')
     expect(err).toEqual([])
     out.length = 0
     expect(await run(['show', child.id, '--zoom', 'LINE'], io)).toBe(0)
-    expect(out).toEqual([`# Billing [${child.id}] planned`])
+    expect(out).toEqual([`# Billing [${child.id}] planned · needs plan`])
     expect(await run(['show', child.id, '--zoom', 'HUGE'], io)).toBe(1)
     expect(err.join('\n')).toContain('unknown zoom')
 
@@ -89,7 +89,7 @@ describe('cli', () => {
     expect(await run(['context', '--role', 'worker', '--focus', child.id], io)).toBe(0)
     const text = out.join('\n')
     expect(text).toMatch(/^<hafiz hash="[0-9a-f]{12}" role="worker">/)
-    expect(text).toContain(`## Billing [${child.id}] planned · focus`)
+    expect(text).toContain(`## Billing [${child.id}] planned · needs plan · focus`)
     expect(err.join('\n')).toMatch(/tokens · 2 blocks · hash/)
     out.length = 0
     expect(
@@ -147,10 +147,10 @@ describe('cli', () => {
 
     out.length = 0
     expect(await run(['show', a.id.slice(0, a.id.length - 1), '--zoom', 'LINE'], io)).toBe(0)
-    expect(out).toEqual([`# Billing [${a.id}] planned`])
+    expect(out).toEqual([`# Billing [${a.id}] planned · needs plan`])
     out.length = 0
     expect(await run(['show', 'bAsKeT', '--zoom', 'LINE'], io)).toBe(0)
-    expect(out).toEqual([`# Basket [${b.id}] planned`])
+    expect(out).toEqual([`# Basket [${b.id}] planned · needs design`])
     out.length = 0
     expect(await run(['history', 'billing', 'design'], io)).toBe(0)
     expect(out.length).toBeGreaterThan(0)

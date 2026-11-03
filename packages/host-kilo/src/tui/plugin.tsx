@@ -652,7 +652,7 @@ const tui: TuiPlugin = async (api, options) => {
       { key: reviewBinding, cmd: 'hafiz.review.open' },
     ],
   })
-  // Kilo's event stream drives every state change: a completed track tool starts the tracked
+  // Kilo's event stream drives every state change: a completed first block create starts the tracked
   // panel, other events refresh it. There is no timer.
   const offs = PANEL_EVENTS.map((type) => api.event.on(type, (e) => hub.onEvent(e)))
   api.lifecycle.onDispose(() => {

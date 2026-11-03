@@ -2,15 +2,19 @@
 # should stay out of the way: no Hafiz writes, no nudge, no project created.
 id: s-small-fix
 size: S
+tiers: [smoke, full]
 description: one-off bug fix, no tree; expect at most a `changed` entry and no nudge
 agent: build
+setup:
+  broken_money: true # the toy repo's formatMoney bug and failing test are this task's job
+  tracked: true # a repo that already has Hafiz, so the manager is managed (counters) from the start
 turns:
   - prompt: >-
       formatMoney(5) in src/money.ts returns "$0.5" but it should return "$0.05" (cents are
       always shown with two digits). Fix it and make sure the tests pass.
 expect:
   hafiz_writes: "<=2" # the rules ask the manager for one `changed` entry
-  tracked: "==0" # the manager may peek at Hafiz or call hafiz_track_project; no project may be created
+  tracked: "==0" # the manager may peek at Hafiz; it creates no block, so no project may be created
   blocks_created: "==0"
   files_written: ">=1"
   tool_calls: ">=2"

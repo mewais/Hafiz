@@ -1,4 +1,4 @@
-<hafiz hash="bf6c4783025d" role="worker">
+<hafiz hash="47c542b77bb5" role="worker">
 # Shop [shop] active
 Overview: Online shop for handmade goods: catalogue, checkout and back-office reporting. One TypeScript monorepo deployed as three services behind an API gateway.
 Topology:
@@ -77,7 +77,7 @@ Open threads:
 - SEPA pending state `thr-sepa`: Invoices has no processing status; add one or keep the invoice open until settled.
 Parked threads: 3DS challenge UX `thr-3ds`
 
-## Reporting [reporting] planned
+## Reporting [reporting] planned · needs design
 </hafiz>
 
 <hafiz-floor>
@@ -88,11 +88,11 @@ Standing decisions (always apply):
 </hafiz-floor>
 
 <!-- manifest
-budget 24000 · view 859 tokens · floor 62 tokens
+budget 24000 · view 863 tokens · floor 62 tokens
 shop                         root       DESIGN    162
 auth                         dependency DIGEST    114
 billing                      ancestor   DESIGN    121
 invoices                     dependency DIGEST    85
 payments                     focus      FULL      368
-reporting                    other      LINE      8
+reporting                    other      LINE      12
 -->

@@ -35,17 +35,26 @@ export function holds(want: string | number, got: MetricValue | undefined): bool
 export function lookup(metrics: RunMetrics, key: string): MetricValue | undefined {
   if (key in metrics.total) return metrics.total[key]
   const role = /^(manager|designer|planner|worker)s?_(.+)$/.exec(key)
-  if (role) return metrics.roles[role[1] as string]?.[role[2] as string]
-  return undefined
+  if (!role) return undefined
+  const [, name, metric] = role as unknown as [string, string, string]
+  const set = metrics.roles[name]
+  // a role with no session did nothing: its counts are 0 (`designer_sessions <=4` holds)
+  if (!set) return metric in metrics.total ? 0 : undefined
+  return set[metric]
 }
+
+/** `a or b`: the alternatives of an expectation key. */
+const alternatives = (key: string) => key.split(/\s+or\s+/).map((k) => k.trim())
 
 export function scoreExpectations(
   expect: Readonly<Record<string, string | number>>,
   metrics: RunMetrics,
 ): Expectation[] {
   return Object.entries(expect).map(([metric, want]) => {
-    const got = lookup(metrics, metric)
-    return { metric, want: String(want), got, pass: holds(want, got) }
+    const values = alternatives(metric).map((k) => lookup(metrics, k))
+    const i = values.findIndex((v) => holds(want, v))
+    const got = values[Math.max(i, 0)]
+    return { metric, want: String(want), got, pass: i >= 0 }
   })
 }
 

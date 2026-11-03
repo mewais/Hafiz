@@ -1,4 +1,5 @@
-// Untracked git repo: one tool, hafiz_track_project, and the switch to managed mode mid-session.
+// Untracked git repo: one tool, hafiz_block_create, whose first call tracks the repo and switches
+// the session to managed mode mid-session.
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -19,9 +20,10 @@ import {
   type KiloConfig,
   type KiloMessageWithParts,
   type KiloToolResult,
+  projectNameOf,
   setToolVisibility,
-  TRACK_TOOL,
   toolNamesForRole,
+  UNTRACKED_TOOL,
 } from '../src/index.js'
 
 const tmp = (p: string) => realpathSync(mkdtempSync(join(tmpdir(), p)))
@@ -101,13 +103,14 @@ const config = loadConfig()
 const managerTools = toolNamesForRole(config, 'manager').sort()
 
 describe('untracked git repo', () => {
-  it('registers the track tool (and the hidden Hafiz tools) and installs agents up front', async () => {
+  it('shows only hafiz_block_create (the rest registered, hidden) and installs agents up front', async () => {
     const r = repo()
     const { hooks } = await untracked(r)
-    expect(Object.keys(hooks.tool ?? {})).toContain(TRACK_TOOL)
+    expect(Object.keys(hooks.tool ?? {})).toContain(UNTRACKED_TOOL)
+    expect(Object.keys(hooks.tool ?? {})).not.toContain('hafiz_track_project')
     expect(Object.keys(hooks.tool ?? {})).toEqual(expect.arrayContaining(managerTools))
-    // per request only the track tool shows
-    expect(await visible(hooks, 's1')).toEqual([TRACK_TOOL])
+    // per request only the first block create shows
+    expect(await visible(hooks, 's1')).toEqual([UNTRACKED_TOOL])
 
     const cfg: KiloConfig = { compaction: { prune: true } }
     await hooks.config?.(cfg)
@@ -116,12 +119,16 @@ describe('untracked git repo', () => {
     expect(Object.keys(cfg.agent ?? {})).toEqual(
       expect.arrayContaining(['manager', 'designer', 'planner', 'worker']),
     )
-    // primary agents may track (manager; others through the global default-role map)
-    expect(cfg.agent?.manager?.permission).toMatchObject({ [TRACK_TOOL]: 'allow' })
-    expect(cfg.permission).toMatchObject({ [TRACK_TOOL]: 'allow' })
-    // subagents may not
-    for (const a of ['designer', 'planner', 'worker', 'general', 'explore'])
-      expect(cfg.agent?.[a]?.permission, a).toMatchObject({ [TRACK_TOOL]: 'deny' })
+    // every role agent sees the first block create (the manager's starts tracking, any other
+    // role's is refused with the way in); other primaries through the global map
+    for (const a of ['manager', 'designer', 'planner', 'worker'])
+      expect(cfg.agent?.[a]?.permission, a).toMatchObject({ [UNTRACKED_TOOL]: 'allow' })
+    expect(cfg.permission).toMatchObject({ [UNTRACKED_TOOL]: 'allow' })
+    // non-role subagents see no Hafiz tool
+    for (const a of ['general', 'explore'])
+      expect(cfg.agent?.[a]?.permission, a).toMatchObject({ 'hafiz_*': 'deny' })
+    for (const a of ['general', 'explore'])
+      expect(cfg.agent?.[a]?.permission, a).not.toHaveProperty(UNTRACKED_TOOL)
     // the store root stays denied even before a store exists
     expect(JSON.stringify(cfg.permission)).toContain(`${r.env.HAFIZ_STORE_ROOT}/**`)
 
@@ -129,13 +136,13 @@ describe('untracked git repo', () => {
     expect(await system(hooks, 's1')).toEqual(['You are Kilo.'])
     expect(readdirSync(r.env.XDG_RUNTIME_DIR as string)).toEqual([])
     expect(readdirSync(r.env.HAFIZ_STORE_ROOT as string)).toEqual([])
-    // a Hafiz tool called before tracking refuses
+    // another Hafiz tool called before tracking refuses, naming the way in
     await expect(
       hooks.tool?.hafiz_block_read?.execute({}, ctx('s1')) as Promise<unknown>,
-    ).rejects.toThrow(/call hafiz_track_project first/)
+    ).rejects.toThrow(/creating the first block \(hafiz_block_create\) starts it/)
   })
 
-  it('hafiz_track_project initialises the repo and switches the session to managed mode', async () => {
+  it('the first hafiz_block_create tracks the repo, creates the block and switches the session', async () => {
     const r = repo()
     const { hooks, daemon } = await untracked(r)
     await hooks.event?.(ev('session.created', { info: { id: 'ses_b', agent: 'build' } }))
@@ -143,13 +150,21 @@ describe('untracked git repo', () => {
       { sessionID: 'ses_b', agent: 'build' },
       { message: {}, parts: [{ type: 'text', text: 'Build the shop' }] },
     )
-    const res = await hooks.tool?.[TRACK_TOOL]?.execute(
-      { name: 'Shop', reason: 'Multi-step build with subagents.' },
+    const res = await hooks.tool?.[UNTRACKED_TOOL]?.execute(
+      { title: 'Checkout', kind: 'feature' },
       ctx('ses_b'),
     )
-    const line = outputOf(res as KiloToolResult)
-    expect(line).toMatch(/^Hafiz now tracks this repo as `Shop` \(prj_\w+\)/)
-    expect(line.split('\n')).toHaveLength(1)
+    const out = outputOf(res as KiloToolResult)
+    const [first, ...rest] = out.split('\n')
+    // the block create's own reply comes first (scripts read its id), then the tracking line
+    const block = JSON.parse(first as string) as { id: string; parentId: string; title: string }
+    expect(block.title).toBe('Checkout')
+    const name = projectNameOf(r.cwd)
+    expect(rest.at(-1)).toMatch(
+      new RegExp(
+        `^Hafiz now tracks this repo as \`${name}\` \\(prj_\\w+\\); this block was created under its root`,
+      ),
+    )
     expect(existsSync(join(r.cwd, '.git', 'hafiz', 'project.yaml'))).toBe(true)
 
     // the daemon knows the calling session: manager role, its worktree
@@ -161,31 +176,34 @@ describe('untracked git repo', () => {
       worktree: r.cwd,
     })
     const project = await read.getProject()
+    expect(project?.name).toBe(name)
     expect(project?.onboarding).toBeUndefined() // empty repo: greenfield
-    // Hafiz records the reason as progress, never as a decision
     const root = project?.rootBlockId as string
+    expect(block.parentId).toBe(root)
+    expect((await read.getBlock(block.id))?.kind).toBe('feature')
+    // Hafiz notes the start as progress, never as a decision
     expect(await read.readLog(root, 'decisions')).toHaveLength(0)
     expect((await read.readLog(root, 'progress')).map((p) => [p.entry.kind, p.entry.text])).toEqual(
-      [['changed', 'Tracking with Hafiz: Multi-step build with subagents.']],
+      [['changed', "Tracking with Hafiz: started with block 'Checkout'."]],
     )
-    expect((await read.readAudit()).map((a) => a.command)).not.toContain('decision.record')
+    const audit = (await read.readAudit()).map((a) => a.command)
+    expect(audit).toEqual(expect.arrayContaining(['project.init', 'block.create']))
+    expect(audit).not.toContain('decision.record')
 
-    // next request: envelope + manager rules, manager tools shown, track tool hidden
+    // next request: envelope + manager rules, every manager tool shown
     const sys = await system(hooks, 'ses_b')
     expect(sys.join('\n')).toContain('# Hafiz rules — manager')
     expect(sys.join('\n')).toMatch(/<hafiz hash="[0-9a-f]{12}" role="manager">/)
-    expect(sys.join('\n')).toContain('Shop')
-    const shown = await visible(hooks, 'ses_b')
-    expect(shown).not.toContain(TRACK_TOOL)
-    expect(shown).toEqual(expect.arrayContaining(managerTools))
+    expect(sys.join('\n')).toContain('Checkout')
+    expect(await visible(hooks, 'ses_b')).toEqual(managerTools)
     // and they work
     const tree = await hooks.tool?.hafiz_block_read?.execute({}, ctx('ses_b'))
-    expect(outputOf(tree as KiloToolResult)).toContain('Shop')
-    // calling it again is harmless
-    const again = await hooks.tool?.[TRACK_TOOL]?.execute({ name: 'Other' }, ctx('ses_b'))
-    expect(outputOf(again as KiloToolResult)).toBe(
-      'Already tracking this repo with Hafiz as `Shop`.',
-    )
+    expect(outputOf(tree as KiloToolResult)).toContain('Checkout')
+    // a later create is just a create
+    const again = await hooks.tool?.[UNTRACKED_TOOL]?.execute({ title: 'Cart' }, ctx('ses_b'))
+    expect(outputOf(again as KiloToolResult)).not.toContain('now tracks')
+    const blocks = await daemon().service.core.backend.read.listBlocks()
+    expect(blocks.map((b) => b.title).sort()).toEqual(['Cart', 'Checkout', name].sort())
   })
 
   it('a subagent cannot start tracking', async () => {
@@ -195,35 +213,59 @@ describe('untracked git repo', () => {
       ev('session.created', { info: { id: 'ses_c', parentID: 'ses_p', agent: 'general' } }),
     )
     await expect(
-      hooks.tool?.[TRACK_TOOL]?.execute(
-        { name: 'Shop' },
+      hooks.tool?.[UNTRACKED_TOOL]?.execute(
+        { title: 'Shop' },
         ctx('ses_c', 'general'),
       ) as Promise<unknown>,
-    ).rejects.toThrow(/subagent cannot start tracking/)
+    ).rejects.toThrow(/only the primary \(manager\) agent starts tracking/)
     expect(existsSync(join(r.cwd, '.git', 'hafiz'))).toBe(false)
   })
 
-  it('brownfield: tracking a repo with code sets onboarding and the manager sees the directive', async () => {
+  it('a designer, planner or worker the user drives directly is refused with the way in, no daemon', async () => {
+    const r = repo()
+    const { hooks } = await untracked(r)
+    const others = config.nudge.others
+    expect(others).toBe(
+      'this repo is not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the manager agent.',
+    )
+    for (const agent of ['designer', 'planner', 'worker']) {
+      const sid = `ses_${agent}`
+      await hooks.event?.(ev('session.created', { info: { id: sid } }))
+      expect(await visible(hooks, sid)).toEqual([UNTRACKED_TOOL])
+      await expect(
+        hooks.tool?.[UNTRACKED_TOOL]?.execute(
+          { title: 'Shop' },
+          ctx(sid, agent),
+        ) as Promise<unknown>,
+      ).rejects.toThrow(`${UNTRACKED_TOOL}: ${others}`)
+      // its nudge says the same, once the session looks multi-step
+      for (let i = 0; i < 15; i++)
+        await hooks['chat.message']?.(
+          { sessionID: sid, agent },
+          { message: {}, parts: [{ type: 'text', text: 'hi' }] },
+        )
+      expect((await system(hooks, sid)).at(-1)).toBe(`Hafiz: ${others}`)
+    }
+    // nothing tracked, nothing started
+    expect(existsSync(join(r.cwd, '.git', 'hafiz'))).toBe(false)
+    expect(readdirSync(r.env.XDG_RUNTIME_DIR as string)).toEqual([])
+    expect(readdirSync(r.env.HAFIZ_STORE_ROOT as string)).toEqual([])
+  })
+
+  it('brownfield: the first block tracks a repo with code, and onboarding is due at once', async () => {
     const files = Object.fromEntries(
       ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts'].map((f) => [f, `// ${f}\n`]),
     )
     const r = repo(files)
     const { hooks, daemon } = await untracked(r)
-    const res = await hooks.tool?.[TRACK_TOOL]?.execute({ name: 'Legacy' }, ctx('ses_b'))
-    expect(outputOf(res as KiloToolResult)).toContain('onboarding is pending')
-    const p = await daemon().service.core.backend.read.getProject()
-    expect(p?.onboarding).toBe('pending')
-    // a one-off fix needs no designer: nothing is asked until tracked work starts
-    expect((await system(hooks, 'ses_b')).join('\n')).not.toContain('Onboarding pending')
-    const core = daemon().service.core
-    await core.blockCreate(
-      { sessionId: 'ses_b', role: 'manager' },
-      { parent: p?.rootBlockId as string, title: 'Payments' },
-    )
+    const res = await hooks.tool?.[UNTRACKED_TOOL]?.execute({ title: 'Payments' }, ctx('ses_b'))
+    expect(outputOf(res as KiloToolResult)).toContain('onboarding is due')
+    // the block is tracked work: the onboarding heuristic's pending flag is due already
+    expect((await daemon().service.core.backend.read.getProject())?.onboarding).toBe('due')
     const sys = (await system(hooks, 'ses_b')).join('\n')
-    expect(sys).toContain('Onboarding pending')
+    expect(sys).toContain('Onboarding is due')
     // the rules (injected: the agent's prompt predates tracking) say what onboarding means
-    expect(sys).toContain('first spawn the designer once on\nthe root block')
+    expect(sys).toContain('the next designer you spawn writes\nthe root design first')
   })
 })
 

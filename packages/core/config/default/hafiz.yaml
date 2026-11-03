@@ -27,14 +27,16 @@ daemon:
   idle_shutdown_seconds: 900
 onboarding:
   # Tracking a repo that has commits and at least this many tracked source files (docs, licences
-  # and dotfiles do not count) marks the project `onboarding: pending`: the manager has the
-  # designer describe the existing codebase in the root design before new work. It is asked only
+  # and dotfiles do not count) marks the project `onboarding: pending`: the first designer spawned
+  # describes the existing codebase in the root design before its own block. It is asked only
   # once tracked work starts (first block, first spawn on a block, or a root doc write), so a
-  # one-off fix does not spawn a designer.
+  # one-off fix does not spawn a designer. The first root design clears it.
   min_source_files: 5
-  # One line at the top of these roles' views once tracked work has started on a pending project; the rules say what to do.
-  directive: "Onboarding pending: this repo had code before Hafiz started tracking it; follow your rules' Onboarding before new work."
-  roles: [manager]
+  # One line per role at the top of its view while onboarding is due (a plain string instead
+  # applies to the roles in `roles`). The designer's holds on any block it is spawned on.
+  directive:
+    manager: "Onboarding is due: the next designer you spawn writes the root design first."
+    designer: "Onboarding: this repo had code before Hafiz tracked it. Write the root design first (describe the code as it is: overview, topology, interface, constraints), then your block."
 host:
   kilo:
     shaper: auto                   # proxy | hooks | auto (hooks when the host exposes them)

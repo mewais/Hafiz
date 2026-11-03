@@ -14,15 +14,7 @@ import type { Config } from '../config/schema.js'
 import { type Clock, systemClock } from '../domain/clock.js'
 import { ValidationError } from '../domain/errors.js'
 import { StatusMachine } from '../domain/status.js'
-import type {
-  Actor,
-  BlockId,
-  DocType,
-  Proposal,
-  ReviewType,
-  SectionValue,
-  Session,
-} from '../domain/types.js'
+import type { Actor, BlockId, DocType, Proposal, SectionValue, Session } from '../domain/types.js'
 import { createProvider, NoneProvider } from '../llm/providers.js'
 import type { LLMProvider, LLMRelay } from '../llm/types.js'
 import { ComplianceEngine, type ComplianceWhen } from '../session/compliance.js'
@@ -72,9 +64,7 @@ import {
   decisionRecord,
   type ProgressAppendArgs,
   progressAppend,
-  type StepSetArgs,
   type SystemProgressArgs,
-  stepSet,
   systemProgress,
   type ThreadAppendArgs,
   type ThreadOpenArgs,
@@ -107,7 +97,7 @@ import {
   treeListRaw,
   treeSummary,
 } from './reads.js'
-import { fileCreated, fileSessionReviews, reviewList, reviewShow } from './review.js'
+import { reviewList, reviewShow } from './review.js'
 import type { CommandResult, CoreContext } from './tx.js'
 
 export { focusFromPolicy } from '../session/service.js'
@@ -151,7 +141,6 @@ export interface CommandArgs {
   'edge.remove': EdgeArgs
   'doc.write': DocWriteArgs
   'doc.patch': DocWriteArgs
-  'step.set': StepSetArgs
   'progress.append': ProgressAppendArgs
   'decision.record': DecisionRecordArgs
   'thread.open': ThreadOpenArgs
@@ -270,9 +259,6 @@ export class Core {
 
   // ───────────────────────────── logs & threads ─────────────────────────────
 
-  stepSet(by: Actor, args: StepSetArgs) {
-    return stepSet(this.ctx, by, args)
-  }
   progressAppend(by: Actor, args: ProgressAppendArgs) {
     return progressAppend(this.ctx, by, args)
   }
@@ -304,14 +290,9 @@ export class Core {
   sessionOpen(args: SessionOpenArgs) {
     return sessionOpen(this.ctx, args)
   }
-  /**
-   * End a session. First the designs and plans it wrote go up for review (`policies.yaml
-   * review`); the proposals filed are returned for the gateway to announce.
-   */
-  async sessionEnd(sessionId: string): Promise<{ proposals: Proposal[] }> {
-    const proposals = await fileSessionReviews(this.ctx, sessionId)
-    await sessionEnd(this.ctx, sessionId)
-    return { proposals }
+  /** End a session (designs and plans went up for review as they were written). */
+  sessionEnd(sessionId: string) {
+    return sessionEnd(this.ctx, sessionId)
   }
   countersAdd(sessionId: string, delta: Record<string, number>) {
     return countersAdd(this.ctx, sessionId, delta)
@@ -369,16 +350,12 @@ export class Core {
     return proposalAdd(this.ctx, p, by)
   }
   /** Pending proposals (or those of `status`, or `all`) with their review-table row. */
-  reviewList(by: Actor, status: Proposal['status'] | 'all' = 'pending') {
-    return reviewList(this.ctx, by, status)
+  reviewList(by: Actor, status: Proposal['status'] | 'all' = 'pending', resolvable = false) {
+    return reviewList(this.ctx, by, status, resolvable)
   }
   /** A proposal and the doc it is about, at the version under review. */
   reviewShow(by: Actor, id: string) {
     return reviewShow(this.ctx, by, id)
-  }
-  /** File the reviews of a block created with an inline design or plan (`block.create` hook). */
-  reviewFileCreated(by: Actor, block: BlockId, types: readonly ReviewType[]) {
-    return fileCreated(this.ctx, by, block, types)
   }
 
   // ───────────────────────────── reads & views ─────────────────────────────
@@ -431,7 +408,6 @@ export class Core {
       'edge.remove': (b, a) => this.edgeRemove(b, a),
       'doc.write': (b, a) => this.docWrite(b, a),
       'doc.patch': (b, a) => this.docPatch(b, a),
-      'step.set': (b, a) => this.stepSet(b, a),
       'progress.append': (b, a) => this.progressAppend(b, a),
       'decision.record': (b, a) => this.decisionRecord(b, a),
       'thread.open': (b, a) => this.threadOpen(b, a),

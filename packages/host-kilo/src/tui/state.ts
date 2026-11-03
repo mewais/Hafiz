@@ -4,14 +4,15 @@
 //   connecting  tracked, the daemon has not answered yet
 //   tracked     the full panel
 // Nothing polls and nothing watches the file system. The pointer is resolved at startup and once
-// more when a `hafiz_track_project` tool part completes (the only way tracking starts inside the
-// Kilo session); tracking started elsewhere (`hafiz init` in a terminal) shows at the next TUI
+// more when a `hafiz_block_create` tool part completes (the first one tracks the repo: the only
+// way tracking starts inside the Kilo session); tracking started elsewhere (`hafiz init` in a terminal) shows at the next TUI
 // start. A tracked panel refreshes on events that can change what it shows, and a daemon that is
 // not up yet is retried by the next such event.
 import type { Located, TuiProject } from './data.js'
 import type { TuiStore } from './store.js'
 
-export const TRACK_TOOL = 'hafiz_track_project'
+/** The tool whose completion may have started tracking (the first block create does). */
+export const TRACK_TOOL = 'hafiz_block_create'
 
 /** Kilo events the panel listens to. */
 export const PANEL_EVENTS = [
@@ -64,7 +65,7 @@ export class TuiPanel {
     return () => this.listeners.delete(fn)
   }
 
-  /** A Kilo event. Untracked: only a completed track tool matters. Tracked: refresh. */
+  /** A Kilo event. Untracked: only a completed block create matters. Tracked: refresh. */
   onEvent(e: { type: string; properties?: Record<string, unknown> }): void {
     if (this.disposed) return
     if (this.located.kind === 'tracked') {

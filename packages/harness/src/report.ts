@@ -1,7 +1,7 @@
 // Reports: one compact markdown table per task (means over --repeat runs), the JSON the
 // `compare` command diffs, and the baseline-vs-tuned diff itself.
 import type { MetricSet, MetricValue, RunMetrics } from './metrics.js'
-import type { RunResult } from './runner.js'
+import type { CapRejectionEntry, RunResult } from './runner.js'
 import { flatten } from './score.js'
 
 export interface Report {
@@ -83,6 +83,44 @@ export function meanMetrics(all: readonly RunMetrics[]): RunMetrics {
 
 const mdRow = (cells: string[]) => `| ${cells.join(' | ')} |`
 
+const median = (xs: number[]): number => {
+  const v = [...xs].sort((a, b) => a - b)
+  const m = Math.floor(v.length / 2)
+  return v.length % 2 ? (v[m] as number) : ((v[m - 1] as number) + (v[m] as number)) / 2
+}
+
+/**
+ * Cap rejections per section (`design.interface`, `progress`, …): how often, by which roles, and
+ * the median and largest overage over the cap, so a run tells whether a cap or the writer moves.
+ */
+export function capTable(entries: readonly CapRejectionEntry[]): string[] {
+  const by = new Map<string, { roles: Set<string>; over: number[] }>()
+  for (const e of entries)
+    for (const x of e.sections) {
+      const row = by.get(x.section) ?? { roles: new Set<string>(), over: [] }
+      row.roles.add(e.role ?? '?')
+      row.over.push(x.cap > 0 ? ((x.measured - x.cap) / x.cap) * 100 : 0)
+      by.set(x.section, row)
+    }
+  if (!by.size) return []
+  const pct = (n: number) => `+${Math.round(n)}%`
+  return [
+    mdRow(['cap rejected', 'roles', 'count', 'median over', 'max over']),
+    mdRow(['---', '---', '---:', '---:', '---:']),
+    ...[...by]
+      .sort((a, b) => b[1].over.length - a[1].over.length || a[0].localeCompare(b[0]))
+      .map(([section, r]) =>
+        mdRow([
+          section,
+          [...r.roles].sort().join(', '),
+          String(r.over.length),
+          pct(median(r.over)),
+          pct(Math.max(...r.over)),
+        ]),
+      ),
+  ]
+}
+
 function taskTable(rs: RunResult[]): string[] {
   const first = rs[0] as RunResult
   const m = meanMetrics(rs.map((r) => r.metrics))
@@ -125,6 +163,10 @@ function taskTable(rs: RunResult[]): string[] {
           `- run ${d.run}: ${d.agent ?? '?'} on ${d.block ?? '?'}: ${d.error} (prompt: ${d.prompt.slice(0, 80).replace(/\s+/g, ' ')})`,
       ),
     )
+  const caps = capTable(rs.flatMap((r) => r.capRejections ?? []))
+  if (caps.length) out.push('', ...caps)
+  const saved = rs.reduce((n, r) => n + (r.transcripts?.length ?? 0), 0)
+  if (saved) out.push('', `subagent transcripts: ${saved} (sessions/ in each run directory)`)
   const errs = rs.filter((r) => r.error).map((r) => `run ${r.repeat}: ${r.error}`)
   if (errs.length) out.push('', ...errs.map((e) => `error: ${e}`))
   return out

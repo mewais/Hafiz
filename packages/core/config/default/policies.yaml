@@ -11,6 +11,13 @@ status:
     to_dropped: [reason_required]
     reopen:     [reason_required]          # also marks the digest stale (command effect)
   activate_parent_on_child_active: true
+  # Work starting on a `planned` block activates it, and its planned ancestors as above, in the
+  # same write: a session of a `spawn` role opened on it (spawned on it), or a write by a `write`
+  # role on it (progress, a plan step, a thread opened), e.g. a worker the user talks to directly.
+  # Designing and planning are not work started, so those roles leave the status alone.
+  activate_on:
+    spawn: [worker]
+    write: [worker]
 epoch:
   minor_paths: [progress, steps, threads]     # writes here never bump the project epoch
 caps:
@@ -32,7 +39,7 @@ review:
   # only: siblings and parents go on). design gates spawning the planner or a worker on the
   # block, plan gates workers, done gates the transition itself (set_status asks for
   # confirmation, a worker's done request waits for the manager).
-  design: queue      # filed when the session that wrote the design ends, or on block.create
+  design: queue      # filed on every design write by a non-approver (doc or inline on block.create)
   plan:   queue
   done:   gate       # default holds done for confirmation (previously confirm_done: ask)
   drafts: queue      # condenser/drafter proposals; off | queue (drafts never gate)

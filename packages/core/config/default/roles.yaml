@@ -10,7 +10,7 @@ roles:
     view: default
     focus_policy: all_active
     tools: [context.*, block.*, tree.list, doc.patch:plan, decision.record, thread.*,
-            progress.append, focus.set, proposal.*, session.status]
+            progress.append, proposal.*, session.status]
     rules: rules/manager.md
   designer:
     view: designer
@@ -20,7 +20,7 @@ roles:
     # block.create: external stubs, sub-components; progress: findings and questions only
     rules: rules/designer.md
   planner:
-    view: default
+    view: planner                   # default, plus the designs of the blocks under its block
     focus_policy: spawned_block
     tools: [context.*, block.read, tree.list, block.create, doc.write:plan, doc.patch:plan, thread.*]
     rules: rules/planner.md
@@ -28,7 +28,7 @@ roles:
     view: worker
     focus_policy: spawned_block
     # the digest goes with the done request (hafiz_block_set_status), not through hafiz_doc
-    tools: [context.*, block.read, step.set, progress.append, thread.open, thread.park,
+    tools: [context.*, block.read, progress.append, thread.open, thread.park,
             block.request_done]
     rules: rules/worker.md
   user:

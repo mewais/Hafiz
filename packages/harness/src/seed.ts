@@ -1,17 +1,10 @@
 // Pre-seed a project's block tree through the daemon, as the human (role `user`), so a task can
-// start from a realistic multi-level tree without a model building it first.
+// start from a realistic multi-level tree without a model building it first. Designs and plans
+// are the task's own sections (validated by Core against the block kind's schema), so a seeded
+// tree reads like one a designer and a planner wrote: the consumes entries derive the edges.
 import type { DaemonClient } from '@hafiz/gateway-mcp'
 import type { SeedNode } from './tasks.js'
 
-const design = (purpose: string) => ({
-  purpose,
-  scope: ['in: the behaviour described by the purpose', 'out: everything else'],
-  interface: { provides: [], consumes: [] },
-})
-const plan = (steps: string[]) => ({
-  steps: steps.map((title, i) => ({ id: `s${i + 1}`, title })),
-  acceptance: ['tests pass'],
-})
 const digest = {
   outcome: 'Seeded as already done.',
   interface_delta: ['none'],
@@ -30,8 +23,8 @@ export async function seedTree(
       parent,
       title: n.title,
       ...(n.kind ? { kind: n.kind } : {}),
-      ...(n.purpose ? { design: design(n.purpose) } : {}),
-      ...(n.steps ? { plan: plan(n.steps) } : {}),
+      ...(n.design ? { design: n.design } : {}),
+      ...(n.plan ? { plan: n.plan } : {}),
     })
     const id = result.id
     if (n.as) vars[n.as] = id

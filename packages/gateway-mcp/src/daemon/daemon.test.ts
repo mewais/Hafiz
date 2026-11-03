@@ -42,6 +42,8 @@ async function seed(u: DaemonClient) {
   const { result } = await u.dispatch<{ id: string }>('block.create', {
     parent: root,
     title: 'Billing',
+    design: { purpose: 'p', scope: ['in: x'], interface: { provides: [] } },
+    plan: { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] },
   })
   await u.dispatch('block.set_status', { id: result.id, status: 'active' })
   return { root, block: result.id }
@@ -119,7 +121,7 @@ describe('daemon', () => {
     expect(conflict).toBeInstanceOf(RpcError)
     expect(conflict.code).toBe(RPC_CODES.conflict)
     expect(conflict.hafizCode).toBe('conflict')
-    expect(conflict.data.current.version).toBe(1)
+    expect(conflict.data.current.version).toBe(2) // the seed designed it (v1)
 
     const w = await client(d)
     await w.openSession({ id: 'w', host: 't', role: 'worker', spawnedBlock: block })

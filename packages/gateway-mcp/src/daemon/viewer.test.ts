@@ -27,16 +27,12 @@ async function as(d: DaemonHandle, id: string, role: string, spawnedBlock?: stri
 
 async function seed(u: DaemonClient) {
   const root = (await u.treeList())[0]?.id as string
+  // designed and planned on creation (a plan needs the design, §3.2)
   const { result } = await u.dispatch<{ id: string }>('block.create', {
     parent: root,
     title: 'Billing',
-  })
-  const block = result.id
-  await u.dispatch('block.set_status', { id: block, status: 'active' })
-  await u.dispatch('doc.write', {
-    block,
-    type: 'plan',
-    sections: {
+    design: { purpose: 'p', scope: ['in: x'], interface: { provides: [] } },
+    plan: {
       steps: [
         { id: 's1', title: 'Model' },
         { id: 's2', title: 'Webhooks' },
@@ -44,7 +40,14 @@ async function seed(u: DaemonClient) {
       acceptance: ['charges succeed'],
     },
   })
-  await u.dispatch('step.set', { block, stepId: 's1', status: 'done' })
+  const block = result.id
+  await u.dispatch('block.set_status', { id: block, status: 'active' })
+  await u.dispatch('progress.append', {
+    block,
+    kind: 'done',
+    text: 'Model done.',
+    step: { id: 's1', status: 'done' },
+  })
   await u.dispatch('decision.record', {
     block,
     title: 'No card data',
@@ -143,15 +146,21 @@ describe('review queue over the daemon (CLI and TUI)', () => {
     config.policies.review.design = 'gate'
     const d = await boot({ config })
     const u = await as(d, 'cli', 'user')
-    const { block } = await seed(u)
+    // a bare block: its designer writes the first design
+    const root = (await u.treeList())[0]?.id as string
+    const block = (
+      await u.dispatch<{ id: string }>('block.create', { parent: root, title: 'Billing' })
+    ).result.id
     const m = await as(d, 'mgr', 'manager')
     const v = await as(d, 'kilo-tui', 'viewer')
     let n = 0
-    /** A designer session on the block writes its design and ends: the review ids it filed. */
+    /** A designer session on the block writes its design and ends: the pending review it filed. */
     const designer = async (purpose: string) => {
       const ds = await as(d, `ds${++n}`, 'designer', block)
-      await ds.dispatch('doc.patch', { block, type: 'design', sections: design(purpose) })
-      return (await ds.sessionEnd()).reviews
+      await ds.dispatch('doc.write', { block, type: 'design', sections: design(purpose) })
+      await ds.sessionEnd()
+      const pending = await d.service.core.backend.read.listProposals({ status: 'pending' })
+      return pending.filter((p) => p.source === 'review' && p.blockId === block).map((p) => p.id)
     }
 
     const [id] = await designer('money in')

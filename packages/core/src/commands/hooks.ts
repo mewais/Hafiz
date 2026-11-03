@@ -5,7 +5,7 @@
 
 import { ValidationError } from '../domain/errors.js'
 import { reviewVersion } from '../domain/review.js'
-import { type Actor, type Block, REVIEW_TYPES, type SectionValue } from '../domain/types.js'
+import type { Actor, SectionValue } from '../domain/types.js'
 import type { Notice } from '../schema/validate.js'
 import type { AfterHook, BeforeHook } from './catalogue.js'
 import type { Core } from './core.js'
@@ -43,7 +43,6 @@ type HookHost = Pick<
   | 'draftDigest'
   | 'complianceRun'
   | 'refreshAgentFocus'
-  | 'reviewFileCreated'
   | 'backend'
 >
 
@@ -79,15 +78,6 @@ export const AFTER_HOOKS: Record<
 
   async announce_proposals(_core, { sink }) {
     await sink.proposalsAdded()
-    return undefined
-  },
-
-  /** `block.create` with an inline design or plan by a non-approver: file their reviews. */
-  async file_reviews(core, c) {
-    const block = (c.result as Block | undefined)?.id
-    const types = REVIEW_TYPES.filter((t) => c.args[t] !== undefined)
-    if (!block || !types.length) return undefined
-    if ((await core.reviewFileCreated(c.by, block, types)).length) await c.sink.proposalsAdded()
     return undefined
   },
 

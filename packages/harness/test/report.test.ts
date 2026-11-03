@@ -30,6 +30,8 @@ const result = (m: RunMetrics, repeat = 1): RunResult => ({
   metrics: m,
   filesChanged: [],
   rejected: [],
+  capRejections: [],
+  transcripts: [],
   expectations: scoreExpectations({ progress: '>=2', done_requests: '==1' }, m),
 })
 
@@ -75,6 +77,24 @@ describe('report', () => {
     const md = renderMarkdown(buildReport([r], { model: 'p/m', mock: false }))
     expect(md).toContain('| spawns rejected | 1 | 1 |')
     expect(md).toContain('- run 1: worker on b1: task: no worker on X (prompt: do it)')
+  })
+
+  it('tables cap rejections per section: count, roles, median and largest overage', () => {
+    const r = result(metrics({ cap_rejections: 3 }))
+    const rej = (role: string, section: string, measured: number, cap: number) => ({
+      session: 's',
+      role,
+      command: 'doc.patch',
+      sections: [{ section, measured, cap }],
+    })
+    r.capRejections = [
+      rej('designer', 'design.interface', 900, 600),
+      rej('designer', 'design.interface', 720, 600),
+      rej('worker', 'progress', 120, 60),
+    ]
+    const md = renderMarkdown(buildReport([r], { model: 'p/m', mock: false }))
+    expect(md).toContain('| design.interface | designer | 2 | +35% | +50% |')
+    expect(md).toContain('| progress | worker | 1 | +100% | +100% |')
   })
 
   it('averages repeats and reports the pass rate', () => {

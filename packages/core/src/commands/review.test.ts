@@ -1,5 +1,6 @@
-// The review table (`policies.yaml review`): which events file a proposal, which hold the block,
-// re-filing on a new version, approval pinning, approver gating and rejection notes.
+// The review table (`policies.yaml review`): which writes file a proposal (every design/plan
+// write by a non-approver, in its transaction), which hold the block, re-filing on a new version,
+// approval pinning, approver gating and rejection notes.
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from '../config/load.js'
 import type { ReviewPolicy } from '../config/schema.js'
@@ -12,6 +13,7 @@ import type { DispatchSink } from './hooks.js'
 
 const user: Actor = { sessionId: 'cli', role: 'user' }
 const mgr: Actor = { sessionId: 'm1', role: 'manager' }
+const pl: Actor = { sessionId: 'p1', role: 'planner' }
 const design = {
   purpose: 'money in',
   scope: ['in: invoices'],
@@ -36,16 +38,30 @@ async function setup(review: Partial<ReviewPolicy> = {}) {
   const root = result.root.id
   const block = (await core.blockCreate(user, { parent: root, title: 'Billing' })).result
   await core.sessionOpen({ id: 'm1', host: 't', role: 'manager' })
+  await core.sessionOpen({ id: 'p1', host: 't', role: 'planner' })
   let n = 0
-  /** One agent session of `role` that runs `fn` on the block and ends: what it filed. */
+  const reviews = async () =>
+    (await core.backend.read.listProposals({ status: 'pending' })).filter(
+      (p) => p.source === 'review',
+    )
+  /** One agent session of `role` that runs `fn` on the block: the reviews its writes filed. */
   const round = async (role: string, fn: (by: Actor) => Promise<unknown>) => {
     const id = `${role}-${++n}`
     await core.sessionOpen({ id, host: 't', role, spawnedBlock: block.id })
+    const before = new Map((await reviews()).map((p) => [p.id, p.payload.args.version]))
     await fn({ sessionId: id, role })
-    return (await core.sessionEnd(id)).proposals
+    // filed on write: nothing waits for the session to end
+    const filed = (await reviews()).filter((p) => before.get(p.id) !== p.payload.args.version)
+    await core.sessionEnd(id)
+    expect((await reviews()).length).toBe(
+      before.size + filed.filter((p) => !before.has(p.id)).length,
+    )
+    return filed
   }
   const designs = (sections: Record<string, unknown>) =>
-    round('designer', (by) => core.docPatch(by, { block: block.id, type: 'design', sections }))
+    round('designer', (by) =>
+      core.docPatch(by, { block: block.id, type: 'design', sections, create: true }),
+    )
   const node = async () =>
     (await core.treeSummary(user)).nodes.find((x) => x.id === block.id) as NonNullable<
       Awaited<ReturnType<Core['treeSummary']>>['nodes'][number]
@@ -68,7 +84,7 @@ function sink() {
 
 describe('review table: design and plan rows', () => {
   it.each<ReviewMode>(['off', 'queue', 'gate'])(
-    'design %s: filed at the designer session end; only gate holds the block',
+    'design %s: filed on the designer write; only gate holds the block',
     async (mode) => {
       const { core, designs, node, heading } = await setup({ design: mode })
       const filed = await designs(design)
@@ -79,12 +95,14 @@ describe('review table: design and plan rows', () => {
         expect(list[0]).toMatchObject({ kind: 'design', version: 1, mode, blockTitle: 'Billing' })
         expect((await node()).review?.design).toMatchObject({ version: 1, status: 'pending', mode })
       } else expect((await node()).review).toBeUndefined()
-      expect(await heading()).toMatch(mode === 'gate' ? /planned · review design$/ : /planned$/)
+      expect(await heading()).toMatch(
+        mode === 'gate' ? /planned · review design · needs plan$/ : /planned · needs plan$/,
+      )
     },
   )
 
   it.each<ReviewMode>(['off', 'queue', 'gate'])(
-    'plan %s: filed at the planner session end',
+    'plan %s: filed on the planner write',
     async (mode) => {
       const { core, block, round, node, heading } = await setup({ plan: mode })
       await core.docWrite(user, { block: block.id, type: 'design', sections: design })
@@ -141,16 +159,49 @@ describe('review table: design and plan rows', () => {
     expect((await core.reviewShow(user, first?.id as string)).changed).toBeUndefined()
   })
 
-  it('accepting an older version files the newer one at once', async () => {
-    const { core, block, designs, read } = await setup()
-    const [p] = await designs(design)
-    await core.docPatch(user, { block: block.id, type: 'design', sections: { purpose: 'money' } })
-    await core.proposalResolve(user, { id: p?.id as string, accept: true })
-    expect((await read().getBlock(block.id))?.reviewed).toEqual({ design: 1 })
-    const pending = (await core.reviewList(user)).filter((x) => x.source === 'review')
-    expect(pending.map((x) => [x.version, x.note])).toEqual([
-      [2, "design v2 of 'Billing': changed since v1: purpose"],
+  it('write → pending; patch → the same single item at the new version; accept → pinned', async () => {
+    const { core, block, read, heading } = await setup({ design: 'gate' })
+    const des: Actor = { sessionId: 'd1', role: 'designer' }
+    await core.sessionOpen({ id: 'd1', host: 't', role: 'designer', spawnedBlock: block.id })
+    await core.docWrite(des, { block: block.id, type: 'design', sections: design })
+    const one = (await core.reviewList(user)).filter((x) => x.source === 'review')
+    expect(one.map((x) => [x.kind, x.version])).toEqual([['design', 1]])
+    expect(await heading()).toMatch(/· review design/)
+    await core.docPatch(des, {
+      block: block.id,
+      type: 'design',
+      sections: { purpose: 'money' },
+      expectedVersion: 1,
+    })
+    const two = (await core.reviewList(user)).filter((x) => x.source === 'review')
+    expect(two.map((x) => [x.id, x.version, x.note])).toEqual([
+      [one[0]?.id, 2, "design v2 of 'Billing': new: purpose, scope, interface (+1 provides)"],
     ])
+    // the session is still open: the gate holds already
+    expect((await read().getSession('d1'))?.endedAt).toBeUndefined()
+    await core.proposalResolve(user, { id: one[0]?.id as string, accept: true })
+    expect((await read().getBlock(block.id))?.reviewed).toEqual({ design: 2 })
+    expect((await core.reviewList(user)).filter((x) => x.source === 'review')).toEqual([])
+    expect(await heading()).not.toMatch(/review design/)
+  })
+
+  it('a plan the planner writes under plan: gate holds workers until accepted, which pins it', async () => {
+    const { core, block, read, node } = await setup({ plan: 'gate' })
+    await core.docWrite(user, { block: block.id, type: 'design', sections: design })
+    await core.docWrite(pl, { block: block.id, type: 'plan', sections: plan })
+    const [p] = (await core.reviewList(user)).filter((x) => x.source === 'review')
+    expect(p).toMatchObject({ kind: 'plan', version: 1, mode: 'gate' })
+    expect((await node()).review?.plan).toMatchObject({ status: 'pending', mode: 'gate' })
+    await core.dispatch(user, 'proposal.accept', { id: p?.id })
+    expect((await read().getBlock(block.id))?.reviewed).toEqual({ plan: 1 })
+    expect((await node()).review).toBeUndefined()
+  })
+
+  it("the approver's own writes are not filed (approver: manager; the user always)", async () => {
+    const { core, block, read } = await setup({ plan: 'gate', approver: 'manager' })
+    await core.docWrite(user, { block: block.id, type: 'design', sections: design })
+    await core.docWrite(user, { block: block.id, type: 'plan', sections: plan })
+    expect((await read().listProposals()).filter((p) => p.source === 'review')).toEqual([])
   })
 
   it('block.create with an inline design files it at once, unless the creator approves reviews', async () => {
@@ -164,7 +215,7 @@ describe('review table: design and plan rows', () => {
       (p) => p.source === 'review',
     )
     expect(pending.map((p) => [p.blockId, p.kind])).toEqual([[ledger.id, 'design']])
-    await core.dispatch(mgr, 'block.create', { parent: root, title: 'Tax', design }, s)
+    await core.dispatch(user, 'block.create', { parent: root, title: 'Tax', design }, s)
     await core.dispatch(user, 'block.create', { parent: root, title: 'Fees', design }, s)
     expect((await read().listProposals({ status: 'pending' })).length).toBe(1)
   })
@@ -193,6 +244,36 @@ describe('review table: approver, rejection', () => {
     expect((await core.reviewList(user, 'rejected'))[0]?.resolutionNote).toBe('not a finding')
   })
 
+  it('the review list holds only what the caller may resolve: approver user hides design reviews from the manager', async () => {
+    const { core, block, designs } = await setup()
+    await designs(design)
+    await core.proposalAdd(
+      {
+        kind: 'progress',
+        source: 'compliance',
+        blockId: block.id,
+        payload: {
+          command: 'progress.append',
+          args: { block: block.id, kind: 'found', text: 'x' },
+        },
+      },
+      mgr,
+    )
+    expect((await core.reviewList(mgr, 'pending', true)).map((p) => p.source)).toEqual([
+      'compliance',
+    ])
+    expect((await core.reviewList(user, 'pending', true)).map((p) => p.source).sort()).toEqual([
+      'compliance',
+      'review',
+    ])
+  })
+
+  it('approver manager: the manager sees design reviews in the list', async () => {
+    const { core, designs } = await setup({ approver: 'manager' })
+    await designs(design)
+    expect((await core.reviewList(mgr, 'pending', true)).map((p) => p.source)).toEqual(['review'])
+  })
+
   it('approver manager: the manager resolves design reviews too', async () => {
     const { core, block, designs, read } = await setup({ approver: 'manager' })
     const [p] = await designs(design)
@@ -218,23 +299,29 @@ describe('review table: approver, rejection', () => {
       status: 'rejected',
       resolutionNote: 'split the index',
     })
-    expect(await heading()).toMatch(/· design rejected$/)
-    // the same version is never filed again; a revision is
-    await core.sessionOpen({ id: 'designer-1', host: 't', role: 'designer' })
-    expect((await core.sessionEnd('designer-1')).proposals).toEqual([])
+    expect(await heading()).toMatch(/· design rejected · needs plan$/)
+    // the same version is never filed again; a revision is, as a new item
     const [next] = await designs({ purpose: 'money in, by index' })
+    expect(next?.id).not.toBe(p?.id)
     expect(next?.payload.args.version).toBe(2)
     expect((await node()).review?.design?.status).toBe('pending')
     await core.dispatch(user, 'proposal.accept', { id: next?.id }, s)
     expect(notified.at(-1)?.text).toBe(`design v2 of 'Billing' [${block.id}] approved by user`)
-    expect(await heading()).toMatch(/planned$/)
+    expect(await heading()).toMatch(/planned · needs plan$/)
   })
 })
 
 describe('review table: done and drafts rows', () => {
+  /** The user designs and plans the block (its own writes are approved) and starts it. */
+  async function started(review: Partial<ReviewPolicy>) {
+    const s = await setup(review)
+    await s.core.docWrite(user, { block: s.block.id, type: 'design', sections: design })
+    await s.core.docWrite(user, { block: s.block.id, type: 'plan', sections: plan })
+    await s.core.blockSetStatus(user, { id: s.block.id, status: 'active' })
+    return s
+  }
   async function finish(mode: ReviewMode) {
-    const { core, block, read } = await setup({ done: mode })
-    await core.blockSetStatus(user, { id: block.id, status: 'active' })
+    const { core, block, read } = await started({ done: mode })
     const w: Actor = { sessionId: 'w1', role: 'worker' }
     const r = await core.blockRequestDone(w, { id: block.id, digest })
     const status = (await read().getBlock(block.id))?.status
@@ -259,8 +346,7 @@ describe('review table: done and drafts rows', () => {
     expect(r.result).toMatchObject({ queued: true })
     expect(status).toBe('active')
     expect(pending).toHaveLength(1)
-    const { core, block } = await setup({ done: 'gate' })
-    await core.blockSetStatus(user, { id: block.id, status: 'active' })
+    const { core, block } = await started({ done: 'gate' })
     const ask = await core.blockSetStatus(mgr, { id: block.id, status: 'done', digest })
     expect(ask.result).toMatchObject({ needsConfirmation: true })
   })

@@ -136,6 +136,14 @@ const readableZooms = (cfg: Config) =>
 
 const STATUSES = ['planned', 'active', 'blocked', 'done', 'dropped'] as const
 const BLOCKED_ON = ['block', 'thread', 'user', 'external'] as const
+const INLINE_DOCS = ['design', 'plan'] as const
+
+/**
+ * The docs a role may pass inline on block.create: those it may write with doc.write, each with
+ * every doc before it (a new block's inline plan needs its design inline, §3.2).
+ */
+const inlineDocs = (t: { can(command: string, q?: string): boolean }) =>
+  INLINE_DOCS.filter((_, i) => INLINE_DOCS.slice(0, i + 1).every((x) => t.can('doc.write', x)))
 const DOC_TYPES = ['design', 'plan', 'digest'] as const
 const THREAD_ACTIONS = ['open', 'append', 'park', 'resume', 'resolve'] as const
 const REVIEW_ACTIONS = {
@@ -152,6 +160,9 @@ const THREAD_ARGS: Record<string, { need: string[]; keep: string[] }> = {
   resume: { need: ['id'], keep: ['id'] },
   resolve: { need: ['id'], keep: ['id', 'outcome'] },
 }
+
+/** Roles that log finished work (`done` entries) mark plan steps with them. */
+const marksSteps = (t: RoleTool) => t.choices.includes('done')
 
 /** Whether `done` closes the block (set_status) or asks for it (request_done). */
 const closesBlocks = (t: RoleTool) => t.can('block.set_status', 'done')
@@ -227,14 +238,20 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   {
     name: 'hafiz_block_create',
     commands: ['block.create'],
-    description: (cfg) =>
-      `New planned block under parent; kind (default ${cfg.kinds.default_kind}) picks its doc sections. design, plan: {section: value} as in hafiz_doc; ${sectionsHint(cfg, ['design', 'plan'], { caps: 'required' })}.`,
-    shape: () => ({
-      parent: z.string(),
+    description: (cfg, t) => {
+      const inline = inlineDocs(t)
+      return sentences(
+        `New planned block under parent (default root); kind (default ${cfg.kinds.default_kind}) picks its sections.`,
+        inline.length > 0 &&
+          `${inline.join(', ')}: {section: value}; ${sectionsHint(cfg, inline, { caps: 'required' })}.`,
+      )
+    },
+    shape: (_cfg, t) => ({
+      parent: z.string().optional(),
       title: z.string(),
       kind: z.string().optional(),
-      design: sectionsArg().optional(),
-      plan: sectionsArg().optional(),
+      // inline docs only for roles holding doc.write:<type> (a plan also needs the design's)
+      ...Object.fromEntries(inlineDocs(t).map((d) => [d, sectionsArg().optional()])),
     }),
     route: (a) => ({
       command: 'block.create',
@@ -340,24 +357,15 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       expected_version: z.number().optional(),
       ...(t.choices.some((d) => t.can('doc.write', d)) ? { replace: z.boolean().optional() } : {}),
     }),
-    route: (a) => ({
+    route: (a, t) => ({
       command: a.replace === true ? 'doc.write' : 'doc.patch',
       args: {
         ...pick(a, ['block', 'type', 'sections', 'expected_version']),
         require_version: true,
+        // a role that may write the doc starts it with a patch; others only adjust one
+        ...(a.replace !== true && t.can('doc.write', String(a.type)) ? { create: true } : {}),
       },
     }),
-  },
-  {
-    name: 'hafiz_step_set',
-    commands: ['step.set'],
-    description: () => "Set a step's status as you go (ids from the block's plan).",
-    shape: (cfg) => ({
-      block: z.string(),
-      step_id: z.string(),
-      status: enumOf(cfg.logs.step.statuses),
-    }),
-    route: (a) => ({ command: 'step.set', args: pick(a, ['block', 'step_id', 'status']) }),
   },
   {
     name: 'hafiz_progress_append',
@@ -370,17 +378,25 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
           .filter((k) => k !== 'report')
           .map((k) => option(k, `progress.append:${k}`)),
     },
-    description: (cfg) =>
-      `One finding for a block's progress log: one or two sentences, <= ~${cfg.logs.progress.cap} tokens; write several rather than one long one.`,
-    shape: (_cfg, t) => ({
+    description: (cfg, t) =>
+      sentences(
+        `One finding for a block's progress log: one or two sentences, <= ~${cfg.logs.progress.cap} tokens; write several rather than one long one.`,
+        marksSteps(t) && 'step: also marks that plan step.',
+      ),
+    shape: (cfg, t) => ({
       block: z.string(),
       kind: enumOf(t.choices),
       text: z.string(),
       refs: z.array(z.string()).optional(),
+      ...(marksSteps(t)
+        ? {
+            step: z.object({ id: z.string(), status: enumOf(cfg.logs.step.statuses) }).optional(),
+          }
+        : {}),
     }),
     route: (a) => ({
       command: 'progress.append',
-      args: pick(a, ['block', 'kind', 'text', 'refs']),
+      args: pick(a, ['block', 'kind', 'text', 'refs', 'step']),
     }),
   },
   {
@@ -448,9 +464,11 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     },
     description: (cfg, t) =>
       sentences(
-        'Review queue. list: pending proposals and what accepting runs. accept: id, runs it. reject: id, note (why).',
+        'Review queue. list: proposals you may resolve. accept: id, runs it. reject: id, note (why).',
         t.choices.includes('accept') &&
-          `Design and plan reviews: ${cfg.policies.review.approver === 'user' ? 'the user only' : 'you or the user'}.`,
+          (cfg.policies.review.approver === 'user'
+            ? "Design and plan reviews are the user's, not listed; a block waits only while its heading says review."
+            : 'Design and plan reviews: you or the user; a block waits only while its heading says review.'),
       ),
     shape: (_cfg, t) => ({
       action: enumOf(t.choices),
@@ -461,17 +479,12 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
       const action = String(a.action) as keyof typeof REVIEW_ACTIONS
       const command = REVIEW_ACTIONS[action]
       if (!command) throw new ValidationError(`unknown review action '${String(a.action)}'`)
-      if (action === 'list') return { command, args: { status: 'pending' } }
+      // list reads the review queue (filtered to what this role may resolve), not raw proposals
+      if (action === 'list')
+        return { command: 'review.list', args: { status: 'pending', resolvable: true } }
       need(a, ['id'], `review ${action}`)
       return { command, args: pick(a, action === 'reject' ? ['id', 'note'] : ['id']) }
     },
-  },
-  {
-    name: 'hafiz_focus_set',
-    commands: ['focus.set'],
-    description: () => 'Centre your context on these blocks (most important first) this session.',
-    shape: () => ({ blocks: z.array(z.string()) }),
-    route: (a) => ({ command: 'focus.set', args: pick(a, ['blocks']) }),
   },
 ]
 

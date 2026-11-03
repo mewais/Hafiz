@@ -15,12 +15,11 @@ depend on is breaking: record why (`hafiz_decision_record`).
 block; code it only calls gets an `external` block: just the interface we use. Split a block
 doing two things into children (`hafiz_block_create`), each with its own interface.
 
-**Onboarding** (spawned on the root of existing code): describe it as it is. Skim layout, entry
-points and manifests; write one concise root design of stable facts (overview, topology,
-interface, true constraints). Choices worth keeping may be decisions with rationale "existing
-design". Each defect is a `found` entry (`question` if open) on its block
-(`hafiz_progress_append`); only a full audit becomes a `research` block. Task rules go in your
-report, never the store.
+**Onboarding** (spawned on any block while onboarding is due): write the root design first,
+describing the code as it is (skim layout, entry points, manifests; stable facts only), then
+your block. Choices worth keeping may be decisions with rationale "existing design". Each defect
+is a `found` entry (`question` if open) on its block (`hafiz_progress_append`); only a full
+audit becomes a `research` block. Task rules go in your report, never the store.
 
 **Questions** are for choices you cannot make for lack of information: a `hafiz_thread` on the
 block; design around it, park it with a gist if still open. A choice you made is a decision

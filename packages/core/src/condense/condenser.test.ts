@@ -126,7 +126,7 @@ async function setup(provider: FakeProvider, condenser = 'fake') {
   const { result: init } = await core.projectInit(mgr, { name: 'Shop', originFingerprint: 'fp' })
   const block = init.root.id
   await core.sessionOpen({ id: 's', host: 'test', role: 'manager' })
-  await core.focusSet({ sessionId: 's', role: 'manager' }, { blocks: [block] })
+  await core.focusSet({ sessionId: 's', role: 'user' }, { blocks: [block] })
   return { core, block }
 }
 

@@ -75,18 +75,25 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     const u = await DaemonClient.connect(daemon.socketPath)
     await u.openSession({ id: 'cli', host: 'test', role: 'user' })
     const root = (await u.treeList())[0]?.id as string
-    const mk = async (parent: string, title: string, status?: string) => {
-      const { result } = await u.dispatch<{ id: string }>('block.create', { parent, title })
+    const mk = async (parent: string, title: string, status?: string, extra = {}) => {
+      const { result } = await u.dispatch<{ id: string }>('block.create', {
+        parent,
+        title,
+        ...extra,
+      })
       if (status) await u.dispatch('block.set_status', { id: result.id, status })
       return result.id
     }
     await mk(root, 'Auth', 'active')
     const billing = await mk(root, 'Billing', 'active')
-    payments = await mk(billing, 'Payments', 'active')
-    await u.dispatch('doc.write', {
-      block: payments,
-      type: 'plan',
-      sections: {
+    // designed and planned on creation (a plan needs the design, ARCHITECTURE §3.2)
+    payments = await mk(billing, 'Payments', 'active', {
+      design: {
+        purpose: 'Take card payments.',
+        scope: ['in: charges'],
+        interface: { provides: [] },
+      },
+      plan: {
         steps: [
           { id: 's1', title: 'Model' },
           { id: 's2', title: 'Webhooks' },
@@ -95,13 +102,18 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
         acceptance: ['charges succeed'],
       },
     })
-    await u.dispatch('step.set', { block: payments, stepId: 's1', status: 'done' })
+    await u.dispatch('progress.append', {
+      block: payments,
+      kind: 'done',
+      text: 'Model done.',
+      step: { id: 's1', status: 'done' },
+    })
     const reporting = await mk(root, 'Reporting')
     u.close()
     // a designer session writes Reporting's design and ends: one review in the queue
     const ds = await DaemonClient.connect(daemon.socketPath)
     await ds.openSession({ id: 'ds1', host: 'test', role: 'designer', spawnedBlock: reporting })
-    await ds.dispatch('doc.patch', {
+    await ds.dispatch('doc.write', {
       block: reporting,
       type: 'design',
       sections: {
@@ -258,8 +270,10 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     spawnSync('tmux', ['kill-session', '-t', 'hafiz'], { env })
   }, 150000)
 
-  it('an untracked repo shows "untracked", then the tracked tree right after hafiz_track_project, no restart', async () => {
-    const fresh = tmp('hafiz-tui-untracked-')
+  it('an untracked repo shows "untracked", then the tracked tree right after the first hafiz_block_create, no restart', async () => {
+    // the project is named after the repo's directory
+    const fresh = join(tmp('hafiz-tui-untracked-'), 'Fresh')
+    mkdirSync(fresh)
     execFileSync('git', ['init', '-q'], { cwd: fresh })
     const marker = 'track this multi-step build'
     const results = (r: RecordedRequest) =>
@@ -273,11 +287,11 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
       if (results(req) === 0)
         return {
           toolCalls: [
-            { name: 'hafiz_track_project', arguments: { name: 'Fresh', reason: 'Multi-step.' } },
+            { name: 'hafiz_block_create', arguments: { title: 'Build', kind: 'feature' } },
           ],
           delayMs: 6000,
         }
-      return { text: 'Tracking this repo with Hafiz as `Fresh`.', delayMs: 20000 }
+      return { text: 'Tracking this repo with Hafiz: created Build.', delayMs: 20000 }
     }
     const t = tui(['--agent', 'build', '--prompt', marker], fresh)
     try {
@@ -295,7 +309,7 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
       expect(f2).toMatch(/◆ Fresh/)
       expect(f2).not.toContain('Hafiz · untracked')
       // the model's follow-up is still held back: the switch came from the tool event
-      expect(f2).not.toContain('Tracking this repo with Hafiz as')
+      expect(f2).not.toContain('Tracking this repo with Hafiz:')
     } finally {
       spawnSync('tmux', ['kill-session', '-t', 'hafiz'], { env })
       try {

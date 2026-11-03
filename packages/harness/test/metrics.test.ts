@@ -24,6 +24,17 @@ beforeAll(async () => {
   const root = init.root.id
   const b1 = (await core.blockCreate(mgr, { parent: root, title: 'One' })).result.id
   const b2 = (await core.blockCreate(mgr, { parent: root, title: 'Two' })).result.id
+  // the human designs and plans One (done needs its plan); its step ids are not the worker's s1
+  await core.docWrite(human, {
+    block: b1,
+    type: 'design',
+    sections: { purpose: 'one', scope: ['in: x'], interface: { provides: [] } },
+  })
+  await core.docWrite(human, {
+    block: b1,
+    type: 'plan',
+    sections: { steps: [{ id: 'p1', title: 'x' }], acceptance: ['y'] },
+  })
   for (const id of [b1, b2]) await core.blockSetStatus(mgr, { id, status: 'active' })
   await core.sessionOpen({ id: 'm1', host: 'kilo', role: 'manager', agent: 'build' })
   await core.sessionOpen({
@@ -58,7 +69,9 @@ beforeAll(async () => {
   await core.progressAppend(w1, { block: b1, kind: 'done', text: 'b' })
   await core.progressAppend(w1, { block: b1, kind: 'report', text: 'final report' })
   await core.progressAppend(w2, { block: b2, kind: 'found', text: 'c' })
-  await core.stepSet(w1, { block: b1, stepId: 's1', status: 'done' }).catch(() => undefined)
+  await core
+    .progressAppend(w1, { block: b1, kind: 'done', text: 's', step: { id: 's1', status: 'done' } })
+    .catch(() => undefined)
   await core.blockRequestDone(w1, { id: b1, digest })
   await core.proposalAdd(
     { kind: 'progress', source: 'compliance', payload: { command: 'progress.append', args: {} } },
@@ -180,8 +193,17 @@ describe('expectations', () => {
     expect(lookup(metrics, 'workers_done_requests')).toBe(1)
     expect(lookup(metrics, 'worker_progress_min')).toBe(1)
     expect(lookup(metrics, 'manager_threads_parked')).toBe(1)
-    expect(lookup(metrics, 'designer_sessions')).toBeUndefined()
+    // a role with no session: its counts are 0, so `designer_sessions <=4` holds
+    expect(lookup(metrics, 'designer_sessions')).toBe(0)
+    expect(lookup(metrics, 'designer_nope')).toBeUndefined()
     expect(lookup(metrics, 'nope')).toBeUndefined()
+  })
+
+  it('`a or b` passes when either metric holds', () => {
+    const [ok] = scoreExpectations({ 'designer_sessions or decisions_standing': '>=1' }, metrics)
+    expect(ok).toMatchObject({ pass: true, got: 1 })
+    const [miss] = scoreExpectations({ 'designer_sessions or nope': '>=1' }, metrics)
+    expect(miss).toMatchObject({ pass: false, got: 0 })
   })
 
   it('scores expected against actual; unknown metrics fail', () => {

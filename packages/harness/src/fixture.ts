@@ -191,11 +191,16 @@ const git = (cwd: string, ...args: string[]) =>
   )
 
 /** Write the fixture into `dir` and make it a git repo with one commit. */
-export function writeFixture(dir: string): void {
+export function writeFixture(dir: string, opts: { brokenMoney?: boolean } = {}): void {
   for (const [path, content] of Object.entries(FIXTURE_FILES)) {
     const full = join(dir, path)
     mkdirSync(dirname(full), { recursive: true })
-    writeFileSync(full, content)
+    // The suite is green unless the task is the one that fixes the money bug.
+    const out =
+      path === MONEY_BUG.file && !opts.brokenMoney
+        ? content.replace(MONEY_BUG.broken, MONEY_BUG.fixed)
+        : content
+    writeFileSync(full, out)
   }
   git(dir, 'init', '-q', '-b', 'main')
   git(dir, 'add', '-A')
