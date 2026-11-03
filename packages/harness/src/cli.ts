@@ -13,7 +13,7 @@ const USAGE = `hafiz-harness — compliance harness for Hafiz on Kilo
                                           task, --repeat times)
            [--fail-fast | --no-fail-fast] (stop a task at the first missed per-turn check;
                                           default on in smoke, off in full)
-           [--repeat N] [--kilo-bin path] [--out dir] [--shaper proxy|hooks|auto] [--keep] [--isolate]
+           [--repeat N] [--kilo-bin path] [--out dir] [--shaper proxy|hooks|auto] [--keep] [--isolate] [--agent name]
            [--turn-timeout seconds]      (per Kilo turn; default 1800)
            [--mock]                      (scripted mock LLM instead of a model; no --model needed)
   compare  a.json b.json                 diff a baseline run against a tuned one
@@ -87,6 +87,7 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
       mock: { type: 'boolean' },
       keep: { type: 'boolean' },
       isolate: { type: 'boolean' },
+      agent: { type: 'string' },
       'turn-timeout': { type: 'string' },
       tier: { type: 'string' },
       'fail-fast': { type: 'boolean' },
@@ -137,6 +138,7 @@ async function runCommand(args: string[], io: CliIo): Promise<number> {
           shaper: values.shaper,
           keep: values.keep,
           isolate: values.isolate,
+          agent: values.agent,
           ...(timeout ? { turnTimeoutMs: timeout * 1000 } : {}),
           log: (l) => io.err(l),
         })

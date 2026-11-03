@@ -48,6 +48,8 @@ export interface RunOptions {
    * generates are loaded and none of the owner's own plugins, agents or permissions.
    */
   isolate?: boolean | undefined
+  /** Drive every task with this Kilo agent instead of the task's `agent` (e.g. your own manager). */
+  agent?: string | undefined
   /** After each turn, score the task's `expect_after` for it; a miss stops the task there. */
   failFast?: boolean | undefined
   turnTimeoutMs?: number | undefined
@@ -459,7 +461,7 @@ export async function runTask(task: Task, repeat: number, opts: RunOptions): Pro
     })
     let session: string | undefined
     for (const [i, turn] of task.turns.entries()) {
-      const agent = turn.agent ?? task.agent
+      const agent = opts.agent ?? turn.agent ?? task.agent
       const prompt = opts.mock ? `${turn.prompt}\n\n${TURN_MARKER(i + 1)}` : turn.prompt
       log(`${task.id}#${repeat} turn ${i + 1}/${task.turns.length} (${agent})`)
       const r = await kiloTurn({
