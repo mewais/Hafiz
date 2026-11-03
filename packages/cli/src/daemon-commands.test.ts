@@ -56,6 +56,18 @@ describe('cli: daemon-backed commands', () => {
       parent: root,
       title: 'Auth',
     })
+    // the user plans it (done needs a plan): inline on a create, or after its design
+    const user = { sessionId: 'cli', role: 'user' }
+    await core.docWrite(user, {
+      block: result.id,
+      type: 'design',
+      sections: { purpose: 'auth', scope: ['in: login'], interface: { provides: [] } },
+    })
+    await core.docWrite(user, {
+      block: result.id,
+      type: 'plan',
+      sections: { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] },
+    })
     await mgr.dispatch('block.set_status', { id: result.id, status: 'active' })
     const w = await DaemonClient.connect(d.socketPath)
     cleanup.push(() => w.close())

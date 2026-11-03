@@ -25,6 +25,7 @@ async function boot(extra: Parameters<typeof startFor>[1] = {}) {
   const { result } = await user.dispatch<{ id: string }>('block.create', {
     parent: root,
     title: 'Billing',
+    plan: { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] },
   })
   await user.dispatch('block.set_status', { id: result.id, status: 'active' })
   const worker = await open('w', 'worker', { spawnedBlock: result.id })

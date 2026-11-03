@@ -93,6 +93,12 @@ const plan = {
   ],
   acceptance: ['it works'],
 }
+/** The user designs and plans a block the manager created: done needs its plan. */
+async function planned(d: DaemonHandle, block: string) {
+  const user = { sessionId: 'cli', role: 'user' }
+  await d.service.core.docWrite(user, { block, type: 'design', sections: design('x') })
+  await d.service.core.docWrite(user, { block, type: 'plan', sections: plan })
+}
 const digest = {
   outcome: 'Implemented.',
   interface_delta: ['none'],
@@ -207,8 +213,6 @@ describe('mcp scenario', () => {
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const a = (await planner.json('hafiz_block_create', { parent: root, title: 'Catalog' })).id
     const b = (await planner.json('hafiz_block_create', { parent: root, title: 'Checkout' })).id
-    for (const id of [a, b])
-      await planner.json('hafiz_doc', { block: id, type: 'plan', sections: plan, replace: true })
     await designer.json('hafiz_doc', {
       block: a,
       type: 'design',
@@ -224,6 +228,9 @@ describe('mcp scenario', () => {
         interface: { ...checkout.interface, consumes: [{ name: 'list()', block: a }] },
       },
     })
+    // planned against the designs (a plan write needs its block's design)
+    for (const id of [a, b])
+      await planner.json('hafiz_doc', { block: id, type: 'plan', sections: plan, replace: true })
     // patching an existing doc needs the version the writer saw
     const stale = await designer.call('hafiz_doc', {
       block: a,
@@ -344,6 +351,7 @@ describe('mcp scenario', () => {
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Search' })).id
+    await planned(d, blk)
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: blk })
     await w.call('hafiz_block_set_status', { id: blk, status: 'done', digest })
@@ -403,6 +411,7 @@ describe('mcp confirmation', () => {
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { elicit, config })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Ship' })).id
+    await planned(d, blk)
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     return { mgr, blk }
   }
@@ -435,6 +444,7 @@ describe('mcp confirmation', () => {
     const mgr = await agent(d, 'manager', { HAFIZ_SESSION_ID: 'mgr' }, { config })
     const root = (await mgr.call('hafiz_block_read')).text.match(/\] (\S+) —/)?.[1] as string
     const blk = (await mgr.json('hafiz_block_create', { parent: root, title: 'Ship' })).id
+    await planned(d, blk)
     await mgr.json('hafiz_block_set_status', { id: blk, status: 'active' })
     const w = await agent(d, 'worker', { HAFIZ_SESSION_ID: 'w', HAFIZ_BLOCK: blk }, { config })
     const r = await w.json('hafiz_block_set_status', { id: blk, status: 'done', digest })

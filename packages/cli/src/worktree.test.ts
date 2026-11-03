@@ -126,6 +126,7 @@ describe('pointer in the git common dir', () => {
       const { result } = await user.dispatch<{ id: string }>('block.create', {
         parent: root,
         title,
+        plan: { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] },
       })
       await user.dispatch('block.set_status', { id: result.id, status: 'active' })
       return result.id

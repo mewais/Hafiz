@@ -239,9 +239,15 @@ export const policiesFile = z.object({
     transitions: z.record(z.string(), z.array(z.string())),
     guards: z.record(z.string(), z.array(z.string())),
     activate_parent_on_child_active: z.boolean().default(true),
-    // Roles whose spawn on a `planned` block starts the work: the block (and its planned
-    // ancestors) turns active when that session opens. Designers and planners are not work.
-    activate_on_spawn: z.array(z.string()).default([]),
+    // Roles whose work on a `planned` block starts it: the block (and its planned ancestors)
+    // turns active when a session of a `spawn` role opens on it, or a `write` role writes to it
+    // (progress, a plan step, a thread). Designers and planners are not work.
+    activate_on: z
+      .object({
+        spawn: z.array(z.string()).default([]),
+        write: z.array(z.string()).default([]),
+      })
+      .prefault({}),
   }),
   epoch: z.object({ minor_paths: z.array(z.string()) }),
   caps: z.object({
@@ -277,6 +283,13 @@ export const nudgeFile = z.object({
   thresholds: z.record(z.string(), z.number()),
   max_per_session: z.number().int().default(1),
   template: z.string(),
+  // What a role that may not start tracking hears (Kilo: any role but the manager primary), as
+  // its nudge and as the refusal of its first block create.
+  others: z
+    .string()
+    .default(
+      'this repo is not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the manager agent.',
+    ),
   auto_init: z.boolean().default(false),
 })
 

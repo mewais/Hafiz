@@ -70,6 +70,20 @@ describe('config', () => {
     expect(loadConfig([auto]).policies.review.done).toBe('off')
   })
 
+  it('maps a retired status.activate_on_spawn onto activate_on.spawn, with a note', () => {
+    expect(loadConfig().policies.status.activate_on).toEqual({
+      spawn: ['worker'],
+      write: ['worker'],
+    })
+    const dir = mkdtempSync(join(tmpdir(), 'hafiz-cfg-'))
+    writeFileSync(join(dir, 'policies.yaml'), 'status: { activate_on_spawn: [] }\n')
+    const c = loadConfig([dir])
+    expect(c.policies.status.activate_on).toEqual({ spawn: [], write: ['worker'] })
+    expect(c.deprecations.join()).toMatch(
+      /activate_on_spawn is retired; read as status.activate_on.spawn: \[\]/,
+    )
+  })
+
   it('rejects gate for drafts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hafiz-cfg-'))
     writeFileSync(join(dir, 'policies.yaml'), 'review: { drafts: gate }\n')

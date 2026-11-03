@@ -5,14 +5,20 @@ import type { Config } from '../config/schema.js'
 
 export type NudgeConfig = Config['nudge']
 
-/** The nudge line if a threshold is reached and the session's budget allows another. */
+/**
+ * The nudge line if a threshold is reached and the session's budget allows another. `tracks`:
+ * the session's role may start tracking (the manager primary); every other role hears
+ * `others`, the same words as its refusal of the first block create.
+ */
 export function nudgeText(
   cfg: NudgeConfig,
   counters: Readonly<Record<string, number>>,
   alreadySent: number,
+  tracks = true,
 ): string | undefined {
   if (alreadySent >= cfg.max_per_session) return undefined
   const over = Object.entries(cfg.thresholds).some(([k, t]) => (counters[k] ?? 0) >= t)
   if (!over) return undefined
+  if (!tracks) return `Hafiz: ${cfg.others}`
   return cfg.template.replace(/\{(\w+)\}/g, (_, k: string) => String(counters[k] ?? 0))
 }

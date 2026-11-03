@@ -16,6 +16,7 @@ import type {
   Thread,
 } from '../domain/types.js'
 import type { WriteOps } from '../store/backend.js'
+import { activateOn } from './blocks.js'
 import {
   type CommandResult,
   type CoreContext,
@@ -120,6 +121,8 @@ function logProgress(
     if (args.step) await appendStep(ctx, t, by, b.id, args.step)
     const e = progressEntry(ctx, by, b.id, args.kind, args)
     await t.appendLog(b.id, 'progress', e)
+    // the agent's own progress is work on the block (activate_on.write); Hafiz's notes are not
+    if (command === 'progress.append') await activateOn(ctx, t, 'write', by.role, b.id, !major)
     return e
   })
 }
@@ -161,6 +164,7 @@ export async function threadOpen(
   const spec = { command: 'thread.open', major: false, target: args.block }
   return runAs(ctx, by, spec, async (t) => {
     const b = await mustBlock(t, args.block)
+    await activateOn(ctx, t, 'write', by.role, b.id, true)
     const now = ctx.clock.now()
     const th: Thread = {
       id: opaqueId('thr'),

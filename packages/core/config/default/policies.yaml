@@ -11,10 +11,13 @@ status:
     to_dropped: [reason_required]
     reopen:     [reason_required]          # also marks the digest stale (command effect)
   activate_parent_on_child_active: true
-  # A session of one of these roles opened on a `planned` block (spawned on it) activates the
-  # block, and its planned ancestors as above, in the same write: spawning a worker is work
-  # starting. Designing and planning are not, so those roles leave the status alone.
-  activate_on_spawn: [worker]
+  # Work starting on a `planned` block activates it, and its planned ancestors as above, in the
+  # same write: a session of a `spawn` role opened on it (spawned on it), or a write by a `write`
+  # role on it (progress, a plan step, a thread opened), e.g. a worker the user talks to directly.
+  # Designing and planning are not work started, so those roles leave the status alone.
+  activate_on:
+    spawn: [worker]
+    write: [worker]
 epoch:
   minor_paths: [progress, steps, threads]     # writes here never bump the project epoch
 caps:

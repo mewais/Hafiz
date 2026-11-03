@@ -112,7 +112,18 @@ export function migrateLayer(layer: RawLayer, where: string): string[] {
       `${where}/hafiz.yaml: confirm_done: ${old} is retired; read as policies.yaml review.done: ${String(review.done)}. Move it there.`,
     )
   }
-  const guards = isPlainObject(layer.policies) ? layer.policies.status : undefined
+  const status = isPlainObject(layer.policies) ? layer.policies.status : undefined
+  if (isPlainObject(status) && 'activate_on_spawn' in status) {
+    const old = status.activate_on_spawn
+    delete status.activate_on_spawn
+    const on = isPlainObject(status.activate_on) ? status.activate_on : {}
+    if (on.spawn === undefined) on.spawn = old
+    status.activate_on = on
+    notes.push(
+      `${where}/policies.yaml: status.activate_on_spawn is retired; read as status.activate_on.spawn: ${JSON.stringify(on.spawn)}. Move it there.`,
+    )
+  }
+  const guards = status
   const lists = isPlainObject(guards) && isPlainObject(guards.guards) ? guards.guards : {}
   for (const [k, v] of Object.entries(lists))
     if (Array.isArray(v) && v.includes('confirm_done')) {

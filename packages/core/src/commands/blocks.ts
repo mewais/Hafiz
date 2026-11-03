@@ -16,6 +16,7 @@ import type {
 import { gitHead } from '../project/resolve.js'
 import type { WriteOps } from '../store/backend.js'
 import { authorize } from './authz.js'
+import { requireDoc } from './review.js'
 import {
   type CommandResult,
   type CoreContext,
@@ -180,10 +181,12 @@ export async function blockSetStatus(
     checkVersion(b, args.expectedVersion)
     const all = await t.listBlocks()
     const doneReview = ctx.config.policies.review.done
+    const children = all.filter((x) => x.parentId === b.id)
+    if (args.status === 'done') await requirePlan(ctx, t, by, b, children)
     const tc: TransitionContext = {
       block: b,
       to: args.status,
-      children: all.filter((x) => x.parentId === b.id),
+      children,
       threads: await t.listThreads(b.id),
       digest: await t.getDoc(b.id, 'digest'),
       args: {
@@ -242,6 +245,22 @@ export async function blockSetStatus(
 }
 
 /**
+ * The state table on `done` (§3.2): a block is finished against its plan, so `done` waits while
+ * the plan is missing (its kind has one) or held by a gated review. A block with children keeps
+ * its own rule (`children_closed`): its work is in them, its plan covers only integration.
+ */
+async function requirePlan(
+  ctx: CoreContext,
+  t: WriteOps,
+  by: Actor,
+  b: Block,
+  children: Block[],
+): Promise<void> {
+  if (!children.length)
+    await requireDoc(ctx, t, by, b, 'plan', `cannot mark ${b.title} [${b.id}] done`)
+}
+
+/**
  * `status.activate_parent_on_child_active`: a block turning active activates its planned
  * ancestors, nearest first, so no active block sits under a planned one.
  */
@@ -261,23 +280,31 @@ export async function activateAncestors(
 }
 
 /**
- * `status.activate_on_spawn`: a session of one of these roles opened on a planned block starts
- * its work: the block (and its planned ancestors) turn active in the session-open write.
- * Returns true when it changed a block (the caller bumps the epoch).
+ * `status.activate_on`: work starting on a planned block. A session of a role listed under
+ * `spawn` opened on it (spawned on it), or a write by a role listed under `write` (progress, a
+ * plan step, a thread opened) on it, turns the block (and its planned ancestors) active in that
+ * same transaction. A minor write bumps the project epoch here, since a status changed.
+ * Returns true when it changed a block.
  */
-export async function activateOnSpawn(
+export async function activateOn(
   ctx: CoreContext,
   t: WriteOps,
+  event: 'spawn' | 'write',
   role: string,
   blockId: BlockId,
+  bumpEpoch: boolean,
 ): Promise<boolean> {
-  if (!ctx.config.policies.status.activate_on_spawn.includes(role)) return false
+  if (!ctx.config.policies.status.activate_on[event].includes(role)) return false
   const b = await t.getBlock(blockId)
   if (b?.status !== 'planned' || !ctx.status.canTransition('planned', 'active')) return false
   const now = ctx.clock.now()
   const nb: Block = { ...b, status: 'active', version: b.version + 1, updatedAt: now }
   await t.putBlock(nb, b.version)
   await activateAncestors(ctx, t, nb, now)
+  if (bumpEpoch) {
+    const p = await t.getProject()
+    if (p) await t.putProject({ ...p, epoch: p.epoch + 1 })
+  }
   return true
 }
 
@@ -304,11 +331,13 @@ export async function blockRequestDone(
   return runAs(ctx, by, spec, async (t, notices) => {
     const b = await mustBlock(t, args.id)
     // Everything but the review itself is checked now, so the worker hears what is wrong (an
-    // open thread, a planned block) instead of the manager when it accepts the request.
+    // open thread, a planned block, a plan under review) instead of the manager when it accepts.
+    const children = (await t.listBlocks()).filter((x) => x.parentId === b.id)
+    await requirePlan(ctx, t, by, b, children)
     ctx.status.check({
       block: b,
       to: 'done',
-      children: (await t.listBlocks()).filter((x) => x.parentId === b.id),
+      children,
       threads: await t.listThreads(b.id),
       digest: null,
       args: { digestProvided: true, confirmed: true },

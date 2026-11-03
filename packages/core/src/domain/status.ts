@@ -100,7 +100,7 @@ export class StatusMachine {
   ) {
     this.transitions = policy.transitions
     this.guardLists = policy.guards
-    this.activatedBy = policy.activate_on_spawn ?? []
+    this.activatedBy = policy.activate_on.spawn
   }
 
   canTransition(from: Status, to: Status): boolean {

@@ -27,16 +27,11 @@ async function as(d: DaemonHandle, id: string, role: string, spawnedBlock?: stri
 
 async function seed(u: DaemonClient) {
   const root = (await u.treeList())[0]?.id as string
+  // planned on creation (a doc.write of a plan would need the design first, §3.2)
   const { result } = await u.dispatch<{ id: string }>('block.create', {
     parent: root,
     title: 'Billing',
-  })
-  const block = result.id
-  await u.dispatch('block.set_status', { id: block, status: 'active' })
-  await u.dispatch('doc.write', {
-    block,
-    type: 'plan',
-    sections: {
+    plan: {
       steps: [
         { id: 's1', title: 'Model' },
         { id: 's2', title: 'Webhooks' },
@@ -44,6 +39,8 @@ async function seed(u: DaemonClient) {
       acceptance: ['charges succeed'],
     },
   })
+  const block = result.id
+  await u.dispatch('block.set_status', { id: block, status: 'active' })
   await u.dispatch('progress.append', {
     block,
     kind: 'done',

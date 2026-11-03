@@ -137,16 +137,16 @@ describe('inline docs and patches never bypass the writers', () => {
     await expect(
       core.docPatch(des, { block: a, type: 'design', sections: design([]) }),
     ).rejects.toThrow(/no design on .* yet; the designer writes it/)
-    await core.docWrite(user, { block: a, type: 'plan', sections: plan })
-    expect(
-      (await core.docPatch(mgr, { block: a, type: 'plan', sections: { acceptance: ['b'] } })).result
-        .version,
-    ).toBe(2)
     // the agent tool's patch may start a doc only for a role holding doc.write
     expect(
       (await core.docPatch(des, { block: a, type: 'design', sections: design([]), create: true }))
         .result.version,
     ).toBe(1)
+    await core.docWrite(user, { block: a, type: 'plan', sections: plan })
+    expect(
+      (await core.docPatch(mgr, { block: a, type: 'plan', sections: { acceptance: ['b'] } })).result
+        .version,
+    ).toBe(2)
     await expect(
       core.docPatch(mgr, {
         block: core_b(await core.backend.read.listBlocks()),

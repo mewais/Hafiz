@@ -123,11 +123,28 @@ Guards are config (`policies.status`), composed from registered predicates. Defa
 - `→ blocked` requires `blocked_on`. `→ active` from `blocked` clears it.
 - `→ active` activates the block's `planned` ancestors, nearest first
   (`activate_parent_on_child_active`).
-- **Spawning starts work** (`status.activate_on_spawn`, default `[worker]`): a session of a listed
-  role opened on a `planned` block (spawned on it) activates the block, and its ancestors as
-  above, in the session-open transaction (an epoch bump). Designer and planner spawns leave the
-  status alone: design is not work started. A transition the table does not allow says what to do
-  instead (`planned → done`: a worker spawned on it activates it, or set it active first).
+- **Work starting activates** (`status.activate_on: {spawn: [worker], write: [worker]}`): a
+  session of a `spawn` role opened on a `planned` block (spawned on it), or a write by a `write`
+  role on it (`progress.append`, with or without a plan `step`, `thread.open`; not Hafiz's own
+  `system.progress`), activates the block, and its ancestors as above, in that same transaction
+  (an epoch bump, even for a minor write). So a worker the user drives directly, spawned on
+  nothing, starts its block with its first progress entry. Designer and planner work leaves the
+  status alone: design is not work started. A transition the table does not allow says what to
+  do instead (`planned → done`: a worker spawned on it activates it, or set it active first).
+  The retired `activate_on_spawn: [...]` is read as `activate_on.spawn` (a deprecation note).
+- **The state table holds on writes** (Core, inside the write's transaction; `domain/stage.ts`,
+  the predicate the Kilo spawn check uses too, §12.1). A block's design or plan is *in place*
+  when it is written (only if its kind's schemas define it) and not held by an open `gate` review
+  (§7). `doc.write`/`doc.patch` of a plan needs the design in place; `block.set_status done` and
+  `block.request_done` need the plan in place, unless the block has children (its work is in
+  them; `children_closed` guards it). The refusal (`guard_failed`, guard `state_table`) names the
+  remedy in the spawn check's words: "cannot write the plan of Billing [billing]: Billing has no
+  design yet; the designer writes it." / "cannot mark Billing [billing] done: plan of Billing (v2)
+  awaits review: hafiz review --accept prop_…". The writer named is the role the spawn table
+  first admits in that state. The user is held by the table like any role (a plan needs a
+  design) but not by the gates it approves (`mayApprove`: its own writes count as accepted; so
+  for `approver: manager`). `block.create`'s inline plan is how a planner splits work (each new
+  child comes with its plan) and is not checked; schema migrations rewrite docs as they are.
 
 ### 3.3 Epochs and re-emission
 
@@ -448,7 +465,9 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
   a `progress` entry of kind `report` on the worker's block, verbatim up to a cap, with the rest
   spilled to the store. Mechanical, unconditional, no LLM.
 - **Nudge**: counter thresholds in an untracked repo (never in a tracked project, whatever its tree size) →
-  one-line notice naming `hafiz_block_create` (the first one tracks the repo), once per session. With
+  one-line notice naming `hafiz_block_create` (the first one tracks the repo), once per session;
+  a session whose role may not start tracking gets `nudge.yaml others` instead (the words of its
+  refusal: ask the user for `hafiz init`, or start from the manager). With
   no Hafiz project the plugin takes a cheap path: it returns four tiny hooks, keeps the
   counters in memory and, when a threshold trips, appends the line to the session's next system
   prompt (`system.transform`), once. No daemon, config change or proxy is ever started.
@@ -470,8 +489,11 @@ Hafiz owns the tail on Kilo (it rewrites the message array). Per request:
 
   `off`: no proposal. `queue`: a proposal, work proceeds. `gate`: a proposal, and the next stage
   **on that block** waits until it is accepted (siblings and parents are unaffected): a design
-  gate refuses spawning the planner or a worker on the block, a plan gate refuses workers (§12.1),
-  a done gate is the status guard. Compliance proposals are outside the table (always queued).
+  gate refuses spawning the planner or a worker on the block (§12.1) and, in Core, every plan
+  write to it; a plan gate refuses workers and, in Core, its `done` (`set_status` and
+  `request_done`, §3.2); a done gate is the status guard. The writes are where it holds, so it
+  holds the same when the user drives the roles directly; the spawn check is early feedback.
+  Compliance proposals are outside the table (always queued).
   - *Filing* (Core, mechanical, never rules text). Every design or plan write (`doc.write`,
     `doc.patch`, inline on `block.create`) files its version inside the write's own transaction
     (`fileReviewOnWrite`, from `writeDoc`), so a gate holds from the write on, while the writer
@@ -521,7 +543,7 @@ minor paths, caps soft zone, spawn table, review table), `compliance.yaml`, `nud
 `tail.yaml`, `rules/` (per-role Markdown the adapter installs as agent prompts). Retired settings
 in an override layer are mapped onto their successors at load and listed by `hafiz doctor`
 (`hafiz.yaml confirm_done: ask` → `review.done: gate`, `auto` → `queue`; the `confirm_done`
-guard → `review_done`).
+guard → `review_done`; `status.activate_on_spawn` → `status.activate_on.spawn`).
 
 ```yaml
 roles:
@@ -667,7 +689,7 @@ prompts: one per role. Session: token from env → session; project from roots/c
 | Install (`config` hook, stable) | `agent.<role>` definitions (prompt = the user's own prompt for that agent, if any, then a separator comment and the role rules + `rules/common.md`: always appended, never replaced; `permission` `hafiz_*: deny` + allow for exactly the role's tools, `permission.task` for who may delegate); the default role's rules appended the same way to a primary agent that has its own `prompt` (tracked repos); default-role tool permissions for non-Hafiz agents; slash commands; `permission.edit/read` deny for the store; **`compaction.auto: false`** for managed sessions. Kilo uses an agent's `prompt` instead of its model-specific system prompt, so agents without one (`build` as shipped, subagents spawned on a block, anything managed after mid-session tracking) get the rules from the shaper, ahead of the envelope |
 | Tools (`tool` hook, stable) | **plugin-native** catalogue tools (`TOOL_SPECS` in core, also used by the MCP gateway; execution shared via `runTool`). Plugin tools are global, so each is registered once with the union of what the managed roles may do (enum values, inputs, description sentences) and every call is routed with the caller's own role. Each call resolves the calling Kilo session → Hafiz session (`session.open` with the Kilo id; role from the agent, parent from `parentID`, spawned block from the `hafiz:block=<id>` marker the `task` check writes) and dispatches with that session's token, so attribution and focus are per session. `host.kilo.tools: mcp` keeps the per-role MCP servers instead |
 | Default roles | `host.kilo.default_role` (default `manager`) manages non-role primary agents (`build`, `plan`, custom) as that role: tools, session, and the role's rules + view injected by the shaper. `host.kilo.default_subagent_role` (default `worker`) does the same for non-role subagents (`general`, `explore`) **only** when spawned on a block (`task`'s `block`); otherwise they are unmanaged. `none` disables either |
-| Untracked git repo | near-zero cost: in-memory nudge plus one visible tool, `hafiz_block_create`, whose first call tracks the repo; only the primary agent under the manager role may make it (a subagent's is refused). Kilo reads agents, permissions and the tool list once at startup, so the plugin installs the role agents and permissions and registers every Hafiz tool up front, and on each request hides all but `hafiz_block_create` by setting `tools[name] = false` on the user message objects `experimental.chat.messages.transform` receives (Kilo filters the request's tools by that field after the hook; the objects are re-read from its database every step, so nothing persists). The first call runs `initProject` (named after the repo directory; onboarding heuristic), builds the managed hooks, opens the caller's session (the daemon starts), writes a `changed` progress entry on the root, and then creates the block under the root as the caller; from the next request (same turn) every hook delegates to the managed hooks and every Hafiz tool shows. `hafiz init` stays the CLI's way in. Outside git: no hooks |
+| Untracked git repo | near-zero cost: in-memory nudge plus one visible tool, `hafiz_block_create`, whose first call tracks the repo; only the primary agent under the manager role may make it (a subagent's is refused). Every role agent sees it (permission), so a designer, planner or worker the user drives directly gets one refusal path: "this repo is not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the manager agent" (`nudge.yaml others`, also its nudge), and nothing is started for it. Kilo reads agents, permissions and the tool list once at startup, so the plugin installs the role agents and permissions and registers every Hafiz tool up front, and on each request hides all but `hafiz_block_create` by setting `tools[name] = false` on the user message objects `experimental.chat.messages.transform` receives (Kilo filters the request's tools by that field after the hook; the objects are re-read from its database every step, so nothing persists). The first call runs `initProject` (named after the repo directory; onboarding heuristic), builds the managed hooks, opens the caller's session (the daemon starts), writes a `changed` progress entry on the root, and then creates the block under the root as the caller; from the next request (same turn) every hook delegates to the managed hooks and every Hafiz tool shows. `hafiz init` stays the CLI's way in. Outside git: no hooks |
 | Observe (`event`, stable) | `session.created/idle`, `tool.execute.after`, `file.edited` → counters; subagent final text → report capture; spawn → mint token, set computed focus |
 | **RequestShaper** | interface with two implementations, selected by config/feature detection: **`transform-hooks`** (`chat.system.transform` for envelope+floor, `chat.messages.transform` for unfiled/tail/delta — preferred while these experimental hooks exist) and **`embedded-proxy`** (stable: `config` points the provider `baseURL` at a proxy inside the plugin process; Kilo attaches auth, the proxy forwards it; same shaping logic on the wire). Both are in-process; no external network path |
 | Condensation | triggered by Core's `CondensationDue`; `LLMProvider` may route through Kilo's own provider config |
@@ -685,12 +707,26 @@ the condenser's helper sessions pass through.
 | Check | Mechanism |
 |---|---|
 | Spawn on a block | Kilo's `task` gets a required `block`: a block id (exact, unique prefix or unique title, `matchBlock`), or `none` for a helper outside Hafiz, never for a role agent. Unknown ids are refused with the valid ones; a valid one becomes the `hafiz:block=<id>` marker in the prompt, so `session.open` is unchanged |
-| Spawn fits the block | the spawned role must be listed for the block's state in `policies.yaml spawn.roles_by_state` (`no_design` → designer, `no_plan` → designer, planner, `has_plan` → any, `done`/`dropped` → nobody); the refusal names the missing step (a parent without a plan: its open children, where the work is) |
+| Spawn fits the block | the spawned role must be listed for the block's state in `policies.yaml spawn.roles_by_state` (`no_design` → designer, `no_plan` → designer, planner, `has_plan` → any, `done`/`dropped` → nobody; a doc the block's kind does not define counts as there); the refusal names the missing step (a parent without a plan: its open children, where the work is). The state is `stageOf` (`domain/stage.ts`), the predicate Core enforces on the writes themselves (§3.2): this check is early feedback before a subagent starts, not the authority |
 | A gated review holds its block | a design or plan whose `policies.yaml review` row is `gate` and whose review is open (`tree.summary` node `review`: pending, or rejected and not yet revised) counts as not there yet, so a design under review admits only the designer and a plan under review no worker. The refusal names the proposal and the fix: "design of Payments (v3) awaits review: hafiz review --accept prop_…" (a rejection: its note, "revise it"). One block only |
 | Pass the block, not its contents | a `task` prompt that quotes `<hafiz…>` or exceeds `host.kilo.delegation_prompt_cap` tokens is refused: the subagent sees its block in its own view |
 | Only the report reaches the parent | `tool.execute.after`: the child's full text is captured to the store and the parent gets its fenced `hafiz-report` (or the text and a line saying there is none); a child whose role may finish its block and whose session ran neither a done request nor a blocked entry (`session.activity`) gets "ended without a done request or a blocked entry: the block is not finished; …" with what to do next |
 | No blind overwrites | `hafiz_doc` sends `require_version`: writing an existing doc needs its `expected_version` (Core) |
 | The store is Hafiz's | a `bash` command naming `project.storeDir` is refused (`read`/`edit` are already denied by permission) |
+
+#### Driving roles directly
+
+A user may skip the manager and talk to the role agents in turn (designer, then planner, then a
+worker) as Kilo primaries, spawned on no block. What holds does not depend on spawns: Core's
+writes enforce the state table and the gates (§3.2, §7): the planner's plan is refused until the
+block has a design, and until a gated design is accepted; a worker's done is refused until the
+block has a plan, and until a gated plan is accepted; each refusal names the step or the
+`hafiz review --accept` that clears it. A worker's first progress entry, step or thread on a
+planned block makes it active (`activate_on.write`), so its done is a legal transition (under
+`review.done: gate`, a queued request). What to expect otherwise: such a primary's focus is the
+active front (no spawned block), so the agent names its block in every call, and there is no
+handback or report capture (no parent). In an untracked repo only the manager starts tracking;
+the other roles are told how to get there (above).
 
 ### 12.2 Claude Code / Codex — specified, not built
 

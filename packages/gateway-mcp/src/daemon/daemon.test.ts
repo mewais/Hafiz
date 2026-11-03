@@ -42,6 +42,7 @@ async function seed(u: DaemonClient) {
   const { result } = await u.dispatch<{ id: string }>('block.create', {
     parent: root,
     title: 'Billing',
+    plan: { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] },
   })
   await u.dispatch('block.set_status', { id: result.id, status: 'active' })
   return { root, block: result.id }

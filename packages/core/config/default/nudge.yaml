@@ -3,4 +3,7 @@
 thresholds: { turns: 15, tool_calls: 25, files_written: 5, subagents_spawned: 1 }
 max_per_session: 1
 template: "Hafiz: this session has {tool_calls} tool calls across {files_written} files in a repo Hafiz is not tracking. If this is multi-step work, create its block with hafiz_block_create now (that starts tracking; no need to ask)."
+# Every other role (designer, planner, worker driven directly) may not start tracking: this is its
+# nudge (after "Hafiz: ") and its hafiz_block_create refusal.
+others: "this repo is not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the manager agent."
 auto_init: false

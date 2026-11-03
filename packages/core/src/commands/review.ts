@@ -4,9 +4,10 @@
 // proposals.ts.
 
 import type { DocSchema } from '../config/schema.js'
-import { NotFoundError } from '../domain/errors.js'
+import { GuardError, NotFoundError } from '../domain/errors.js'
 import { opaqueId } from '../domain/ids.js'
-import { mayApprove, reviewModeOf, reviewVersion } from '../domain/review.js'
+import { mayApprove, reviewModeOf, reviewStates, reviewVersion } from '../domain/review.js'
+import { notReady, notReadySays } from '../domain/stage.js'
 import type {
   Actor,
   Block,
@@ -162,6 +163,36 @@ export async function fileReviewOnWrite(
       }
   await t.putProposal(p)
   return p
+}
+
+// ───────────────────────────── the state table on writes ─────────────────────────────
+
+/**
+ * The state table on a write, inside its transaction (§3.2): refuse unless the block's `type`
+ * (design or plan) is in place: written when its kind defines it, and not held by an open `gate`
+ * review (`domain/stage.ts`, the predicate the Kilo spawn check uses). A role that may approve
+ * reviews (the user, `approver`) passes the gates (its own writes count as approved), not a
+ * missing doc. `what` heads the refusal: `cannot write the plan of Billing [billing]`.
+ */
+export async function requireDoc(
+  ctx: CoreContext,
+  t: WriteOps,
+  by: Actor,
+  b: Block,
+  type: ReviewType,
+  what: string,
+): Promise<void> {
+  const policy = ctx.config.policies.review
+  const reviews = mayApprove(policy, by.role)
+    ? undefined
+    : reviewStates([b], await t.listProposals()).get(b.id)
+  const nr = notReady(ctx.config, { ...b, docs: b.docVersions }, type, reviews)
+  if (nr)
+    throw new GuardError('state_table', `${what}: ${notReadySays(ctx.config, b.title, nr)}.`, {
+      block: b.id,
+      needs: type,
+      ...(nr.held ? { proposal: nr.held.proposal } : {}),
+    })
 }
 
 // ───────────────────────────── approval ─────────────────────────────

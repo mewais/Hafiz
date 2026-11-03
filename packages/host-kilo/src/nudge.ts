@@ -6,7 +6,11 @@ import { type Config, nudgeText } from '@hafiz/core'
 import { toolCounters, USER_TURN_COUNTERS } from './counters.js'
 import type { Hooks, KiloEvent } from './kilo.js'
 
-export function createNudgeHooks(config: Config): Hooks {
+/** `tracks(session)`: may this session start tracking? Others get `nudge.yaml others`. */
+export function createNudgeHooks(
+  config: Config,
+  tracks: (sessionID: string) => boolean = () => true,
+): Hooks {
   const cfg = config.nudge
   if (cfg.max_per_session <= 0) return {}
   const counters = new Map<string, Record<string, number>>()
@@ -18,7 +22,7 @@ export function createNudgeHooks(config: Config): Hooks {
     for (const [k, v] of Object.entries(delta)) c[k] = (c[k] ?? 0) + v
     counters.set(sid, c)
     const n = sent.get(sid) ?? 0
-    const text = pending.has(sid) ? undefined : nudgeText(cfg, c, n)
+    const text = pending.has(sid) ? undefined : nudgeText(cfg, c, n, tracks(sid))
     if (text) {
       sent.set(sid, n + 1)
       pending.set(sid, text)

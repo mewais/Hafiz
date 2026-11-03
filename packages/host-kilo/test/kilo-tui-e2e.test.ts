@@ -75,18 +75,20 @@ describe.skipIf(!enabled)('real Kilo TUI (HAFIZ_KILO_E2E=1)', () => {
     const u = await DaemonClient.connect(daemon.socketPath)
     await u.openSession({ id: 'cli', host: 'test', role: 'user' })
     const root = (await u.treeList())[0]?.id as string
-    const mk = async (parent: string, title: string, status?: string) => {
-      const { result } = await u.dispatch<{ id: string }>('block.create', { parent, title })
+    const mk = async (parent: string, title: string, status?: string, extra = {}) => {
+      const { result } = await u.dispatch<{ id: string }>('block.create', {
+        parent,
+        title,
+        ...extra,
+      })
       if (status) await u.dispatch('block.set_status', { id: result.id, status })
       return result.id
     }
     await mk(root, 'Auth', 'active')
     const billing = await mk(root, 'Billing', 'active')
-    payments = await mk(billing, 'Payments', 'active')
-    await u.dispatch('doc.write', {
-      block: payments,
-      type: 'plan',
-      sections: {
+    // planned on creation (a plan doc.write would need the design first, ARCHITECTURE §3.2)
+    payments = await mk(billing, 'Payments', 'active', {
+      plan: {
         steps: [
           { id: 's1', title: 'Model' },
           { id: 's2', title: 'Webhooks' },

@@ -1,7 +1,8 @@
 // The Kilo plugin, in one of three modes per directory (the decision is cached):
 // - outside git: no hooks at all;
 // - an untracked git repo: near-zero cost. In-memory nudge, plus one tool, `hafiz_block_create`,
-//   for primary agents. Creating the first block runs `hafiz init` and switches this instance to
+//   for every managed role; only the manager primary's call starts tracking, any other role's is
+//   refused with how to get there. Creating the first block runs `hafiz init` and switches this instance to
 //   managed mode immediately, then creates the block (see `untrackedHooks`);
 // - a tracked repo: installs config, registers the Hafiz tools (plugin-native, resolved per
 //   calling session), observes sessions, captures subagent reports and shapes requests through
@@ -483,7 +484,6 @@ export const projectNameOf = (worktree: string): string =>
 function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks {
   const { input, options, env, log, hafiz } = ctx
   const mode = toolsModeOf(options, config)
-  const nudge = createNudgeHooks(config)
   let managed: Managed | undefined
   let tracking:
     | Promise<{ id: string; name: string; rootBlockId: string; onboarding: boolean }>
@@ -496,10 +496,15 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
     const r = config.hafiz.host.kilo.default_role
     return r && r !== 'none' ? r : 'user'
   }
+  // Only the manager starts tracking; every other role hears how to get there, as its nudge and
+  // as its refusal (nudge.yaml `others`), and no daemon starts for it.
+  const tracker = (agent: string | undefined) => roleOf(agent) === 'manager'
+  const nudge = createNudgeHooks(config, (sid) => tracker(noted.get(sid)?.agent))
 
   /** The first block create in this repo: track it, then let the call create the block. */
   const startTracking = async (args: Record<string, unknown>, tctx: KiloToolContext) => {
-    if (noted.get(tctx.sessionID)?.parentID || roleOf(tctx.agent) !== 'manager')
+    if (!tracker(tctx.agent)) throw new HafizToolError(`${UNTRACKED_TOOL}: ${config.nudge.others}`)
+    if (noted.get(tctx.sessionID)?.parentID)
       throw new HafizToolError(
         `${UNTRACKED_TOOL}: this repo is not tracked yet, and only the primary (manager) agent starts tracking it.`,
       )
@@ -601,6 +606,10 @@ function untrackedHooks(ctx: PluginCtx, worktree: string, config: Config): Hooks
       return nudge.event?.(e)
     },
     async 'chat.message'(i, o) {
+      // the agent the user talks to: whether its nudge is the tracking one (createNudgeHooks)
+      const agent = i.agent ?? o.message.agent
+      if (!managed && agent)
+        noted.set(i.sessionID, { ...(noted.get(i.sessionID) ?? { id: i.sessionID }), agent })
       return (managed?.hooks ?? nudge)['chat.message']?.(i, o)
     },
     async 'tool.execute.after'(i, o) {

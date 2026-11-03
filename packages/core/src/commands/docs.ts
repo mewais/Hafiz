@@ -2,7 +2,9 @@
 
 import { ValidationError } from '../domain/errors.js'
 import type { Actor, Block, BlockId, Doc, DocType, SectionValue } from '../domain/types.js'
+import type { WriteOps } from '../store/backend.js'
 import { authorize } from './authz.js'
+import { requireDoc } from './review.js'
 import { type CommandResult, type CoreContext, isMinor, mustBlock, runAs, writeDoc } from './tx.js'
 
 export interface DocWriteArgs {
@@ -17,6 +19,12 @@ export interface DocWriteArgs {
   requireVersion?: boolean
   /** doc.patch only: a missing document is created (needs the doc.write grant too). */
   create?: boolean
+}
+
+/** A plan is written against its design: the state table (§3.2), checked in the write's tx. */
+async function checkStage(ctx: CoreContext, t: WriteOps, by: Actor, b: Block, type: DocType) {
+  if (type === 'plan')
+    await requireDoc(ctx, t, by, b, 'design', `cannot write the plan of ${b.title} [${b.id}]`)
 }
 
 function checkVersioned(b: Block, args: DocWriteArgs): void {
@@ -43,6 +51,7 @@ export async function docWrite(
   return runAs(ctx, by, specOf(ctx, 'doc.write', args), async (t, notices) => {
     const b = await mustBlock(t, args.block)
     checkVersioned(b, args)
+    await checkStage(ctx, t, by, b, args.type)
     return writeDoc(ctx, t, by, b, args.type, args.sections, args.expectedVersion, notices)
   })
 }
@@ -61,6 +70,7 @@ export async function docPatch(
       throw new ValidationError(
         `no ${args.type} on ${b.id} yet; the ${args.type === 'design' ? 'designer' : args.type === 'plan' ? 'planner' : 'worker'} writes it, or use doc.write`,
       )
+    await checkStage(ctx, t, by, b, args.type)
     const merged = { ...(cur?.sections ?? {}), ...args.sections }
     return writeDoc(ctx, t, by, b, args.type, merged, args.expectedVersion, notices)
   })

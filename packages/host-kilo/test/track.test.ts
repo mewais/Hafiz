@@ -119,14 +119,15 @@ describe('untracked git repo', () => {
     expect(Object.keys(cfg.agent ?? {})).toEqual(
       expect.arrayContaining(['manager', 'designer', 'planner', 'worker']),
     )
-    // primary agents may create the first block (manager; others through the global map)
-    expect(cfg.agent?.manager?.permission).toMatchObject({ [UNTRACKED_TOOL]: 'allow' })
+    // every role agent sees the first block create (the manager's starts tracking, any other
+    // role's is refused with the way in); other primaries through the global map
+    for (const a of ['manager', 'designer', 'planner', 'worker'])
+      expect(cfg.agent?.[a]?.permission, a).toMatchObject({ [UNTRACKED_TOOL]: 'allow' })
     expect(cfg.permission).toMatchObject({ [UNTRACKED_TOOL]: 'allow' })
-    // subagents keep their own role's list, as they will after tracking
-    expect(cfg.agent?.designer?.permission).toMatchObject({ [UNTRACKED_TOOL]: 'allow' })
-    for (const a of ['worker', 'general', 'explore'])
+    // non-role subagents see no Hafiz tool
+    for (const a of ['general', 'explore'])
       expect(cfg.agent?.[a]?.permission, a).toMatchObject({ 'hafiz_*': 'deny' })
-    for (const a of ['worker', 'general', 'explore'])
+    for (const a of ['general', 'explore'])
       expect(cfg.agent?.[a]?.permission, a).not.toHaveProperty(UNTRACKED_TOOL)
     // the store root stays denied even before a store exists
     expect(JSON.stringify(cfg.permission)).toContain(`${r.env.HAFIZ_STORE_ROOT}/**`)
@@ -218,6 +219,37 @@ describe('untracked git repo', () => {
       ) as Promise<unknown>,
     ).rejects.toThrow(/only the primary \(manager\) agent starts tracking/)
     expect(existsSync(join(r.cwd, '.git', 'hafiz'))).toBe(false)
+  })
+
+  it('a designer, planner or worker the user drives directly is refused with the way in, no daemon', async () => {
+    const r = repo()
+    const { hooks } = await untracked(r)
+    const others = config.nudge.others
+    expect(others).toBe(
+      'this repo is not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the manager agent.',
+    )
+    for (const agent of ['designer', 'planner', 'worker']) {
+      const sid = `ses_${agent}`
+      await hooks.event?.(ev('session.created', { info: { id: sid } }))
+      expect(await visible(hooks, sid)).toEqual([UNTRACKED_TOOL])
+      await expect(
+        hooks.tool?.[UNTRACKED_TOOL]?.execute(
+          { title: 'Shop' },
+          ctx(sid, agent),
+        ) as Promise<unknown>,
+      ).rejects.toThrow(`${UNTRACKED_TOOL}: ${others}`)
+      // its nudge says the same, once the session looks multi-step
+      for (let i = 0; i < 15; i++)
+        await hooks['chat.message']?.(
+          { sessionID: sid, agent },
+          { message: {}, parts: [{ type: 'text', text: 'hi' }] },
+        )
+      expect((await system(hooks, sid)).at(-1)).toBe(`Hafiz: ${others}`)
+    }
+    // nothing tracked, nothing started
+    expect(existsSync(join(r.cwd, '.git', 'hafiz'))).toBe(false)
+    expect(readdirSync(r.env.XDG_RUNTIME_DIR as string)).toEqual([])
+    expect(readdirSync(r.env.HAFIZ_STORE_ROOT as string)).toEqual([])
   })
 
   it('brownfield: the first block tracks a repo with code, and onboarding is due at once', async () => {

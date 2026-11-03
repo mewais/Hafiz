@@ -65,8 +65,16 @@ async function live(policies?: string, extraEnv: Record<string, string> = {}) {
   await user.openSession({ id: 'cli', host: 'test', role: 'user' })
   const root = (await user.treeList())[0]?.id as string
   const blocks: string[] = []
+  // designed and planned by the user (a plan needs a design, done a plan)
+  const design = { purpose: 'p', scope: ['in: x'], interface: { provides: [] } }
+  const plan = { steps: [{ id: 's1', title: 'build' }], acceptance: ['tests pass'] }
   for (const title of ['Payments', 'Shipping']) {
-    const { result } = await user.dispatch<{ id: string }>('block.create', { parent: root, title })
+    const { result } = await user.dispatch<{ id: string }>('block.create', {
+      parent: root,
+      title,
+      design,
+      plan,
+    })
     await user.dispatch('block.set_status', { id: result.id, status: 'active' })
     blocks.push(result.id)
   }
@@ -168,6 +176,7 @@ describe('cap rejections (HAFIZ_REJECTION_LOG)', () => {
           block: blocks[1],
           type: 'plan',
           sections: { steps: [{ id: 's1', title: 'x' }], acceptance: [long] },
+          expected_version: 1,
         },
         ctx('ses_p', 'planner'),
       ),

@@ -24,6 +24,17 @@ beforeAll(async () => {
   const root = init.root.id
   const b1 = (await core.blockCreate(mgr, { parent: root, title: 'One' })).result.id
   const b2 = (await core.blockCreate(mgr, { parent: root, title: 'Two' })).result.id
+  // the human designs and plans One (done needs its plan); its step ids are not the worker's s1
+  await core.docWrite(human, {
+    block: b1,
+    type: 'design',
+    sections: { purpose: 'one', scope: ['in: x'], interface: { provides: [] } },
+  })
+  await core.docWrite(human, {
+    block: b1,
+    type: 'plan',
+    sections: { steps: [{ id: 'p1', title: 'x' }], acceptance: ['y'] },
+  })
   for (const id of [b1, b2]) await core.blockSetStatus(mgr, { id, status: 'active' })
   await core.sessionOpen({ id: 'm1', host: 'kilo', role: 'manager', agent: 'build' })
   await core.sessionOpen({

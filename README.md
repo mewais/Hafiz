@@ -44,6 +44,11 @@ through the transform hooks rather than the embedded proxy, Kilo's own auto-comp
 was, a condenser routed through Kilo is available only if the user-level config asked for it, and
 with `host.kilo.tools: mcp` the Hafiz tools wait too.
 
+Only the manager (or a plain agent acting as it) starts tracking. A designer, planner or worker
+you talk to directly in an untracked repo sees the same tool, and its call answers "this repo is
+not tracked by Hafiz yet; ask the user to run `hafiz init` here, or to start the work from the
+manager agent" (its nudge says the same); nothing is started.
+
 If the repo already has code (commits and at least `onboarding.min_source_files` tracked source
 files, default 5), the project starts with onboarding pending: the first designer spawned, on
 whatever block, first describes the codebase as it is in the root design, importing what current
@@ -75,6 +80,11 @@ of its own worktree. The pointer is not committed: a separate clone is a separat
   block (a worker before there is a plan, anyone on a done block) or that copies the block into
   the prompt. A worker's final message ends with a `hafiz-report` block; Hafiz stores the whole
   reply in the block's progress log and hands the manager only that block.
+- You may also drive the roles yourself: talk to the designer, then the planner, then a worker.
+  The same order holds on every write, not only on spawns: a plan is refused until its block has
+  a design (and, under `design: gate`, until you accept it), done until it has a plan (likewise
+  under `plan: gate`); the refusal names the missing step or the `hafiz review --accept` that
+  clears it. A worker's first progress, step or thread on a planned block starts it (active).
 - Anything agents want to change that needs a human (a finished design or plan, marking a block
   done, a proposed digest, a missing protocol call) lands in the **review queue**: `hafiz review`
   lists it, `hafiz review --show ID` prints the design or plan under review,
@@ -97,7 +107,7 @@ Agents reach Hafiz through nine tools; each role sees only its own, narrowed to 
 | Tool | Does | Roles |
 |---|---|---|
 | `hafiz_block_read` | read a block at a zoom; no id: the tree; `explain`: why it shows as it does | all |
-| `hafiz_block_create` | create a block (under the root by default), with an inline design or plan for roles that may write that doc (designer, planner); in an untracked repo the first one tracks it | manager, designer, planner |
+| `hafiz_block_create` | create a block (under the root by default), with an inline design or plan for roles that may write that doc (designer, planner); in an untracked repo the manager's first one tracks it (any other role's is refused with the way in) | manager, designer, planner |
 | `hafiz_block_edit` | rename, change kind or order, move | manager |
 | `hafiz_block_set_status` | planned → active → done, blocked, dropped; a worker's `done` is a request the policy closes or queues | manager, worker (done only) |
 | `hafiz_doc` | patch a design or plan (`replace` for a whole rewrite); an existing doc needs `expected_version` | manager (plan), designer (design), planner (plan) |
@@ -184,9 +194,24 @@ review:
 
 A design or plan is filed as it is written (`hafiz_doc`, or inline on `hafiz_block_create`) by
 any role but the approver, so a gate holds from that write on; a newer version replaces the
-pending proposal. Accepting pins the version on the
-block; the next review says which sections changed since it. `hafiz doctor` warns about the
-retired `hafiz.yaml confirm_done` (`ask` reads as `done: gate`, `auto` as `done: queue`).
+pending proposal. A gate holds the writes of the next stage too, whoever drives them: a plan
+write while the design waits, a done while the plan waits (the approver's own writes count as
+accepted). Accepting pins the version on the
+block; the next review says which sections changed since it.
+
+Work starting is policy as well: a block turns active when a worker is spawned on it or writes to
+it (progress, a step, a thread):
+
+```yaml
+status:
+  activate_on:
+    spawn: [worker]
+    write: [worker]
+```
+
+`hafiz doctor` warns about retired settings: `hafiz.yaml confirm_done` (`ask` reads as
+`done: gate`, `auto` as `done: queue`) and `status.activate_on_spawn` (read as
+`activate_on.spawn`).
 
 ## Where data lives
 

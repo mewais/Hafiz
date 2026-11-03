@@ -292,7 +292,7 @@ describe('core scenario', () => {
   })
 })
 
-describe('activate on spawn (policies.yaml status.activate_on_spawn)', () => {
+describe('activate on spawn (policies.yaml status.activate_on)', () => {
   async function tree() {
     const { core, root } = await setup()
     const feat = (await core.blockCreate(pln, { parent: root.id, title: 'Checkout' })).result
@@ -320,9 +320,9 @@ describe('activate on spawn (policies.yaml status.activate_on_spawn)', () => {
     expect(await status(core, leaf.id)).toBe('planned')
   })
 
-  it('an empty activate_on_spawn keeps the block planned; done then names the remedy', async () => {
+  it('an empty activate_on.spawn keeps the block planned; done then names the remedy', async () => {
     const config = autoConfig()
-    config.policies.status.activate_on_spawn = []
+    config.policies.status.activate_on.spawn = []
     const core = new Core({ config, backend: new MemoryBackend(), clock: fixedClock() })
     const { result } = await core.projectInit(mgr, { name: 'S', originFingerprint: 'fp' })
     const leaf = (await core.blockCreate(pln, { parent: result.root.id, title: 'T', plan })).result

@@ -312,9 +312,16 @@ describe('review table: approver, rejection', () => {
 })
 
 describe('review table: done and drafts rows', () => {
+  /** The user designs and plans the block (its own writes are approved) and starts it. */
+  async function started(review: Partial<ReviewPolicy>) {
+    const s = await setup(review)
+    await s.core.docWrite(user, { block: s.block.id, type: 'design', sections: design })
+    await s.core.docWrite(user, { block: s.block.id, type: 'plan', sections: plan })
+    await s.core.blockSetStatus(user, { id: s.block.id, status: 'active' })
+    return s
+  }
   async function finish(mode: ReviewMode) {
-    const { core, block, read } = await setup({ done: mode })
-    await core.blockSetStatus(user, { id: block.id, status: 'active' })
+    const { core, block, read } = await started({ done: mode })
     const w: Actor = { sessionId: 'w1', role: 'worker' }
     const r = await core.blockRequestDone(w, { id: block.id, digest })
     const status = (await read().getBlock(block.id))?.status
@@ -339,8 +346,7 @@ describe('review table: done and drafts rows', () => {
     expect(r.result).toMatchObject({ queued: true })
     expect(status).toBe('active')
     expect(pending).toHaveLength(1)
-    const { core, block } = await setup({ done: 'gate' })
-    await core.blockSetStatus(user, { id: block.id, status: 'active' })
+    const { core, block } = await started({ done: 'gate' })
     const ask = await core.blockSetStatus(mgr, { id: block.id, status: 'done', digest })
     expect(ask.result).toMatchObject({ needsConfirmation: true })
   })

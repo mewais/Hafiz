@@ -15,7 +15,8 @@ const config = loadConfig()
 const MGR = 'Onboarding is due: the next designer you spawn writes the root design first.'
 const DES = 'Onboarding: this repo had code before Hafiz tracked it. Write the root design first'
 const mgr: Actor = { sessionId: 'm1', role: 'manager', agent: 'build' }
-const pln: Actor = { sessionId: 'p1', role: 'planner', agent: 'planner' }
+const user: Actor = { sessionId: 'u1', role: 'user' }
+const digest = { outcome: 'x', interface_delta: ['none'], pointers: [{ label: 'pr', ref: '#1' }] }
 const des: Actor = { sessionId: 'd1', role: 'designer', agent: 'designer' }
 
 async function project(onboarding: boolean) {
@@ -63,21 +64,13 @@ describe('brownfield onboarding', () => {
 
   it('a non-design doc write on the root makes it due', async () => {
     const { core, root } = await project(true)
-    await core.docWrite(pln, {
-      block: root.id,
-      type: 'plan',
-      sections: { steps: [{ id: 's1', title: 'x' }], acceptance: ['y'] },
-    })
+    await core.docWrite(user, { block: root.id, type: 'digest', sections: digest })
     expect((await core.backend.read.getProject())?.onboarding).toBe('due')
   })
 
   it('due: the manager and the designer carry their directives, other roles none', async () => {
     const { core, root, view } = await project(true)
-    await core.docWrite(pln, {
-      block: root.id,
-      type: 'plan',
-      sections: { steps: [{ id: 's1', title: 'x' }], acceptance: ['y'] },
-    })
+    await core.docWrite(user, { block: root.id, type: 'digest', sections: digest })
     const v = await view('manager')
     // the root id is random: pin it (and the hash it feeds) for the golden
     const golden = viewGolden(v)

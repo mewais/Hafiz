@@ -87,7 +87,7 @@ export class GuardError extends HafizError {
 export class InvalidTransitionError extends HafizError {
   /**
    * `allowed`: where `from` may go (policies.yaml); `activatedBy`: roles whose spawn on a planned
-   * block activates it (`status.activate_on_spawn`). Both only shape the remedy in the message.
+   * block activates it (`status.activate_on.spawn`). Both only shape the remedy in the message.
    */
   constructor(
     from: string,

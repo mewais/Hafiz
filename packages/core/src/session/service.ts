@@ -1,7 +1,7 @@
 // Sessions (§7): open/re-attach, end, counters, and focus (explicit `focus.set` or computed from
 // the role's focus policy). Everything but `focus.set` is Hafiz's own bookkeeping (system writes).
 
-import { activateOnSpawn } from '../commands/blocks.js'
+import { activateOn } from '../commands/blocks.js'
 import {
   bump,
   type CommandResult,
@@ -90,13 +90,10 @@ export async function sessionOpen(ctx: CoreContext, args: SessionOpenArgs): Prom
       updatedAt: now,
     }
     await t.putSession(s)
-    // a spawn on a block is tracked work; a worker's starts the block (activate_on_spawn)
+    // a spawn on a block is tracked work; a worker's starts the block (activate_on.spawn)
     if (args.spawnedBlock && args.role !== 'user') {
       await onboardingDue(t)
-      if (await activateOnSpawn(ctx, t, args.role, args.spawnedBlock)) {
-        const p = await t.getProject()
-        if (p) await t.putProject({ ...p, epoch: p.epoch + 1 })
-      }
+      await activateOn(ctx, t, 'spawn', args.role, args.spawnedBlock, true)
     }
     return s
   })

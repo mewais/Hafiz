@@ -165,10 +165,12 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
 
   // Role agents: prompt = the user's own prompt (if any) + rules, tools = exactly the role's
   // allowlist.
-  // Untracked: primary agents (the manager agent, and others under the default role) may start
-  // tracking by creating the first block (native mode: their role allows it already). Subagents
-  // keep their role's own list, which must hold after tracking too; the tool refuses them while
-  // the repo is untracked.
+  // Untracked: every role agent and the primaries under the default role see the first block
+  // create. The manager primary's call starts tracking; any other role's is refused with how to
+  // get there (`nudge.yaml others`: ask the user for `hafiz init`, or start from the manager),
+  // so a designer or planner the user drives directly hears it instead of seeing no Hafiz tool.
+  // Kilo reads permissions once, so a role without block.create keeps seeing it after
+  // mid-session tracking until the next start (the tool then refuses it for its role).
   const track: PermMap = plan.untracked ? { [plan.untracked.tool]: 'allow' } : {}
 
   cfg.agent ??= {}
@@ -183,7 +185,7 @@ export function installConfig(cfg: KiloConfig, plan: InstallPlan): string[] {
     const theirs = cfg.agent[role] ?? {}
     const perm = layer(asMap(theirs.permission), {
       ...rolePermission(config, role, mode),
-      ...(role === 'manager' ? track : {}),
+      ...track,
       task: role === 'manager' ? 'allow' : 'deny',
     })
     cfg.agent[role] = {
